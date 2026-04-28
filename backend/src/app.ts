@@ -1,46 +1,63 @@
-import express, { type Request, type Response, type NextFunction } from "express"
+import express, { type Request, type Response } from "express"
 import cors from "cors"
 import helmet from "helmet"
 import dotenv from "dotenv"
+import { PrismaClient } from "@prisma/client"
 import { ok } from "./types"
 
-// Load .env file FIRST — before any process.env access
+// Load .env FIRST — before any process.env access
 dotenv.config()
 
 const app = express()
 const PORT = process.env.PORT ?? "3001"
 
+// Prisma client — one instance shared across the whole app.
+// Creating multiple instances is wasteful (each opens a connection pool).
+const prisma = new PrismaClient()
+
 // ── Middleware ────────────────────────────────────────────────────────────
-// These run on EVERY request, in order.
+app.use(helmet())
+app.use(cors())
+app.use(express.json())
 
-app.use(helmet())         // secure headers: prevents clickjacking, XSS, etc.
-app.use(cors())           // allows cross-origin requests from your React dev server
-app.use(express.json())   // parses JSON request body into req.body
+// ── Health Check ──────────────────────────────────────────────────────────
+// Tests every infrastructure dependency.
+// If any service is down, this returns "degraded" — not "ok".
+// Your CI/CD and monitoring tools will poll this endpoint.
+app.get("/health", async (_req: Request, res: Response) => {
+  // Test database: run the simplest possible query
+  let dbStatus: "ok" | "error" = "ok"
+  try {
+    await prisma.$queryRaw`SELECT 1`
+  } catch {
+    dbStatus = "error"
+  }
 
-// ── Health Check ─────────────────────────────────────────────────────────
-// The very first thing you test after any deploy.
-// Returns the status of every connected service.
-// We will add db and redis here on Day 2.
-app.get("/health", (_req: Request, res: Response) => {
-  res.json(ok({
-    status: "ok",
+  // Determine overall status
+  // If ANY service is down, the whole system is degraded
+  const allOk = dbStatus === "ok"
+
+  res.status(allOk ? 200 : 503).json(ok({
+    status: allOk ? "ok" : "degraded",
     timestamp: new Date().toISOString(),
     services: {
-      api: "ok"
+      api: "ok",
+      db: dbStatus
+      // redis: "ok" ← Day 3 when we add the Redis client
     }
   }))
 })
 
 // ── 404 Handler ───────────────────────────────────────────────────────────
-// Any route not matched above falls through to here.
 app.use((_req: Request, res: Response) => {
   res.status(404).json({ success: false, data: null, error: "Route not found" })
 })
 
 // ── Start Server ──────────────────────────────────────────────────────────
 app.listen(PORT, () => {
-  console.log(`✅ Server running → http://localhost:${PORT}`)
-  console.log(`🏥 Health check  → http://localhost:${PORT}/health`)
+  console.log(`✅ Server running  → http://localhost:${PORT}`)
+  console.log(`🏥 Health check   → http://localhost:${PORT}/health`)
+  console.log(`🗄️  Prisma Studio  → npx prisma studio (separate terminal)`)
 })
 
 export default app
