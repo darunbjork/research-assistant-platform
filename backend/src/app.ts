@@ -1,3 +1,4 @@
+/* eslint-disable no-console */
 // TODO: Swagger UI mounted at /api/docs
 
 import express, { type Request, type Response } from "express"
