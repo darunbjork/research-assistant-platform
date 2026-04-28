@@ -10,11 +10,7 @@ import type { Request, Response, NextFunction } from "express"
 import { ValidationError } from "./error.middleware"
 import type { RegisterRequest, LoginRequest } from "../types"
 
-export function validateRegister(
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): void {
+export function validateRegister(req: Request, _res: Response, next: NextFunction): void {
   const body = req.body as Partial<RegisterRequest>
 
   if (!body.email || typeof body.email !== "string") {
@@ -41,11 +37,7 @@ export function validateRegister(
   next()
 }
 
-export function validateLogin(
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): void {
+export function validateLogin(req: Request, _res: Response, next: NextFunction): void {
   const body = req.body as Partial<LoginRequest>
 
   if (!body.email || typeof body.email !== "string") {

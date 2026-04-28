@@ -16,16 +16,16 @@ export function signTokens(payload: Omit<JwtPayload, "iat" | "exp">): AuthTokens
   if (!accessSecret || !refreshSecret) {
     throw new Error(
       "JWT_SECRET and JWT_REFRESH_SECRET must be set in .env. " +
-      "Minimum 32 characters each. They must be different strings."
+        "Minimum 32 characters each. They must be different strings."
     )
   }
 
   const accessToken = jwt.sign(payload, accessSecret, {
-    expiresIn: ACCESS_TOKEN_EXPIRY
+    expiresIn: ACCESS_TOKEN_EXPIRY,
   })
 
   const refreshToken = jwt.sign(payload, refreshSecret, {
-    expiresIn: REFRESH_TOKEN_EXPIRY
+    expiresIn: REFRESH_TOKEN_EXPIRY,
   })
 
   return { accessToken, refreshToken }

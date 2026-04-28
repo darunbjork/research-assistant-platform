@@ -10,12 +10,7 @@
 
 import bcrypt from "bcryptjs"
 import { PrismaClient } from "@prisma/client"
-import type {
-  RegisterRequest,
-  LoginRequest,
-  AuthResponse,
-  PublicUser
-} from "../types"
+import type { RegisterRequest, LoginRequest, AuthResponse, PublicUser } from "../types"
 import { signTokens, verifyRefreshToken } from "../utils/jwt.utils"
 import { ValidationError, UnauthorizedError, NotFoundError } from "../middleware/error.middleware"
 import { logRagEvent, logError } from "../utils/logger"
@@ -32,7 +27,7 @@ export class AuthService {
     const start = Date.now()
 
     const existing = await this.prisma.user.findUnique({
-      where: { email: data.email.toLowerCase() }
+      where: { email: data.email.toLowerCase() },
     })
 
     if (existing !== null) {
@@ -43,27 +38,27 @@ export class AuthService {
 
     const user = await this.prisma.user.create({
       data: {
-        email: data.email.toLowerCase(),  
+        email: data.email.toLowerCase(),
         passwordHash,
-        role: "USER"
-      }
+        role: "USER",
+      },
     })
 
     const tokens = signTokens({
       userId: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
     })
 
     logRagEvent("ingest", "User registered", {
       service: "AuthService",
       userId: user.id,
-      durationMs: Date.now() - start
+      durationMs: Date.now() - start,
     })
 
     return {
       tokens,
-      user: this.toPublicUser(user)
+      user: this.toPublicUser(user),
     }
   }
 
@@ -71,7 +66,7 @@ export class AuthService {
     const start = Date.now()
 
     const user = await this.prisma.user.findUnique({
-      where: { email: data.email.toLowerCase() }
+      where: { email: data.email.toLowerCase() },
     })
 
     if (user === null) {
@@ -83,7 +78,7 @@ export class AuthService {
     if (!passwordValid) {
       logError("Failed login attempt", new Error("Invalid password"), {
         service: "AuthService",
-        userId: user.id
+        userId: user.id,
       })
       throw new UnauthorizedError("Invalid email or password")
     }
@@ -91,18 +86,18 @@ export class AuthService {
     const tokens = signTokens({
       userId: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
     })
 
     logRagEvent("ingest", "User logged in", {
       service: "AuthService",
       userId: user.id,
-      durationMs: Date.now() - start
+      durationMs: Date.now() - start,
     })
 
     return {
       tokens,
-      user: this.toPublicUser(user)
+      user: this.toPublicUser(user),
     }
   }
 
@@ -110,7 +105,7 @@ export class AuthService {
     const payload = verifyRefreshToken(refreshToken)
 
     const user = await this.prisma.user.findUnique({
-      where: { id: payload.userId }
+      where: { id: payload.userId },
     })
 
     if (user === null) {
@@ -120,23 +115,23 @@ export class AuthService {
     const tokens = signTokens({
       userId: user.id,
       email: user.email,
-      role: user.role
+      role: user.role,
     })
 
     logRagEvent("ingest", "Tokens refreshed", {
       service: "AuthService",
-      userId: user.id
+      userId: user.id,
     })
 
     return {
       tokens,
-      user: this.toPublicUser(user)
+      user: this.toPublicUser(user),
     }
   }
 
   async getMe(userId: string): Promise<PublicUser> {
     const user = await this.prisma.user.findUnique({
-      where: { id: userId }
+      where: { id: userId },
     })
 
     if (user === null) {
@@ -156,7 +151,7 @@ export class AuthService {
       id: user.id,
       email: user.email,
       role: user.role,
-      createdAt: user.createdAt
+      createdAt: user.createdAt,
     }
   }
 }

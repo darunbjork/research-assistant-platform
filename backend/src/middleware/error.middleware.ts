@@ -88,7 +88,7 @@ export function errorMiddleware(
   error: unknown,
   req: Request,
   res: Response,
-  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+
   _next: NextFunction
 ): void {
   // Known application error — we threw this intentionally with a status code
@@ -97,7 +97,7 @@ export function errorMiddleware(
       service: "ErrorMiddleware",
       code: error.code,
       path: req.path,
-      method: req.method
+      method: req.method,
     })
     res.status(error.statusCode).json(fail(error.message))
     return
@@ -107,7 +107,7 @@ export function errorMiddleware(
   if (isPrismaError(error)) {
     logError("Database error", error, {
       service: "ErrorMiddleware",
-      path: req.path
+      path: req.path,
     })
     res.status(500).json(fail("Database operation failed"))
     return
@@ -118,14 +118,14 @@ export function errorMiddleware(
   logError("Unexpected error", error, {
     service: "ErrorMiddleware",
     path: req.path,
-    method: req.method
+    method: req.method,
   })
 
   res.status(500).json(
     fail(
       process.env.NODE_ENV === "development"
-        ? String(error)              // show details in development
-        : "Internal server error"   // hide details in production
+        ? String(error) // show details in development
+        : "Internal server error" // hide details in production
     )
   )
 }

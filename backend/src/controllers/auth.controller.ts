@@ -10,38 +10,25 @@ import type { Request, Response, NextFunction } from "express"
 import { PrismaClient } from "@prisma/client"
 import { AuthService } from "../services/auth.service"
 import { ok } from "../types"
-import type {
-  RegisterRequest,
-  LoginRequest,
-  RefreshRequest
-} from "../types"
+import type { RegisterRequest, LoginRequest, RefreshRequest } from "../types"
 
 const prisma = new PrismaClient()
 const authService = new AuthService(prisma)
 
 export class AuthController {
-
   // * POST /api/v1/auth/register
-  register = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> => {
+  register = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const body = req.body as RegisterRequest
       const result = await authService.register(body)
       res.status(201).json(ok(result))
     } catch (error: unknown) {
-      next(error)   // ! passes to errorMiddleware
+      next(error) // ! passes to errorMiddleware
     }
   }
 
   // * POST /api/v1/auth/login
-  login = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> => {
+  login = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const body = req.body as LoginRequest
       const result = await authService.login(body)
@@ -52,11 +39,7 @@ export class AuthController {
   }
 
   // * POST /api/v1/auth/refresh
-  refresh = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> => {
+  refresh = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       const body = req.body as RefreshRequest
 
@@ -73,11 +56,7 @@ export class AuthController {
   }
 
   // * GET /api/v1/auth/me  (protected — requires authMiddleware)
-  me = async (
-    req: Request,
-    res: Response,
-    next: NextFunction
-  ): Promise<void> => {
+  me = async (req: Request, res: Response, next: NextFunction): Promise<void> => {
     try {
       // * req.user is set by authMiddleware — guaranteed to exist here
       // * because authMiddleware runs before this handler

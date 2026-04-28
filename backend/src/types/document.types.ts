@@ -21,15 +21,15 @@ export interface DocumentChunk {
   content: string
   chunkIndex: number
   tokenCount: number
-  embedding: number[]       // * the 768-number vector
+  embedding: number[] // * the 768-number vector
   metadata: ChunkMetadata
   createdAt: Date
 }
 
 export interface ChunkMetadata {
-  source: string             // document name — used in citations
-  pageNumber?: number        // page number if extracted from PDF
-  section?: string           // section heading if available
+  source: string // document name — used in citations
+  pageNumber?: number // page number if extracted from PDF
+  section?: string // section heading if available
   chunkingStrategy: ChunkingStrategy
 }
 

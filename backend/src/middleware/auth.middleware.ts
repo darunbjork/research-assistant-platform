@@ -22,15 +22,11 @@ declare global {
   }
 }
 
-export function authMiddleware(
-  req: Request,
-  _res: Response,
-  next: NextFunction
-): void {
+export function authMiddleware(req: Request, _res: Response, next: NextFunction): void {
   const authHeader = req.headers.authorization
 
   if (!authHeader?.startsWith("Bearer ")) {
-    next(new Error("No token provided")) 
+    next(new Error("No token provided"))
     return
   }
 
@@ -40,9 +36,9 @@ export function authMiddleware(
     const payload = verifyAccessToken(token)
     req.user = payload
 
-    next() 
+    next()
   } catch (error: unknown) {
-    next(error) 
+    next(error)
   }
 }
 

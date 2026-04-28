@@ -7,13 +7,13 @@ export interface JwtPayload {
   userId: string
   email: string
   role: "GUEST" | "USER" | "ADMIN"
-  iat?: number  
+  iat?: number
   exp?: number
 }
 
 export interface AuthTokens {
-  accessToken: string    
-  refreshToken: string 
+  accessToken: string
+  refreshToken: string
 }
 
 export interface AuthResponse {
