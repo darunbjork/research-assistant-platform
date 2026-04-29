@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
-// TODO: Swagger UI mounted at /api/docs
+// backend/src/app.ts
+// Updated Day 7: Redis health check added
 
 import express, { type Request, type Response } from "express"
 import cors from "cors"
@@ -14,6 +15,7 @@ import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
 import authRouter from "./routes/auth.routes"
 import { swaggerSpec } from "./utils/swagger"
+import { checkRedisHealth } from "./utils/redis"
 
 dotenv.config()
 
@@ -24,12 +26,7 @@ const prisma = new PrismaClient()
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(
   helmet({
-    // Swagger UI loads external CSS and JS — helmet blocks this by default
-    // This relaxes Content-Security-Policy only for the docs page
-    contentSecurityPolicy:
-      process.env.NODE_ENV === "production"
-        ? undefined // strict in production
-        : false, // relaxed in development so Swagger UI loads correctly
+    contentSecurityPolicy: process.env.NODE_ENV === "production" ? undefined : false,
   })
 )
 app.use(cors())
@@ -37,26 +34,15 @@ app.use(express.json())
 app.use(requestLoggerMiddleware)
 
 // ── API Documentation ─────────────────────────────────────────────────────
-// Interactive Swagger UI — only in development
-// In production: either disable it or protect with basic auth
 if (process.env.NODE_ENV !== "production") {
   app.use(
     "/api/docs",
     swaggerUi.serve,
     swaggerUi.setup(swaggerSpec, {
       customSiteTitle: "Research Assistant API Docs",
-      swaggerOptions: {
-        // Remembers your JWT token between page refreshes
-        persistAuthorization: true,
-        // Collapses all endpoints by default — less overwhelming
-        docExpansion: "none",
-        // Show request duration in the response
-        displayRequestDuration: true,
-      },
+      swaggerOptions: { persistAuthorization: true, docExpansion: "none" },
     })
   )
-
-  // Raw OpenAPI JSON spec — useful for importing into Postman or Insomnia
   app.get("/api/docs.json", (_req: Request, res: Response) => {
     res.setHeader("Content-Type", "application/json")
     res.json(swaggerSpec)
@@ -67,20 +53,20 @@ if (process.env.NODE_ENV !== "production") {
 app.use("/", metricsRouter)
 app.use("/api/v1/auth", authRouter)
 
-// Health check
+// Health check — now verifies ALL three services
 app.get("/health", async (_req: Request, res: Response) => {
-  let dbStatus: "ok" | "error" = "ok"
+  // Run both checks in parallel — faster than sequential
+  const [dbStatus, redisStatus] = await Promise.all([
+    prisma.$queryRaw`SELECT 1`
+      .then((): "ok" => "ok")
+      .catch((error: unknown): "error" => {
+        logError("Health: database unreachable", error, { service: "HealthCheck" })
+        return "error"
+      }),
+    checkRedisHealth(),
+  ])
 
-  try {
-    await prisma.$queryRaw`SELECT 1`
-  } catch (error: unknown) {
-    dbStatus = "error"
-    logError("Health check: database unreachable", error, {
-      service: "HealthCheck",
-    })
-  }
-
-  const allOk = dbStatus === "ok"
+  const allOk = dbStatus === "ok" && redisStatus === "ok"
 
   res.status(allOk ? 200 : 503).json(
     ok({
@@ -89,6 +75,7 @@ app.get("/health", async (_req: Request, res: Response) => {
       services: {
         api: "ok",
         db: dbStatus,
+        redis: redisStatus,
       },
     })
   )
@@ -113,7 +100,6 @@ app.listen(PORT, () => {
   console.log(`🏥 Health check   → http://localhost:${PORT}/health`)
   console.log(`📊 Metrics        → http://localhost:${PORT}/metrics`)
   console.log(`📖 API Docs       → http://localhost:${PORT}/api/docs`)
-  console.log(`🔐 Auth           → http://localhost:${PORT}/api/v1/auth`)
 })
 
 export default app
