@@ -16,6 +16,7 @@ import metricsRouter from "./routes/metrics.routes"
 import authRouter from "./routes/auth.routes"
 import { swaggerSpec } from "./utils/swagger"
 import { checkRedisHealth } from "./utils/redis"
+import documentRouter from "./routes/document.routes"
 
 dotenv.config()
 
@@ -52,6 +53,7 @@ if (process.env.NODE_ENV !== "production") {
 // ── Routes ────────────────────────────────────────────────────────────────
 app.use("/", metricsRouter)
 app.use("/api/v1/auth", authRouter)
+app.use("/api/v1/documents", documentRouter)
 
 // Health check — now verifies ALL three services
 app.get("/health", async (_req: Request, res: Response) => {
