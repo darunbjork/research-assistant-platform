@@ -18,6 +18,7 @@ import { swaggerSpec } from "./utils/swagger"
 import { checkRedisHealth } from "./utils/redis"
 import documentRouter from "./routes/document.routes"
 import ragRouter from "./routes/rag.routes"
+import agentRouter from "./routes/agent.routes"
 
 dotenv.config()
 
@@ -31,10 +32,12 @@ app.use(
     contentSecurityPolicy: process.env.NODE_ENV === "production" ? undefined : false,
   })
 )
-app.use(cors({
-  origin:      ["http://localhost:5173", "http://localhost:3000"],
-  credentials: true
-}))
+app.use(
+  cors({
+    origin: ["http://localhost:5173", "http://localhost:3000"],
+    credentials: true,
+  })
+)
 app.use(express.json())
 app.use(requestLoggerMiddleware)
 
@@ -59,6 +62,7 @@ app.use("/", metricsRouter)
 app.use("/api/v1/auth", authRouter)
 app.use("/api/v1/documents", documentRouter)
 app.use("/api/v1/rag", ragRouter)
+app.use("/api/v1/agent", agentRouter)
 
 // Health check — now verifies ALL three services
 app.get("/health", async (_req: Request, res: Response) => {

@@ -86,15 +86,3 @@ export interface Citation {
   relevanceScore: number // the score used to rank this chunk (0-1)
 }
 
-// ── Agent Types (defined now, used from Day 14) ────────────────────────────
-
-export type AgentStatus =
-  | "idle"
-  | "thinking"
-  | "searching"
-  | "generating"
-  | "evaluating"
-  | "done"
-  | "error"
-
-export type TaskType = "rag_search" | "web_search" | "math" | "general"
