@@ -1,31 +1,24 @@
 // frontend/src/components/MessageCard.tsx
-// Renders one chat message — either from the user or from ResearchBot.
-//
-// USER MESSAGES: simple right-aligned blue bubble
-// AGENT MESSAGES: left-aligned white bubble with:
-//   - The answer text (may contain [Source N] references)
-//   - CitationCard for each source (expandable)
-//   - Metadata footer (tokens, duration, chunks)
+// Updated Day 14: now renders AgentSteps below agent answers.
 
-import CitationCard from "./CitationCard"
+import CitationCard  from "./CitationCard"
+import AgentSteps    from "./AgentSteps"
 import type { ChatMessage } from "../types"
 
 interface Props {
   message: ChatMessage
 }
 
-// Formats [Source N] references in the answer text as styled badges.
-// "Revenue was $4.2M [Source 1]." →
-// "Revenue was $4.2M " + <badge>[Source 1]</badge> + "."
 function formatAnswerWithCitations(text: string): React.ReactNode[] {
-  const parts = text.split(/(\[Source \d+\])/g)
+  const parts = text.split(/(\[(?:Source|Evidence) \d+\])/g)
 
   return parts.map((part, index) => {
-    if (/^\[Source \d+\]$/.test(part)) {
+    if (/^\[(?:Source|Evidence) \d+\]$/.test(part)) {
       return (
         <span
           key={index}
-          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 mx-0.5"
+          className="inline-flex items-center px-1.5 py-0.5 rounded text-xs font-medium bg-blue-100 text-blue-700 mx-0.5 cursor-default"
+          title="Source citation — expand below to verify"
         >
           {part}
         </span>
@@ -35,7 +28,6 @@ function formatAnswerWithCitations(text: string): React.ReactNode[] {
   })
 }
 
-// Formats milliseconds into a human-readable string
 function formatDuration(ms: number): string {
   if (ms < 1000) return `${ms}ms`
   return `${(ms / 1000).toFixed(1)}s`
@@ -47,12 +39,12 @@ export default function MessageCard({ message }: Props) {
 
   return (
     <div className={`flex ${isUser ? "justify-end" : "justify-start"} mb-4`}>
-      <div className={`max-w-[85%] ${isUser ? "max-w-[70%]" : ""}`}>
+      <div className={`max-w-[88%] ${isUser ? "max-w-[70%]" : ""}`}>
 
         {/* ── Sender label ── */}
         <div className={`text-xs text-slate-400 mb-1 ${isUser ? "text-right" : "text-left"}`}>
           {isUser ? "You" : "🤖 ResearchBot"}
-          <span className="ml-2">{message.timestamp}</span>
+          <span className="ml-2 font-mono">{message.timestamp}</span>
         </div>
 
         {/* ── Message bubble ── */}
@@ -65,13 +57,22 @@ export default function MessageCard({ message }: Props) {
             }
           `}
         >
-          {/* Message text — with citation badge formatting for agent messages */}
-          <p className="leading-relaxed whitespace-pre-wrap">
+          {/* Answer text */}
+          <p className="text-sm leading-relaxed whitespace-pre-wrap">
             {isAgent
               ? formatAnswerWithCitations(message.text)
               : message.text
             }
           </p>
+
+          {/* ── Agent Steps (agent messages only) ── */}
+          {isAgent && message.agentSteps && message.agentSteps.length > 0 && (
+            <AgentSteps
+              steps={message.agentSteps}
+              iterationCount={message.metadata?.iterationCount ?? message.agentSteps.length}
+              totalDurationMs={message.metadata?.durationMs ?? 0}
+            />
+          )}
 
           {/* ── Citations (agent messages only) ── */}
           {isAgent && message.citations && message.citations.length > 0 && (
@@ -91,10 +92,15 @@ export default function MessageCard({ message }: Props) {
             </div>
           )}
 
-          {/* ── Metadata footer (agent messages only) ── */}
+          {/* ── Metadata footer ── */}
           {isAgent && message.metadata && (
-            <div className="mt-3 pt-2 border-t border-slate-100 flex flex-wrap gap-3 text-xs text-slate-400">
-              <span>📦 {message.metadata.chunksRetrieved} chunks</span>
+            <div className="flex flex-wrap gap-3 pt-2 mt-3 text-xs border-t border-slate-100 text-slate-400">
+              {message.metadata.iterationCount !== undefined && (
+                <span>🤖 {message.metadata.iterationCount} iterations</span>
+              )}
+              {message.metadata.chunksRetrieved > 0 && (
+                <span>📦 {message.metadata.chunksRetrieved} chunks</span>
+              )}
               <span>🔤 {message.metadata.tokensUsed} tokens</span>
               <span>⏱ {formatDuration(message.metadata.durationMs)}</span>
             </div>

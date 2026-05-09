@@ -15,8 +15,10 @@ import type {
   AuthResponse,
   IngestionResult,
   DocumentSummary,
-  RagResult
+  RagResult,
+  AgentResult  
 } from "../types"
+
 
 // ── Base URL ──────────────────────────────────────────────────────────────
 // Vite exposes env variables prefixed with VITE_ via import.meta.env
@@ -140,6 +142,20 @@ export async function queryRag(
 
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.error ?? "RAG query failed")
+  }
+
+  return response.data.data
+}
+
+// frontend/src/utils/api.ts
+// ADD THIS FUNCTION after queryRag():
+
+// ── Agent API ─────────────────────────────────────────────────────────────
+export async function queryAgent(query: string): Promise<AgentResult> {
+  const response = await api.post<ApiResult<AgentResult>>("/agent/chat", { query })
+
+  if (!response.data.success || !response.data.data) {
+    throw new Error(response.data.error ?? "Agent query failed")
   }
 
   return response.data.data

@@ -1,52 +1,39 @@
 // frontend/src/pages/AppPage.tsx
-// The main application page after login.
-// Two-column layout: documents panel (left) + chat (right).
+// Updated Day 14: includes SuggestedQueries and document count in nav.
 
 import { useState, useEffect, useCallback } from "react"
-import { useNavigate }    from "react-router-dom"
-import DocumentUpload     from "../components/DocumentUpload"
-import DocumentList       from "../components/DocumentList"
-import AgentChat          from "../components/AgentChat"
-import { listDocuments }  from "../utils/api"
-import { clearTokens }    from "../utils/auth"
+import { useNavigate }      from "react-router-dom"
+import DocumentUpload       from "../components/DocumentUpload"
+import DocumentList         from "../components/DocumentList"
+import AgentChat            from "../components/AgentChat"
+import { listDocuments }    from "../utils/api"
+import { clearTokens }      from "../utils/auth"
 import type { DocumentSummary, IngestionResult } from "../types"
 
 export default function AppPage() {
   const navigate = useNavigate()
 
-  const [documents, setDocuments] = useState<DocumentSummary[]>([])
+  const [documents,     setDocuments]     = useState<DocumentSummary[]>([])
   const [isLoadingDocs, setIsLoadingDocs] = useState(true)
 
+  const loadDocuments = useCallback(async (): Promise<void> => {
+    try {
+      const docs = await listDocuments()
+      setDocuments(docs)
+    } catch (err: unknown) {
+      console.error("Failed to load documents:", err)
+    } finally {
+      setIsLoadingDocs(false)
+    }
+  }, [])
+
   useEffect(() => {
-    let isMounted = true
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    void loadDocuments()
+  }, [loadDocuments])
 
-    const fetchDocuments = async () => {
-      try {
-        const docs = await listDocuments()
-        if (isMounted) {
-          setDocuments(docs)
-          setIsLoadingDocs(false)
-        }
-      } catch (err: unknown) {
-        console.error("Failed to load documents:", err)
-        if (isMounted) {
-          setIsLoadingDocs(false)
-        }
-      }
-    }
-
-    fetchDocuments()
-
-    return () => {
-      isMounted = false
-    }
-  }, []) // Empty dependency array – runs once on mount
-
-  // ── Handle successful ingestion ────────────────────────────────────────
   const handleIngestionSuccess = useCallback(
     (result: IngestionResult): void => {
-      // Add a placeholder document to the list immediately
-      // (without a full reload) using the ingestion result
       const newDoc: DocumentSummary = {
         id:         result.documentId,
         name:       result.name,
@@ -57,13 +44,11 @@ export default function AppPage() {
         updatedAt:  new Date().toISOString(),
         chunkCount: result.chunkCount
       }
-
       setDocuments(prev => [newDoc, ...prev])
     },
     []
   )
 
-  // ── Handle document deletion ───────────────────────────────────────────
   const handleDocumentDelete = useCallback(
     (documentId: string): void => {
       setDocuments(prev => prev.filter(doc => doc.id !== documentId))
@@ -71,33 +56,57 @@ export default function AppPage() {
     []
   )
 
-  // ── Logout ─────────────────────────────────────────────────────────────
   const handleLogout = (): void => {
     clearTokens()
     navigate("/login")
   }
 
+  // Total chunks indexed across all documents
+  const totalChunks = documents.reduce((sum, doc) => sum + doc.chunkCount, 0)
+
   return (
     <div className="min-h-screen bg-slate-50">
 
-      {/* ── Navigation bar ── */}
-      <nav className="bg-white border-b border-slate-200 px-6 py-3">
-        <div className="max-w-7xl mx-auto flex items-center justify-between">
-          <div className="flex items-center gap-2">
+      {/* ── Navigation ── */}
+      <nav className="sticky top-0 z-10 px-6 py-3 bg-white border-b border-slate-200">
+        <div className="flex items-center justify-between mx-auto max-w-7xl">
+          <div className="flex items-center gap-3">
             <span className="text-xl">🤖</span>
-            <span className="font-bold text-slate-800">ResearchBot</span>
-            <span className="text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full ml-1">
-              RAG + pgvector
-            </span>
+            <div>
+              <span className="font-bold text-slate-800">ResearchBot</span>
+              <span className="ml-2 text-xs text-slate-400 bg-slate-100 px-2 py-0.5 rounded-full">
+                ReAct Agent · pgvector · Gemini
+              </span>
+            </div>
           </div>
 
           <div className="flex items-center gap-4">
+            {/* Infrastructure status indicators */}
+            <div className="items-center hidden gap-3 text-xs md:flex text-slate-400">
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
+                pgvector
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
+                Redis cache
+              </span>
+              <span className="flex items-center gap-1">
+                <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
+                Gemini API
+              </span>
+            </div>
+
+            <div className="hidden w-px h-4 bg-slate-200 md:block" />
+
             <span className="text-xs text-slate-400">
-              {documents.length} document{documents.length !== 1 ? "s" : ""} indexed
+              {documents.length} doc{documents.length !== 1 ? "s" : ""} ·{" "}
+              {totalChunks.toLocaleString()} chunk{totalChunks !== 1 ? "s" : ""} indexed
             </span>
+
             <button
               onClick={handleLogout}
-              className="text-sm text-slate-500 hover:text-slate-700 transition-colors"
+              className="text-sm transition-colors text-slate-500 hover:text-slate-700"
             >
               Sign out
             </button>
@@ -105,21 +114,47 @@ export default function AppPage() {
         </div>
       </nav>
 
-      {/* ── Main content ── */}
-      <main className="max-w-7xl mx-auto px-6 py-6">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+      {/* ── Main layout ── */}
+      <main className="px-6 py-6 mx-auto max-w-7xl">
+        <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
 
-          {/* ── Left panel: Documents ── */}
-          <div className="lg:col-span-1 space-y-4">
+          {/* ── Left: Document management ── */}
+          <div className="space-y-4 lg:col-span-1">
             <DocumentUpload onSuccess={handleIngestionSuccess} />
+
             <DocumentList
               documents={documents}
               onDelete={handleDocumentDelete}
               isLoading={isLoadingDocs}
             />
+
+            {/* ── How it works card ── */}
+            <div className="p-4 bg-white border shadow-sm rounded-xl border-slate-200">
+              <h3 className="mb-3 text-sm font-semibold text-slate-700">
+                ⚙️ How ResearchBot works
+              </h3>
+              <ol className="space-y-2 text-xs text-slate-500">
+                <li className="flex gap-2">
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-blue-600 bg-blue-100 rounded-full">1</span>
+                  <span><strong>Upload</strong> — text chunked into 512-char pieces</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-purple-600 bg-purple-100 rounded-full">2</span>
+                  <span><strong>Embed</strong> — Gemini converts chunks to 768-dim vectors</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-green-600 bg-green-100 rounded-full">3</span>
+                  <span><strong>Search</strong> — vector + keyword hybrid retrieval</span>
+                </li>
+                <li className="flex gap-2">
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-orange-600 bg-orange-100 rounded-full">4</span>
+                  <span><strong>Generate</strong> — Gemini answers from retrieved chunks only</span>
+                </li>
+              </ol>
+            </div>
           </div>
 
-          {/* ── Right panel: Chat ── */}
+          {/* ── Right: Chat ── */}
           <div className="lg:col-span-2">
             <AgentChat />
           </div>

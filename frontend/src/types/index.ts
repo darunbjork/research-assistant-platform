@@ -3,9 +3,29 @@
 // These mirror the backend types — one source of truth for both sides.
 // In a monorepo, you would share these from a packages/types folder.
 // For now, we duplicate them here and keep them in sync manually.
+export interface AgentStep {
+  stepNumber:  number
+  description: string
+  toolUsed?:   string
+  durationMs:  number
+  timestamp:   string  
+}
 
-// ── API Response Envelope ─────────────────────────────────────────────────
-// Every backend response follows this shape.
+// ── Agent Result ──────────────────────────────────────────────────────────
+// Mirrors AgentResult from backend/src/types/agent.types.ts
+
+export interface AgentResult {
+  sessionId:      string
+  finalAnswer:    string
+  citations:      Citation[]
+  steps:          AgentStep[]
+  iterationCount: number
+  status:         AgentStatus
+  tokensUsed:     number
+  durationMs:     number
+}
+
+
 export interface ApiResult<TData> {
   success: boolean
   data:    TData | null
@@ -84,22 +104,27 @@ export type AgentStatus =
   | "idle"
   | "thinking"
   | "searching"
+  | "calculating"
+  | "web_searching"
   | "generating"
+  | "evaluating"
   | "done"
   | "error"
 
 export type MessageSender = "user" | "agent"
 
 export interface ChatMessage {
-  id:         string
-  text:       string
-  sender:     MessageSender
-  timestamp:  string
-  citations?: Citation[]
-  status?:    AgentStatus
+  id:          string
+  text:        string
+  sender:      MessageSender
+  timestamp:   string
+  citations?:  Citation[]
+  agentSteps?: AgentStep[]      
+  status?:     AgentStatus
   metadata?: {
     chunksRetrieved: number
     tokensUsed:      number
     durationMs:      number
+    iterationCount?: number    
   }
 }

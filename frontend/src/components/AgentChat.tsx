@@ -1,25 +1,20 @@
 // frontend/src/components/AgentChat.tsx
-// The main chat interface for ResearchBot.
-// Manages the message history, agent status, and API calls.
+// Updated Day 14: switched from simple RAG to full autonomous agent.
+// Now calls /api/v1/agent/chat and displays reasoning steps.
 //
-// STATE MANAGEMENT:
-//   messages:     the full chat history (user + agent messages)
-//   inputValue:   the current text in the input field
-//   agentStatus:  current pipeline stage (idle → thinking → searching → generating → done)
-//   error:        any error that occurred during the pipeline
-//
-// PIPELINE SIMULATION:
-// We cannot stream status updates without WebSocket (Day 16).
-// For now, we simulate the stages with setTimeout delays
-// so the UI shows meaningful status transitions.
+// KEY CHANGES FROM DAY 12:
+// 1. Uses queryAgent() instead of queryRag()
+// 2. Maps AgentResult.steps → ChatMessage.agentSteps
+// 3. Status transitions match the ReAct loop stages
+// 4. Metadata includes iterationCount
+// 5. Mode toggle: Simple RAG vs Full Agent
 
 import { useState, useRef, useEffect } from "react"
-import { queryRag } from "../utils/api"
-import MessageCard from "./MessageCard"
-import AgentStatusBadge from "./AgentStatusBadge"
+import { queryAgent, queryRag }        from "../utils/api"
+import MessageCard                     from "./MessageCard"
+import AgentStatusBadge               from "./AgentStatusBadge"
 import type { ChatMessage, AgentStatus } from "../types"
 
-// Simple UUID generator — does not require a library
 function generateId(): string {
   return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
 }
@@ -31,14 +26,15 @@ function formatTime(date: Date): string {
   })
 }
 
-// Welcome message shown before any user interaction
+type ChatMode = "agent" | "rag"
+
 const WELCOME_MESSAGE: ChatMessage = {
   id:        "welcome",
-  text: `Hello! I'm ResearchBot 🤖
-
-I can answer questions about the documents you've uploaded. My answers are grounded in the actual document content — I'll show you exactly which sources I used.
-
-Upload a document on the left, then ask me anything about it!`,
+  text:      "Hello! I'm ResearchBot 🤖\n\n" +
+             "I can answer questions about your uploaded documents using two modes:\n\n" +
+             "🤖 **Agent mode** (default): I reason step-by-step, searching multiple times if needed, and can do calculations.\n\n" +
+             "⚡ **RAG mode**: Faster single-pass retrieval — best for simple direct questions.\n\n" +
+             "Upload a document on the left and ask me anything!",
   sender:    "agent",
   timestamp: formatTime(new Date()),
   citations: []
@@ -49,19 +45,30 @@ export default function AgentChat() {
   const [inputValue,  setInputValue]  = useState("")
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle")
   const [error,       setError]       = useState<string | null>(null)
+  const [mode,        setMode]        = useState<ChatMode>("agent")
 
-  // Ref for auto-scrolling to the latest message
-  const bottomRef   = useRef<HTMLDivElement>(null)
-  const inputRef    = useRef<HTMLInputElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null)
+  const inputRef  = useRef<HTMLInputElement>(null)
 
-  // Auto-scroll whenever messages change
   useEffect(() => {
     bottomRef.current?.scrollIntoView({ behavior: "smooth" })
   }, [messages])
 
   const isDisabled = agentStatus !== "idle"
 
-  // ── Send a message ─────────────────────────────────────────────────────
+  // ── Pipeline stage simulation for Agent mode ───────────────────────────
+  // The real stages happen on the backend.
+  // We simulate them on the frontend to show meaningful status transitions.
+  // Day 16 (WebSocket) replaces this with real-time streaming.
+  const simulateAgentStages = async (): Promise<void> => {
+    setAgentStatus("thinking")
+    await new Promise(r => setTimeout(r, 350))
+    setAgentStatus("searching")
+    await new Promise(r => setTimeout(r, 400))
+    // Stay in "searching" while the actual API call runs
+  }
+
+  // ── Send message ───────────────────────────────────────────────────────
   const handleSend = async (): Promise<void> => {
     const query = inputValue.trim()
     if (!query || isDisabled) return
@@ -69,41 +76,74 @@ export default function AgentChat() {
     setError(null)
     setInputValue("")
 
-    // Add user message to chat immediately
+    // Add user message immediately
     const userMessage: ChatMessage = {
       id:        generateId(),
       text:      query,
       sender:    "user",
       timestamp: formatTime(new Date())
     }
-
     setMessages(prev => [...prev, userMessage])
 
-    // ── Simulate pipeline stages ─────────────────────────────────────
-    // Real-time streaming will replace this on Day 16 (WebSocket).
-    // For now, we show each stage for a minimum duration
-    // so the user can see the system is working.
-    setAgentStatus("thinking")
+    if (mode === "agent") {
+      await handleAgentQuery(query)
+    } else {
+      await handleRagQuery(query)
+    }
 
-    // Small delay before showing "searching" so user can read "thinking"
-    await new Promise(resolve => setTimeout(resolve, 400))
+    setTimeout(() => inputRef.current?.focus(), 100)
+  }
+
+  // ── Agent mode: full ReAct loop ────────────────────────────────────────
+  const handleAgentQuery = async (query: string): Promise<void> => {
+    // Start simulating pipeline stages
+    void simulateAgentStages()
+
+    try {
+      const result = await queryAgent(query)
+
+      // Show "generating" briefly after search completes
+      setAgentStatus("generating")
+      await new Promise(r => setTimeout(r, 300))
+
+      const agentMessage: ChatMessage = {
+        id:          generateId(),
+        text:        result.finalAnswer,
+        sender:      "agent",
+        timestamp:   formatTime(new Date()),
+        citations:   result.citations,
+        agentSteps:  result.steps,
+        status:      "done",
+        metadata: {
+          chunksRetrieved: result.citations.length,
+          tokensUsed:      result.tokensUsed,
+          durationMs:      result.durationMs,
+          iterationCount:  result.iterationCount
+        }
+      }
+
+      setMessages(prev => [...prev, agentMessage])
+      setAgentStatus("done")
+      setTimeout(() => setAgentStatus("idle"), 1500)
+
+    } catch (err: unknown) {
+      handleError(err)
+    }
+  }
+
+  // ── RAG mode: single-pass retrieval ────────────────────────────────────
+  const handleRagQuery = async (query: string): Promise<void> => {
+    setAgentStatus("thinking")
+    await new Promise(r => setTimeout(r, 200))
     setAgentStatus("searching")
 
     try {
-      // ── Call the RAG pipeline ──────────────────────────────────────
-      // This is the real API call — it takes 1-3 seconds
-      const startTime = Date.now()
-      const result    = await queryRag(query, 10)
+      const result = await queryRag(query)
 
-      // Show "generating" for at least 300ms after search completes
       setAgentStatus("generating")
-      const elapsed = Date.now() - startTime
-      if (elapsed < 700) {
-        await new Promise(resolve => setTimeout(resolve, 700 - elapsed))
-      }
+      await new Promise(r => setTimeout(r, 300))
 
-      // ── Add agent response to chat ─────────────────────────────────
-      const agentMessage: ChatMessage = {
+      const ragMessage: ChatMessage = {
         id:        generateId(),
         text:      result.answer,
         sender:    "agent",
@@ -117,43 +157,40 @@ export default function AgentChat() {
         }
       }
 
-      setMessages(prev => [...prev, agentMessage])
+      setMessages(prev => [...prev, ragMessage])
       setAgentStatus("done")
-
-      // Reset to idle after 1.5 seconds
       setTimeout(() => setAgentStatus("idle"), 1500)
 
     } catch (err: unknown) {
-      const message = err instanceof Error
-        ? err.message
-        : "An unexpected error occurred. Is the backend server running?"
-
-      setError(message)
-      setAgentStatus("error")
-
-      // Add error message to chat
-      const errorMessage: ChatMessage = {
-        id:        generateId(),
-        text:      `Sorry, I encountered an error: ${message}`,
-        sender:    "agent",
-        timestamp: formatTime(new Date()),
-        status:    "error"
-      }
-
-      setMessages(prev => [...prev, errorMessage])
-
-      // Reset to idle after 3 seconds
-      setTimeout(() => {
-        setAgentStatus("idle")
-        setError(null)
-      }, 3000)
+      handleError(err)
     }
-
-    // Re-focus the input after the response
-    setTimeout(() => inputRef.current?.focus(), 100)
   }
 
-  // ── Handle Enter key ───────────────────────────────────────────────────
+  // ── Error handling ─────────────────────────────────────────────────────
+  const handleError = (err: unknown): void => {
+    const message = err instanceof Error
+      ? err.message
+      : "An unexpected error occurred. Is the backend server running?"
+
+    setError(message)
+    setAgentStatus("error")
+
+    const errorMessage: ChatMessage = {
+      id:        generateId(),
+      text:      `Sorry, I encountered an error: ${message}`,
+      sender:    "agent",
+      timestamp: formatTime(new Date()),
+      status:    "error"
+    }
+
+    setMessages(prev => [...prev, errorMessage])
+
+    setTimeout(() => {
+      setAgentStatus("idle")
+      setError(null)
+    }, 3000)
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
@@ -161,15 +198,21 @@ export default function AgentChat() {
     }
   }
 
-  // ── Clear chat ─────────────────────────────────────────────────────────
   const handleClear = (): void => {
     setMessages([WELCOME_MESSAGE])
     setAgentStatus("idle")
     setError(null)
   }
 
+  // ── Placeholder text based on current state ────────────────────────────
+  const getPlaceholder = (): string => {
+    if (isDisabled) return "ResearchBot is working..."
+    if (mode === "agent") return "Ask anything — I'll reason step by step..."
+    return "Ask a direct question about your documents..."
+  }
+
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-175">
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[700px]">
 
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-5 py-4 border-b border-slate-100">
@@ -178,7 +221,7 @@ export default function AgentChat() {
             🤖 ResearchBot
           </h2>
           <p className="text-xs text-slate-400 mt-0.5">
-            Ask questions about your uploaded documents
+            Grounded answers · Source citations · Reasoning transparency
           </p>
         </div>
 
@@ -187,39 +230,90 @@ export default function AgentChat() {
 
           <button
             onClick={handleClear}
-            className="text-xs text-slate-400 hover:text-slate-600 transition-colors"
+            className="text-xs transition-colors text-slate-400 hover:text-slate-600"
           >
             Clear
           </button>
         </div>
       </div>
 
+      {/* ── Mode Toggle ── */}
+      <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-100">
+        <span className="text-xs font-medium text-slate-500">Mode:</span>
+
+        <div className="flex gap-1 bg-slate-100 p-0.5 rounded-lg">
+          <button
+            onClick={() => setMode("agent")}
+            disabled={isDisabled}
+            className={`
+              px-3 py-1 rounded-md text-xs font-medium transition-colors
+              ${mode === "agent"
+                ? "bg-white text-slate-800 shadow-sm"
+                : "text-slate-500 hover:text-slate-700"
+              }
+              disabled:opacity-50 disabled:cursor-not-allowed
+            `}
+          >
+            🤖 Agent (ReAct)
+          </button>
+          <button
+            onClick={() => setMode("rag")}
+            disabled={isDisabled}
+            className={`
+              px-3 py-1 rounded-md text-xs font-medium transition-colors
+              ${mode === "rag"
+                ? "bg-white text-slate-800 shadow-sm"
+                : "text-slate-500 hover:text-slate-700"
+              }
+              disabled:opacity-50 disabled:cursor-not-allowed
+            `}
+          >
+            ⚡ RAG (Direct)
+          </button>
+        </div>
+
+        <span className="text-xs text-slate-400">
+          {mode === "agent"
+            ? "Multi-step reasoning · up to 5 iterations"
+            : "Single-pass retrieval · faster"
+          }
+        </span>
+      </div>
+
       {/* ── Message list ── */}
-      <div className="flex-1 overflow-y-auto px-5 py-4 chat-scroll">
+      <div className="flex-1 px-5 py-4 overflow-y-auto chat-scroll">
         {messages.map(message => (
           <MessageCard key={message.id} message={message} />
         ))}
 
-        {/* Typing indicator while agent is working */}
+        {/* Typing indicator */}
         {isDisabled && agentStatus !== "done" && agentStatus !== "error" && (
           <div className="flex justify-start mb-4">
-            <div className="bg-white border border-slate-200 rounded-2xl rounded-bl-sm px-4 py-3 shadow-sm">
+            <div className="px-4 py-3 bg-white border rounded-bl-sm shadow-sm border-slate-200 rounded-2xl">
               <div className="flex items-center gap-1">
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "0ms" }} />
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "150ms" }} />
-                <div className="w-2 h-2 bg-slate-400 rounded-full animate-bounce" style={{ animationDelay: "300ms" }} />
+                <div
+                  className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                  style={{ animationDelay: "0ms" }}
+                />
+                <div
+                  className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                  style={{ animationDelay: "150ms" }}
+                />
+                <div
+                  className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
+                  style={{ animationDelay: "300ms" }}
+                />
               </div>
             </div>
           </div>
         )}
 
-        {/* Auto-scroll anchor */}
         <div ref={bottomRef} />
       </div>
 
       {/* ── Error banner ── */}
       {error && (
-        <div className="mx-5 mb-2 p-2 bg-red-50 border border-red-200 rounded-lg">
+        <div className="p-2 mx-5 mb-2 border border-red-200 rounded-lg bg-red-50">
           <p className="text-xs text-red-700">{error}</p>
         </div>
       )}
@@ -233,11 +327,7 @@ export default function AgentChat() {
             value={inputValue}
             onChange={e => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={
-              isDisabled
-                ? "ResearchBot is working..."
-                : "Ask a question about your documents..."
-            }
+            placeholder={getPlaceholder()}
             disabled={isDisabled}
             className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-400 transition-colors"
           />
@@ -245,18 +335,21 @@ export default function AgentChat() {
           <button
             onClick={() => void handleSend()}
             disabled={isDisabled || !inputValue.trim()}
-            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-medium rounded-xl text-sm transition-colors flex items-center gap-1.5"
+            className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-medium rounded-xl text-sm transition-colors flex items-center gap-1.5 flex-shrink-0"
           >
             {isDisabled ? (
-              <span className="w-4 h-4 border-2 border-slate-400 border-t-transparent rounded-full animate-spin" />
+              <span className="w-4 h-4 border-2 rounded-full border-slate-400 border-t-transparent animate-spin" />
             ) : (
-              "Send →"
+              <>
+                Send
+                <span className="hidden sm:inline">→</span>
+              </>
             )}
           </button>
         </div>
 
         <p className="text-xs text-slate-400 mt-1.5 text-center">
-          Press Enter to send · Answers are grounded in your documents
+          Enter to send · Expand "reasoning steps" to verify sources
         </p>
       </div>
     </div>
