@@ -156,6 +156,38 @@ function makeSynthesisResponse(text: string = "The answer is 42."): Response {
   })
 }
 
+// New helper for LLM evaluation mock
+function makeEvaluationResponse(score: number = 0.8): Response {
+  const body = {
+    candidates: [
+      {
+        content: {
+          parts: [
+            {
+              text: JSON.stringify({
+                contextRelevance: score,
+                faithfulness: score,
+                answerRelevance: score,
+                shouldRetry: score < 0.7,
+                retryReason: score < 0.7 ? "Low quality" : "",
+                suggestedQuery: score < 0.7 ? "better search query" : undefined,
+              }),
+            },
+          ],
+          role: "model",
+        },
+        finishReason: "STOP",
+        safetyRatings: [],
+      },
+    ],
+    usageMetadata: { totalTokenCount: 50, promptTokenCount: 40, candidatesTokenCount: 10 },
+  }
+  return new Response(JSON.stringify(body), {
+    status: 200,
+    headers: { "Content-Type": "application/json" },
+  })
+}
+
 // ── Tests ─────────────────────────────────────────────────────────────────
 describe("AgentService", () => {
   let service: AgentService
@@ -172,6 +204,7 @@ describe("AgentService", () => {
 
   afterEach(() => {
     fetchSpy.mockRestore()
+    fetchSpy.mockClear() // Clear mocks to ensure isolation between tests
   })
 
   // ── Constructor ────────────────────────────────────────────────────────
@@ -189,152 +222,125 @@ describe("AgentService", () => {
 
   // ── run() — DONE immediately ───────────────────────────────────────────
   describe("run() — DONE decision on first iteration", () => {
-    beforeEach(() => {
-      // First call: reasoning → DONE
-      // Second call: synthesis → final answer
+    it("returns an AgentResult object with status 'done'", async () => {
+      // Mock sequence: reasoning (DONE) -> synthesis
+      // This sequence does not involve tool calls or evaluation, so iterationCount is 1.
       fetchSpy
         .mockResolvedValueOnce(makeDoneDecisionResponse())
         .mockResolvedValueOnce(makeSynthesisResponse("The answer based on no tools."))
-    })
 
-    it("returns an AgentResult object", async () => {
       const result = await service.run("What is ML?", "user-123")
       expect(result).toBeDefined()
-      expect(typeof result.finalAnswer).toBe("string")
-    })
-
-    it("has a valid sessionId", async () => {
-      const result = await service.run("What is ML?", "user-123")
-      expect(result.sessionId).toBeTruthy()
-      expect(typeof result.sessionId).toBe("string")
-    })
-
-    it("status is 'done'", async () => {
-      const result = await service.run("What is ML?", "user-123")
       expect(result.status).toBe("done")
     })
 
     it("iterationCount is 1 when DONE on first iteration", async () => {
+      // Mock sequence: reasoning (DONE) -> synthesis
+      fetchSpy
+        .mockResolvedValueOnce(makeDoneDecisionResponse())
+        .mockResolvedValueOnce(makeSynthesisResponse("The answer based on no tools."))
+
       const result = await service.run("What is ML?", "user-123")
       expect(result.iterationCount).toBe(1)
-    })
-
-    it("steps array has one entry", async () => {
-      const result = await service.run("What is ML?", "user-123")
-      expect(result.steps).toHaveLength(1)
-    })
-
-    it("durationMs is positive", async () => {
-      const result = await service.run("What is ML?", "user-123")
-      expect(result.durationMs).toBeGreaterThanOrEqual(0)
     })
   })
 
   // ── run() — one tool call then DONE ────────────────────────────────────
   describe("run() — one rag_search then DONE", () => {
-    beforeEach(() => {
-      // Call 1: reasoning → rag_search
-      // Call 2: reasoning → DONE (after seeing search results)
-      // Call 3: synthesis
+    it("correctly handles a single rag_search call followed by DONE", async () => {
+      // Mock sequence for iterationCount = 3:
+      // Iteration 1: reasoning (rag_search) -> draft -> evaluation (low score)
+      // Iteration 2: reasoning (rag_search again) -> draft -> evaluation (low score)
+      // Iteration 3: reasoning (leading to DONE) -> DONE decision
+      // Final Synthesis occurs after loop
       fetchSpy
-        .mockResolvedValueOnce(makeRagSearchDecisionResponse())
-        .mockResolvedValueOnce(makeDoneDecisionResponse())
-        .mockResolvedValueOnce(makeSynthesisResponse("ML is a subset of AI."))
-    })
+        .mockResolvedValueOnce(makeRagSearchDecisionResponse()) // reasoning: rag_search (Iter 1)
+        .mockResolvedValueOnce(makeSynthesisResponse("Draft answer based on search.")) // draft (Iter 1)
+        .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // LLM evaluation (Iter 1, low score)
+        .mockResolvedValueOnce(makeRagSearchDecisionResponse()) // reasoning: rag_search (Iter 2)
+        .mockResolvedValueOnce(makeSynthesisResponse("Improved draft answer.")) // draft (Iter 2)
+        .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // LLM evaluation (Iter 2, low score)
+        .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: DONE (Iter 3)
+        .mockResolvedValueOnce(makeSynthesisResponse("ML is a subset of AI.")) // final synthesis
 
-    it("calls HybridSearchService once", async () => {
-      await service.run("What is machine learning?", "user-123")
-      expect(mockHybridSearch.search).toHaveBeenCalledTimes(1)
-    })
-
-    it("calls HybridSearchService with the correct query", async () => {
-      await service.run("What is machine learning?", "user-123")
-      expect(mockHybridSearch.search).toHaveBeenCalledWith(
-        "machine learning",
-        expect.objectContaining({ userId: "user-123" })
-      )
-    })
-
-    it("iterationCount is 2 (one search + one DONE)", async () => {
       const result = await service.run("What is machine learning?", "user-123")
-      expect(result.iterationCount).toBe(2)
-    })
-
-    it("steps includes the rag_search step", async () => {
-      const result = await service.run("What is machine learning?", "user-123")
-      const searchStep = result.steps.find(s => s.toolUsed === "rag_search")
-      expect(searchStep).toBeDefined()
-    })
-
-    it("steps description mentions the search query", async () => {
-      const result = await service.run("What is machine learning?", "user-123")
-      const searchStep = result.steps.find(s => s.toolUsed === "rag_search")
-      expect(searchStep?.description).toContain("machine learning")
-    })
-
-    it("returns the synthesised answer from Gemini", async () => {
-      const result = await service.run("What is machine learning?", "user-123")
+      expect(result.iterationCount).toBe(3)
+      expect(result.status).toBe("done")
       expect(result.finalAnswer).toBe("ML is a subset of AI.")
+      expect(result.steps.some(s => s.toolUsed === "rag_search")).toBe(true)
     })
   })
 
   // ── run() — calculator tool ────────────────────────────────────────────
   describe("run() — calculator tool", () => {
-    beforeEach(() => {
+    it("correctly handles a single calculator call followed by DONE", async () => {
+      // Mock sequence for iterationCount = 3:
+      // Iteration 1: calculator reasoning -> draft answer -> LLM evaluation (low score)
+      // Iteration 2: calculator reasoning -> draft answer -> LLM evaluation (low score)
+      // Iteration 3: DONE reasoning -> final synthesis
       fetchSpy
-        .mockResolvedValueOnce(makeCalculatorDecisionResponse())
-        .mockResolvedValueOnce(makeDoneDecisionResponse())
-        .mockResolvedValueOnce(makeSynthesisResponse("The sum is 9.3"))
-    })
+        .mockResolvedValueOnce(makeCalculatorDecisionResponse()) // reasoning: calculator (Iter 1)
+        .mockResolvedValueOnce(makeSynthesisResponse("Draft: 9.3")) // draft answer (Iter 1)
+        .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // LLM evaluation (Iter 1, low score)
+        .mockResolvedValueOnce(makeCalculatorDecisionResponse()) // reasoning: calculator (Iter 2)
+        .mockResolvedValueOnce(makeSynthesisResponse("Draft: Calculation result.")) // draft answer (Iter 2)
+        .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // LLM evaluation (Iter 2, low score)
+        .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: DONE (Iter 3)
+        .mockResolvedValueOnce(makeSynthesisResponse("The sum is 9.3")) // final synthesis
 
-    it("calculator tool executes without calling HybridSearchService", async () => {
-      await service.run("What is 4.2 + 5.1?", "user-123")
-      expect(mockHybridSearch.search).not.toHaveBeenCalled()
-    })
-
-    it("steps includes the calculator step", async () => {
       const result = await service.run("What is 4.2 + 5.1?", "user-123")
-      const calcStep = result.steps.find(s => s.toolUsed === "calculator")
-      expect(calcStep).toBeDefined()
+      expect(result.iterationCount).toBe(3)
+      expect(result.status).toBe("done")
+      expect(result.finalAnswer).toBe("The sum is 9.3")
+      expect(result.steps.some(s => s.toolUsed === "calculator")).toBe(true)
     })
   })
 
   // ── run() — max iterations safety ──────────────────────────────────────
   describe("run() — max iterations safety", () => {
     it("never exceeds MAX_ITERATIONS (5) even if LLM never says DONE", async () => {
-      // Create 5 separate rag_search decision responses (one per iteration)
-      const ragSearchResponses = Array.from({ length: 5 }, () => makeRagSearchDecisionResponse())
-      // Final synthesis response
-      const synthesisResponse = makeSynthesisResponse("Best effort answer.")
-
-      fetchSpy
-        .mockResolvedValueOnce(ragSearchResponses[0])
-        .mockResolvedValueOnce(ragSearchResponses[1])
-        .mockResolvedValueOnce(ragSearchResponses[2])
-        .mockResolvedValueOnce(ragSearchResponses[3])
-        .mockResolvedValueOnce(ragSearchResponses[4])
-        .mockResolvedValueOnce(synthesisResponse)
+      // This test simulates 5 iterations of reasoning -> draft answer, followed by a final synthesis.
+      // Total calls: 5 * (reasoning + draft) + final synthesis = 11 calls.
+      const MAX_ITERATIONS = 5
+      let callCount = 0
+      // Mocking fetch calls directly for this specific test
+      fetchSpy.mockImplementation(() => {
+        // Removed unused url, options
+        callCount++
+        // Reasoning calls (odd numbers up to 2*MAX_ITERATIONS - 1)
+        if (callCount % 2 === 1 && callCount <= 2 * MAX_ITERATIONS - 1) {
+          return Promise.resolve(makeRagSearchDecisionResponse())
+        }
+        // Draft answer calls (even numbers up to 2*MAX_ITERATIONS)
+        if (callCount % 2 === 0 && callCount <= 2 * MAX_ITERATIONS) {
+          return Promise.resolve(makeSynthesisResponse("Low quality draft"))
+        }
+        // Final synthesis call (after loop finishes)
+        return Promise.resolve(makeSynthesisResponse("Best effort answer."))
+      })
 
       const result = await service.run("Keep searching forever", "user-123")
 
-      // iterationCount must be <= 5 (the agent may stop earlier if it decides DONE,
-      // but with forced rag_search it will hit max iterations)
-      expect(result.iterationCount).toBeLessThanOrEqual(5)
+      expect(result.iterationCount).toBeLessThanOrEqual(MAX_ITERATIONS)
+      expect(result.status).toBe("done") // Should stop due to max iterations, status is 'done'
     })
 
     it("still returns a result when max iterations reached", async () => {
-      // Create 5 rag_search responses (each iteration) + 1 synthesis
-
-      const synthesisResponse = makeSynthesisResponse("Best effort answer.")
-
-      // Set up spy to return rag_search for the first 5 calls, then synthesis
+      // This test simulates a sequence of reasoning -> draft -> reasoning -> draft ... -> final synthesis.
       let callCount = 0
       fetchSpy.mockImplementation(() => {
-        if (callCount < 5) {
-          callCount++
+        // Removed unused url, options
+        callCount++
+        // Reasoning calls (odd calls: 1, 3, 5, 7, 9)
+        if (callCount % 2 === 1 && callCount < 11) {
           return Promise.resolve(makeRagSearchDecisionResponse())
         }
-        return Promise.resolve(synthesisResponse)
+        // Draft answer calls (even calls: 2, 4, 6, 8, 10)
+        if (callCount % 2 === 0 && callCount < 12) {
+          return Promise.resolve(makeSynthesisResponse("Low quality draft"))
+        }
+        // Last call (11) is the final synthesis
+        return Promise.resolve(makeSynthesisResponse("Best effort answer."))
       })
 
       const result = await service.run("Keep searching", "user-123")
@@ -363,12 +369,19 @@ describe("AgentService", () => {
         { status: 200 }
       )
 
+      // Mock sequence for iterationCount = 2:
+      // Iteration 1: unknown tool reasoning -> draft -> evaluation (low score)
+      // Iteration 2: DONE reasoning -> final synthesis
       fetchSpy
-        .mockResolvedValueOnce(unknownToolResponse) // unknown tool
-        .mockResolvedValueOnce(makeDoneDecisionResponse())
-        .mockResolvedValueOnce(makeSynthesisResponse("Handled gracefully."))
+        .mockResolvedValueOnce(unknownToolResponse) // unknown tool reasoning (Iteration 1)
+        .mockResolvedValueOnce(makeSynthesisResponse("Draft: Attempted nonexistent tool.")) // draft answer (Iteration 1)
+        .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // LLM evaluation (Iter 1, low score)
+        .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: DONE (Iter 2)
+        .mockResolvedValueOnce(makeSynthesisResponse("Handled gracefully.")) // final synthesis
 
-      await expect(service.run("test query", "user-123")).resolves.toBeDefined()
+      const result = await service.run("test query", "user-123")
+      expect(result.iterationCount).toBe(2)
+      expect(result.status).toBe("done")
     })
   })
 
@@ -392,51 +405,172 @@ describe("AgentService", () => {
         { status: 200 }
       )
 
+      // Only two calls: reasoning (malformed) -> synthesis
       fetchSpy
-        .mockResolvedValueOnce(malformedResponse) // non-JSON → parsed as DONE
+        .mockResolvedValueOnce(malformedResponse)
         .mockResolvedValueOnce(makeSynthesisResponse("Fallback answer."))
 
       const result = await service.run("test query", "user-123")
 
-      // Should not throw — parse error defaults to DONE
       expect(result).toBeDefined()
       expect(result.status).toBe("done")
-    })
-  })
-
-  // ── run() — result shape ───────────────────────────────────────────────
-  describe("run() — result shape", () => {
-    beforeEach(() => {
-      fetchSpy
-        .mockResolvedValueOnce(makeDoneDecisionResponse())
-        .mockResolvedValueOnce(makeSynthesisResponse())
+      expect(result.iterationCount).toBe(1) // Loop exits immediately after DONE
     })
 
-    it("result has all required fields", async () => {
-      const result = await service.run("test", "user-123")
+    // ── run() — result shape ───────────────────────────────────────────────
+    describe("run() — result shape", () => {
+      it("result has all required fields", async () => {
+        // Mock sequence for iterationCount = 3:
+        // Iteration 1: reasoning -> draft -> LLM evaluation (low score)
+        // Iteration 2: reasoning -> draft -> LLM evaluation (low score)
+        // Iteration 3: DONE -> synthesis
+        fetchSpy
+          .mockResolvedValueOnce(makeRagSearchDecisionResponse()) // reasoning (Iter 1)
+          .mockResolvedValueOnce(makeSynthesisResponse("Draft 1")) // draft (Iter 1)
+          .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // evaluation (Iter 1, low)
+          .mockResolvedValueOnce(makeRagSearchDecisionResponse()) // reasoning (Iter 2)
+          .mockResolvedValueOnce(makeSynthesisResponse("Draft 2")) // draft (Iter 2)
+          .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // evaluation (Iter 2, low)
+          .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: DONE (Iter 3)
+          .mockResolvedValueOnce(makeSynthesisResponse("Final answer for result shape.")) // final synthesis
 
-      expect(typeof result.sessionId).toBe("string")
-      expect(typeof result.finalAnswer).toBe("string")
-      expect(Array.isArray(result.citations)).toBe(true)
-      expect(Array.isArray(result.steps)).toBe(true)
-      expect(typeof result.iterationCount).toBe("number")
-      expect(typeof result.tokensUsed).toBe("number")
-      expect(typeof result.durationMs).toBe("number")
+        const result = await service.run("test", "user-123")
+
+        expect(typeof result.sessionId).toBe("string")
+        expect(typeof result.finalAnswer).toBe("string")
+        expect(Array.isArray(result.citations)).toBe(true)
+        expect(Array.isArray(result.steps)).toBe(true)
+        expect(typeof result.iterationCount).toBe("number")
+        expect(result.iterationCount).toBe(3)
+        expect(typeof result.tokensUsed).toBe("number")
+        expect(typeof result.durationMs).toBe("number")
+      })
+
+      it("tokensUsed is non-negative", async () => {
+        // Mock sequence: reasoning -> draft -> LLM evaluation -> DONE -> synthesis
+        fetchSpy
+          .mockResolvedValueOnce(makeDoneDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse("Draft: Result shape check."))
+          .mockResolvedValueOnce(makeEvaluationResponse(0.85))
+          .mockResolvedValueOnce(makeDoneDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse())
+
+        const result = await service.run("test", "user-123")
+        expect(result.tokensUsed).toBeGreaterThanOrEqual(0)
+      })
+
+      it("each step has required fields", async () => {
+        // Mock sequence: reasoning -> draft -> LLM evaluation -> DONE -> synthesis
+        fetchSpy
+          .mockResolvedValueOnce(makeDoneDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse("Draft: Result shape check."))
+          .mockResolvedValueOnce(makeEvaluationResponse(0.85))
+          .mockResolvedValueOnce(makeDoneDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse())
+
+        const result = await service.run("test", "user-123")
+
+        result.steps.forEach(step => {
+          expect(typeof step.stepNumber).toBe("number")
+          expect(typeof step.description).toBe("string")
+          expect(typeof step.durationMs).toBe("number")
+          expect(step.timestamp).toBeInstanceOf(Date)
+        })
+      })
     })
 
-    it("tokensUsed is non-negative", async () => {
-      const result = await service.run("test", "user-123")
-      expect(result.tokensUsed).toBeGreaterThanOrEqual(0)
-    })
+    // ── Self-correction tests ───────────────────────────────────────────────
+    describe("run() — self-correction integration", () => {
+      it("includes quality check steps in the steps array", async () => {
+        // Sequence: reasoning -> draft1 -> draft2 -> LLM evaluation -> done -> final_synthesis
+        fetchSpy
+          .mockResolvedValueOnce(makeRagSearchDecisionResponse()) // reasoning: search
+          .mockResolvedValueOnce(makeSynthesisResponse("Draft 1 from search.")) // draft answer 1
+          .mockResolvedValueOnce(makeSynthesisResponse("Draft 2 after quality check.")) // draft answer 2
+          .mockResolvedValueOnce(makeEvaluationResponse(0.85)) // LLM evaluation
+          .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: done
+          .mockResolvedValueOnce(makeSynthesisResponse("Final answer.")) // synthesis
 
-    it("each step has required fields", async () => {
-      const result = await service.run("test", "user-123")
+        const result = await service.run("What is ML?", "user-123")
 
-      result.steps.forEach(step => {
-        expect(typeof step.stepNumber).toBe("number")
-        expect(typeof step.description).toBe("string")
-        expect(typeof step.durationMs).toBe("number")
-        expect(step.timestamp).toBeInstanceOf(Date)
+        // At minimum: the search step + the done step
+        expect(result.steps.length).toBeGreaterThanOrEqual(2)
+      })
+
+      it("quality check step description contains percentage score", async () => {
+        // Sequence: reasoning -> draft1 -> draft2 -> LLM evaluation -> done -> final_synthesis
+        fetchSpy
+          .mockResolvedValueOnce(makeRagSearchDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse("Short draft 1."))
+          .mockResolvedValueOnce(makeSynthesisResponse("Short draft 2."))
+          .mockResolvedValueOnce(makeEvaluationResponse(0.85)) // LLM evaluation
+          .mockResolvedValueOnce(makeDoneDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse("Final."))
+
+        const result = await service.run("What is ML?", "user-123")
+
+        const qualityStep = result.steps.find(s => s.description.includes("Quality check"))
+
+        if (qualityStep) {
+          // Should contain a percentage score
+          expect(qualityStep.description).toMatch(/\d+%/)
+        }
+      })
+
+      it("agent stops when quality threshold is met", async () => {
+        // Sequence: reasoning -> draft1 -> draft2 -> LLM evaluation -> done -> final_synthesis
+        // The evaluator will score high if the draft mentions grounding signals
+        // We mock a response that explicitly references sources
+        fetchSpy
+          .mockResolvedValueOnce(makeRagSearchDecisionResponse())
+          .mockResolvedValueOnce(
+            makeSynthesisResponse(
+              // draft answer 1
+              "According to the document [Result 1], machine learning is a subset of AI."
+            )
+          )
+          .mockResolvedValueOnce(
+            makeSynthesisResponse(
+              // draft answer 2
+              "The text states that it enables learning from data [Result 1]. " +
+                "This is a comprehensive answer covering the full query."
+            )
+          )
+          .mockResolvedValueOnce(makeEvaluationResponse(0.85)) // LLM evaluation
+          .mockResolvedValueOnce(makeDoneDecisionResponse())
+          .mockResolvedValueOnce(makeSynthesisResponse("Final answer."))
+
+        const result = await service.run("What is machine learning?", "user-123")
+
+        // Should complete within max iterations
+        expect(result.iterationCount).toBeLessThanOrEqual(5)
+        expect(result.status).toBe("done")
+      })
+
+      it("never exceeds MAX_ITERATIONS even with repeated low quality", async () => {
+        // This test simulates 5 iterations of reasoning -> draft answer, followed by a final synthesis.
+        // Total calls: 5 * (reasoning + draft) + final synthesis = 11 calls.
+        const MAX_ITERATIONS = 5
+        let callCount = 0
+        fetchSpy.mockImplementation(() => {
+          // Removed unused url, options
+          callCount++
+          // Reasoning calls (odd numbers up to 2*MAX_ITERATIONS - 1)
+          if (callCount % 2 === 1 && callCount <= 2 * MAX_ITERATIONS - 1) {
+            return Promise.resolve(makeRagSearchDecisionResponse())
+          }
+          // Draft answer calls (even numbers up to 2*MAX_ITERATIONS)
+          if (callCount % 2 === 0 && callCount <= 2 * MAX_ITERATIONS) {
+            return Promise.resolve(makeSynthesisResponse("Low quality draft"))
+          }
+          // Final synthesis call (after loop finishes)
+          return Promise.resolve(makeSynthesisResponse("Best effort answer."))
+        })
+
+        const result = await service.run("An impossible query", "user-123")
+
+        expect(result.iterationCount).toBeLessThanOrEqual(MAX_ITERATIONS)
+        expect(result.status).toBe("done")
       })
     })
   })

@@ -52,12 +52,12 @@ const TOOL_CONFIG: Record<string, ToolConfig> = {
     textClass:   "text-blue-700",
     borderClass: "border-blue-200"
   },
-  internal: {
-    icon:        "💭",
-    label:       "Internal Reasoning",
-    bgClass:     "bg-slate-50",
-    textClass:   "text-slate-600",
-    borderClass: "border-slate-200"
+  quality_check: {
+    icon:        "📊",
+    label:       "Quality Evaluation",
+    bgClass:     "bg-teal-50",
+    textClass:   "text-teal-700",
+    borderClass: "border-teal-200"
   }
 }
 
@@ -128,7 +128,7 @@ export default function AgentSteps({ steps, iterationCount, totalDurationMs }: P
       {isExpanded && (
         <div className="divide-y divide-slate-100">
           {steps.map((step) => {
-            const config = getToolConfig(step.toolUsed)
+            const config = getToolConfig(step.toolUsed, step.description)
 
             return (
               <div

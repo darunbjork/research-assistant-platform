@@ -85,4 +85,3 @@ export interface Citation {
   excerpt: string // first 200 chars of the chunk — shown in UI
   relevanceScore: number // the score used to rank this chunk (0-1)
 }
-
