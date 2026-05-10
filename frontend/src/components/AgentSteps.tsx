@@ -61,8 +61,14 @@ const TOOL_CONFIG: Record<string, ToolConfig> = {
   }
 }
 
-function getToolConfig(toolUsed?: string): ToolConfig {
-  if (!toolUsed) return TOOL_CONFIG["internal"]!
+function getToolConfig(toolUsed?: string, description?: string): ToolConfig {
+  if (!toolUsed) {
+    // Quality check steps have no toolUsed but contain "Quality check" in description
+    if (description?.includes("Quality check")) {
+      return TOOL_CONFIG["quality_check"] ?? TOOL_CONFIG["internal"]!
+    }
+    return TOOL_CONFIG["internal"]!
+  }
   return TOOL_CONFIG[toolUsed] ?? TOOL_CONFIG["internal"]!
 }
 

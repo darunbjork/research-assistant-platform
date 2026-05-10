@@ -1,11 +1,10 @@
 /* eslint-disable no-console */
-// backend/src/app.ts
-// Updated Day 7: Redis health check added
 
 import express, { type Request, type Response } from "express"
 import cors from "cors"
 import helmet from "helmet"
 import dotenv from "dotenv"
+import { createServer } from "http" // ← NEW
 import swaggerUi from "swagger-ui-express"
 import { PrismaClient } from "@prisma/client"
 import { ok } from "./types"
@@ -14,11 +13,12 @@ import { requestLoggerMiddleware } from "./middleware/request-logger.middleware"
 import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
 import authRouter from "./routes/auth.routes"
-import { swaggerSpec } from "./utils/swagger"
-import { checkRedisHealth } from "./utils/redis"
 import documentRouter from "./routes/document.routes"
 import ragRouter from "./routes/rag.routes"
 import agentRouter from "./routes/agent.routes"
+import { swaggerSpec } from "./utils/swagger"
+import { checkRedisHealth } from "./utils/redis"
+import { createWebSocketServer } from "./websocket/ws.server" // ← NEW
 
 dotenv.config()
 
@@ -64,14 +64,13 @@ app.use("/api/v1/documents", documentRouter)
 app.use("/api/v1/rag", ragRouter)
 app.use("/api/v1/agent", agentRouter)
 
-// Health check — now verifies ALL three services
+// ── Health Check ──────────────────────────────────────────────────────────
 app.get("/health", async (_req: Request, res: Response) => {
-  // Run both checks in parallel — faster than sequential
   const [dbStatus, redisStatus] = await Promise.all([
     prisma.$queryRaw`SELECT 1`
       .then((): "ok" => "ok")
       .catch((error: unknown): "error" => {
-        logError("Health: database unreachable", error, { service: "HealthCheck" })
+        logError("Health: db unreachable", error, { service: "HealthCheck" })
         return "error"
       }),
     checkRedisHealth(),
@@ -83,11 +82,7 @@ app.get("/health", async (_req: Request, res: Response) => {
     ok({
       status: allOk ? "ok" : "degraded",
       timestamp: new Date().toISOString(),
-      services: {
-        api: "ok",
-        db: dbStatus,
-        redis: redisStatus,
-      },
+      services: { api: "ok", db: dbStatus, redis: redisStatus },
     })
   )
 })
@@ -100,17 +95,23 @@ app.use((_req: Request, res: Response) => {
 // ── Error Middleware — MUST BE LAST ───────────────────────────────────────
 app.use(errorMiddleware)
 
-// ── Start Server ──────────────────────────────────────────────────────────
-app.listen(PORT, () => {
+// ── Start HTTP + WebSocket Server ─────────────────────────────────────────
+// createServer() wraps Express in a Node.js HTTP server.
+// This lets us attach the WebSocket server to the same port.
+const httpServer = createServer(app)
+createWebSocketServer(httpServer) // attach WebSocket to same HTTP server
+
+httpServer.listen(PORT, () => {
   logStartup("Server started", {
     service: "App",
     port: Number(PORT),
     nodeEnv: process.env.NODE_ENV ?? "development",
   })
-  console.log(`✅ Server running  → http://localhost:${PORT}`)
-  console.log(`🏥 Health check   → http://localhost:${PORT}/health`)
-  console.log(`📊 Metrics        → http://localhost:${PORT}/metrics`)
-  console.log(`📖 API Docs       → http://localhost:${PORT}/api/docs`)
+  console.log(`✅ HTTP  server → http://localhost:${PORT}`)
+  console.log(`🔌 WebSocket   → ws://localhost:${PORT}/ws/agent`)
+  console.log(`🏥 Health      → http://localhost:${PORT}/health`)
+  console.log(`📊 Metrics     → http://localhost:${PORT}/metrics`)
+  console.log(`📖 API Docs    → http://localhost:${PORT}/api/docs`)
 })
 
 export default app

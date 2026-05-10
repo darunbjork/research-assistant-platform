@@ -4,8 +4,6 @@
 # "docker compose down" stops everything (data is preserved in volumes).
 # "docker compose down -v" stops AND deletes all data (use for a clean reset).
 
-version: "3.9"
-
 services:
   postgres:
     image: pgvector/pgvector:pg16
@@ -15,36 +13,33 @@ services:
       POSTGRES_PASSWORD: password
       POSTGRES_DB: ragdb
     ports:
-      - "5432:5432" # host:container — your app connects via localhost:5432
+      - "5433:5432" # host:container – your app connects via localhost:5433
     volumes:
-      - postgres_data:/var/lib/postgresql/data # data survives container restarts
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
-      test: [ "CMD-SHELL", "pg_isready -U user -d ragdb" ]
+      test: ["CMD-SHELL", "pg_isready -U user -d ragdb"]
       interval: 5s
       timeout: 5s
       retries: 5
 
-  # ── Redis ────────────────────────────────────────────────────────────────
-  # Used for two things in this project:
-  # 1. Embedding cache — same text = same vector, skip the API call
-  # 2. Bull job queue — async document ingestion without blocking the user
   redis:
     image: redis:7-alpine
     container_name: rag_redis
     ports:
-      - "6379:6379" # host:container
+      - "6379:6379"
     volumes:
       - redis_data:/data
     healthcheck:
-      test: [ "CMD", "redis-cli", "ping" ]
+      test: ["CMD", "redis-cli", "ping"]
       interval: 5s
       timeout: 3s
       retries: 5
 
-# ── Named Volumes ─────────────────────────────────────────────────────────
-# Docker manages these directories on your host machine.
-# Data persists between "docker compose down" and "docker compose up".
-# Only "docker compose down -v" deletes them.
+  web:
+    build: ./frontend
+    ports:
+      - "5173:5173"
+
 volumes:
   postgres_data:
   redis_data:
