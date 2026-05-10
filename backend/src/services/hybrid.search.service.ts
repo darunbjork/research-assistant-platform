@@ -1,17 +1,3 @@
-// backend/src/services/hybrid.search.service.ts
-// Combines vector search and keyword search into one ranked result list
-// using Reciprocal Rank Fusion (RRF).
-//
-// THIS IS THE SERVICE THAT RETRIEVAL ACTUALLY CALLS.
-// VectorSearchService and KeywordSearchService are NOT called directly
-// by controllers or the agent — HybridSearchService orchestrates both.
-//
-// PIPELINE:
-// 1. Run vector search and keyword search in PARALLEL (faster than sequential)
-// 2. Merge the two ranked lists with RRF
-// 3. Sort by RRF score descending
-// 4. Return top-K results
-
 import type { PrismaClient } from "@prisma/client"
 import type { EmbeddingService } from "./embedding.service"
 import { VectorSearchService } from "./vector.search.service"
@@ -24,18 +10,11 @@ import type {
   Citation,
 } from "../types"
 import { logRagEvent } from "../utils/logger"
+import type { RerankerService } from "./reranker.service"
+import type { RerankedResult } from "../types/retrieval.types"
 import { retrievalRequests, retrievalLatency } from "../utils/metrics"
 
-// ── RRF Configuration ─────────────────────────────────────────────────────
-// k = 60 is the standard smoothing constant from the original RRF paper.
-// Higher k: results from both lists are weighted more equally.
-// Lower k: results at the top of each list are weighted more heavily.
-// Do not change this without benchmarking on your specific data.
 const RRF_K = 60
-
-// Sentinel rank for a document NOT appearing in a given list.
-// A document only in the vector list gets keywordRank = 999.
-// 1 / (60 + 999) ≈ 0.00094 — very small contribution.
 const NOT_IN_LIST_RANK = 999
 
 export class HybridSearchService {
@@ -222,5 +201,38 @@ export class HybridSearchService {
       onlyInKeyword: [...keywordIds].filter(id => !vectorIds.has(id)),
       inBoth: [...vectorIds].filter(id => keywordIds.has(id)),
     }
+  }
+
+  // ── searchAndRerank ───────────────────────────────────────────────────
+  // Runs the full pipeline: embed → vector search → keyword search →
+  // RRF merge → cross-encoder reranking.
+  // This is the highest-quality retrieval path.
+  async searchAndRerank(
+    query: string,
+    rerankerService: RerankerService,
+    options: Partial<HybridSearchOptions> = {}
+  ): Promise<RerankedResult[]> {
+    const topK = options.topK ?? 10
+
+    // Step 1: Run hybrid search (retrieves more than we need)
+    const hybridResults = await this.search(query, {
+      ...options,
+      topK: topK * 2, // retrieve 2x to give reranker more to work with
+    })
+
+    if (hybridResults.length === 0) return []
+
+    // Step 2: Rerank the results
+    const reranked = await rerankerService.rerank(query, hybridResults, {
+      topK,
+      minRerankScore: 0.0,
+    })
+
+    logRagEvent("rerank", "Search + rerank complete", {
+      service: "HybridSearchService",
+      chunkCount: reranked.length,
+    })
+
+    return reranked
   }
 }

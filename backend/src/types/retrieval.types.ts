@@ -1,16 +1,3 @@
-// backend/src/types/retrieval.types.ts
-// All types for the retrieval pipeline.
-// These flow through: VectorSearchService → KeywordSearchService →
-//                     HybridSearchService → RerankerService → GenerationService
-//
-// Defining them all now means every future service has a stable type contract.
-// When GenerationService (Day 11) needs Citation[], the type is already here.
-
-// ── Search Result Types ────────────────────────────────────────────────────
-
-// The shape of a chunk row as returned from pgvector search queries.
-// Note: we do NOT include the embedding column — it's 768 numbers we do not
-// need to send back over the wire after we've already used it for comparison.
 export interface ChunkSearchResult {
   id: string
   documentId: string
@@ -48,6 +35,38 @@ export interface HybridSearchResult {
   keywordRank: number // rank from keyword search (999 if not in keyword results)
   rrfScore: number // Reciprocal Rank Fusion score — used for final ordering
   rerankScore?: number // cross-encoder score added by RerankerService (Day 17)
+}
+
+// ── Reranker Types ────────────────────────────────────────────────────────
+
+// A chunk after cross-encoder reranking.
+// rerankScore replaces rrfScore as the primary ordering key.
+export interface RerankedResult {
+  chunk: ChunkSearchResult
+  vectorRank: number // original rank from vector search
+  keywordRank: number // original rank from keyword search
+  rrfScore: number // original RRF score (preserved for comparison)
+  rerankScore: number // 0-1, cross-encoder relevance score
+  originalRank: number // position before reranking (0-based)
+  rerankedRank: number // position after reranking (0-based)
+}
+
+// Configuration for the reranker
+export interface RerankerOptions {
+  topK: number // how many results to return after reranking
+  minRerankScore: number // discard results below this score (default: 0.0)
+  batchSize: number // how many chunks to score in one LLM call (default: 10)
+}
+
+// Comparison between pre- and post-reranking for debugging
+export interface RerankComparison {
+  query: string
+  original: HybridSearchResult[]
+  reranked: RerankedResult[]
+  movedUp: number // chunks whose rank improved
+  movedDown: number // chunks whose rank decreased
+  unchanged: number // chunks whose rank stayed the same
+  durationMs: number
 }
 
 // ── Search Options ────────────────────────────────────────────────────────

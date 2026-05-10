@@ -13,7 +13,7 @@ function formatTime(date: Date): string {
   return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
 }
 
-type ChatMode = "ws-agent" | "http-agent" | "rag"
+type ChatMode = "ws-agent" | "http-agent" | "rag" | "rag-rerank"
 
 const WELCOME_MESSAGE: ChatMessage = {
   id:        "welcome",
@@ -101,6 +101,9 @@ export default function AgentChat() {
     } else if (chatMode === "http-agent") {
       // HTTP Agent mode (fallback)
       await handleHttpAgent(query)
+    } else if (chatMode === "rag-rerank") {
+      // RAG+Rerank mode
+      await handleRagRerank(query)
     } else {
       // RAG mode
       await handleRagQuery(query)
@@ -182,6 +185,53 @@ export default function AgentChat() {
     }
   }
 
+  const handleRagRerank = async (query: string): Promise<void> => {
+    setHttpStatus("searching")
+    try {
+      const response = await import("../utils/api").then(m =>
+        m.default.post<import("../types").ApiResult<{
+          answer: string
+          citations: import("../types").Citation[]
+          chunksRetrieved: number
+          chunksReranked: number
+          tokensUsed: number
+          durationMs: number
+        }>>("/rag/query-with-rerank", { query, topK: 5 })
+      )
+
+      if (!response.data.success || !response.data.data) {
+        throw new Error(response.data.error ?? "Reranked RAG failed")
+      }
+
+      const result = response.data.data
+      setHttpStatus("done")
+
+      setMessages(prev => [...prev, {
+        id:        generateId(),
+        text:      result.answer,
+        sender:    "agent" as const,
+        timestamp: formatTime(new Date()),
+        citations: result.citations,
+        status:    "done" as const,
+        metadata: {
+          chunksRetrieved: result.chunksRetrieved,
+          tokensUsed:      result.tokensUsed,
+          durationMs:      result.durationMs
+        }
+      }])
+
+      setTimeout(() => setHttpStatus("idle"), 1500)
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : "Request failed"
+      setMessages(prev => [...prev, {
+        id: generateId(), text: `Error: ${msg}`,
+        sender: "agent" as const, timestamp: formatTime(new Date()), status: "error" as const
+      }])
+      setHttpStatus("error")
+      setTimeout(() => setHttpStatus("idle"), 2000)
+    }
+  }
+
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault()
@@ -217,7 +267,7 @@ export default function AgentChat() {
       <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-100">
         <span className="text-xs font-medium text-slate-500">Mode:</span>
         <div className="flex gap-1 bg-slate-100 p-0.5 rounded-lg">
-          {(["ws-agent", "http-agent", "rag"] as ChatMode[]).map(mode => (
+          {(["ws-agent", "http-agent", "rag", "rag-rerank"] as ChatMode[]).map(mode => (
             <button
               key={mode}
               onClick={() => setChatMode(mode)}
@@ -231,16 +281,17 @@ export default function AgentChat() {
                 disabled:opacity-50 disabled:cursor-not-allowed
               `}
             >
-              {mode === "ws-agent"   && "🔌 Agent (WS)"}
-              {mode === "http-agent" && "🤖 Agent (HTTP)"}
-              {mode === "rag"        && "⚡ RAG"}
+              {mode === "ws-agent"    && "🔌 Agent (WS)"}
+              {mode === "http-agent"  && "🤖 Agent (HTTP)"}
+              {mode === "rag"         && "⚡ RAG"}
+              {mode === "rag-rerank"  && "🎯 RAG+Rerank"}
             </button>
           ))}
         </div>
         <span className="text-xs text-slate-400">
           {chatMode === "ws-agent"   && "Real-time streaming · WebSocket"}
           {chatMode === "http-agent" && "Multi-step reasoning · HTTP"}
-          {chatMode === "rag"        && "Single-pass retrieval · fastest"}
+          {chatMode === "rag-rerank" && "Hybrid search + cross-encoder reranking"}
         </span>
       </div>
 
