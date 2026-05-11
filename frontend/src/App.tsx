@@ -6,6 +6,7 @@ import LoginPage         from "./pages/LoginPage"
 import AppPage           from "./pages/AppPage"
 import AgentComparison   from "./components/AgentComparison"
 import { isLoggedIn }    from "./utils/auth"
+import EvalWidget from "./components/EvalWidget"
 
 function ProtectedRoute({ children }: { children: React.ReactNode }) {
   if (!isLoggedIn()) {
@@ -36,6 +37,18 @@ export default function App() {
             <ProtectedRoute>
               <div className="min-h-screen py-8 bg-slate-50">
                 <AgentComparison />
+              </div>
+            </ProtectedRoute>
+          }
+        />
+
+        {/* Eval route */}
+        <Route
+          path="/eval"
+          element={
+            <ProtectedRoute>
+              <div className="min-h-screen py-8 bg-slate-50">
+                <EvalWidget />
               </div>
             </ProtectedRoute>
           }

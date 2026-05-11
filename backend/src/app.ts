@@ -4,7 +4,7 @@ import express, { type Request, type Response } from "express"
 import cors from "cors"
 import helmet from "helmet"
 import dotenv from "dotenv"
-import { createServer } from "http" // ← NEW
+import { createServer } from "http"
 import swaggerUi from "swagger-ui-express"
 import { PrismaClient } from "@prisma/client"
 import { ok } from "./types"
@@ -18,7 +18,8 @@ import ragRouter from "./routes/rag.routes"
 import agentRouter from "./routes/agent.routes"
 import { swaggerSpec } from "./utils/swagger"
 import { checkRedisHealth } from "./utils/redis"
-import { createWebSocketServer } from "./websocket/ws.server" // ← NEW
+import { createWebSocketServer } from "./websocket/ws.server"
+import evalRouter from "./routes/eval.routes"
 
 dotenv.config()
 
@@ -63,6 +64,7 @@ app.use("/api/v1/auth", authRouter)
 app.use("/api/v1/documents", documentRouter)
 app.use("/api/v1/rag", ragRouter)
 app.use("/api/v1/agent", agentRouter)
+app.use("/api/v1/eval", evalRouter)
 
 // ── Health Check ──────────────────────────────────────────────────────────
 app.get("/health", async (_req: Request, res: Response) => {
