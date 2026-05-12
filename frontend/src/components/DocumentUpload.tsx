@@ -1,15 +1,5 @@
-// frontend/src/components/DocumentUpload.tsx
-// Allows users to paste text content or upload a .txt file for ingestion.
-//
-// TWO UPLOAD MODES:
-// 1. PASTE: User pastes text content directly into a textarea
-// 2. FILE:  User selects a .txt file — content is read via FileReader API
-//
-// After successful ingestion, calls onSuccess(result) so the parent
-// can update the document list without a full page refresh.
-
 import { useState, useRef, type ChangeEvent } from "react"
-import { ingestDocument } from "../utils/api"
+import api from "../utils/api"
 import type { IngestionResult } from "../types"
 
 interface Props {
@@ -25,6 +15,7 @@ export default function DocumentUpload({ onSuccess }: Props) {
   const [isLoading,    setIsLoading]    = useState(false)
   const [error,        setError]        = useState<string | null>(null)
   const [lastResult,   setLastResult]   = useState<IngestionResult | null>(null)
+  const [progressMessage, setProgressMessage] = useState("")  
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
@@ -33,11 +24,9 @@ export default function DocumentUpload({ onSuccess }: Props) {
     const file = e.target.files?.[0]
     if (!file) return
 
-    // Pre-fill the name field with the filename
     setName(file.name)
     setError(null)
 
-    // Read file content as text using the FileReader API
     const reader = new FileReader()
 
     reader.onload = event => {
@@ -54,62 +43,102 @@ export default function DocumentUpload({ onSuccess }: Props) {
     reader.readAsText(file)
   }
 
-  // ── Form submission ────────────────────────────────────────────────────
+  // ── Poll job status ────────────────────────────────────────────────────
+  const pollJobStatus = async (jobId: string): Promise<IngestionResult> => {
+    const maxAttempts = 60   // poll for up to 60 seconds
+    let   attempts    = 0
+
+    while (attempts < maxAttempts) {
+      await new Promise(r => setTimeout(r, 1000))   // poll every second
+      attempts++
+
+      const statusResponse = await api.get<{
+        success: boolean
+        data: {
+          jobId:    string
+          status:   string
+          progress: number
+          result?:  IngestionResult
+          error?:   string
+        } | null
+      }>(`/documents/jobs/${jobId}`)
+
+      if (!statusResponse.data.success || !statusResponse.data.data) {
+        throw new Error("Failed to get job status")
+      }
+
+      const jobData = statusResponse.data.data
+
+      setProgressMessage(
+        `Processing... ${jobData.progress}%` +
+        (jobData.status === "active" ? " (chunking & embedding)" : "")
+      )
+
+      if (jobData.status === "completed" && jobData.result) {
+        return jobData.result
+      }
+
+      if (jobData.status === "failed") {
+        throw new Error(jobData.error ?? "Ingestion failed")
+      }
+    }
+
+    throw new Error("Ingestion timed out after 60 seconds")
+  }
+
+  // ── Form submission (async ingestion) ──────────────────────────────────
   const handleSubmit = async (): Promise<void> => {
     setError(null)
     setLastResult(null)
 
-    // Validation
-    if (!name.trim()) {
-      setError("Please provide a document name.")
-      return
-    }
-
-    if (!content.trim()) {
-      setError("Document content cannot be empty.")
-      return
-    }
-
+    if (!name.trim()) { setError("Please provide a document name."); return }
+    if (!content.trim()) { setError("Document content cannot be empty."); return }
     if (content.length > 500_000) {
-      setError(
-        `Document is too large (${Math.round(content.length / 1000)}KB). ` +
-        `Maximum is 500KB.`
-      )
-      return
+      setError(`Document is too large. Maximum is 500KB.`); return
     }
 
     setIsLoading(true)
 
     try {
-      const result = await ingestDocument(
-        name.trim(),
+      // Step 1: Queue the ingestion job (returns immediately)
+      const queueResponse = await api.post<{
+        success: boolean
+        data: { jobId: string; status: string; name: string } | null
+        error: string | null
+      }>("/documents/ingest", {
+        name:     name.trim(),
         content,
-        "text/plain"
-      )
+        mimeType: "text/plain"
+      })
+
+      if (!queueResponse.data.success || !queueResponse.data.data) {
+        throw new Error(queueResponse.data.error ?? "Failed to queue document")
+      }
+
+      const { jobId } = queueResponse.data.data
+      setProgressMessage("Queued — waiting for worker...")
+
+      // Step 2: Poll for job completion
+      const result = await pollJobStatus(jobId)
 
       setLastResult(result)
       onSuccess(result)
 
-      // Reset form after successful upload
       setName("")
       setContent("")
-      if (fileInputRef.current) {
-        fileInputRef.current.value = ""
-      }
+      if (fileInputRef.current) fileInputRef.current.value = ""
 
     } catch (err: unknown) {
-      const message = err instanceof Error
-        ? err.message
-        : "Failed to ingest document. Is the server running?"
-      setError(message)
+      setError(err instanceof Error ? err.message : "Failed to ingest document.")
     } finally {
       setIsLoading(false)
+      setProgressMessage("")
     }
   }
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm p-5">
-      <h2 className="text-lg font-semibold text-slate-800 mb-4">
+    <div className="p-5 bg-white border shadow-sm rounded-xl border-slate-200">
+      <h2 className="mb-4 text-lg font-semibold text-slate-800">
         📄 Upload Document
       </h2>
 
@@ -139,7 +168,7 @@ export default function DocumentUpload({ onSuccess }: Props) {
 
       {/* ── Document name ── */}
       <div className="mb-3">
-        <label className="block text-sm font-medium text-slate-700 mb-1">
+        <label className="block mb-1 text-sm font-medium text-slate-700">
           Document name
         </label>
         <input
@@ -147,14 +176,14 @@ export default function DocumentUpload({ onSuccess }: Props) {
           value={name}
           onChange={e => setName(e.target.value)}
           placeholder="e.g. Q3-Report.txt"
-          className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          className="w-full px-3 py-2 text-sm border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
         />
       </div>
 
       {/* ── Content input ── */}
       {mode === "paste" ? (
         <div className="mb-4">
-          <label className="block text-sm font-medium text-slate-700 mb-1">
+          <label className="block mb-1 text-sm font-medium text-slate-700">
             Document content
           </label>
           <textarea
@@ -162,16 +191,16 @@ export default function DocumentUpload({ onSuccess }: Props) {
             onChange={e => setContent(e.target.value)}
             placeholder="Paste your document text here..."
             rows={8}
-            className="w-full px-3 py-2 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent resize-none font-mono"
+            className="w-full px-3 py-2 font-mono text-sm border rounded-lg resize-none border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
           />
-          <p className="text-xs text-slate-400 mt-1">
+          <p className="mt-1 text-xs text-slate-400">
             {content.length.toLocaleString()} characters
             {content.length > 0 && ` (~${Math.ceil(content.length / 4).toLocaleString()} tokens)`}
           </p>
         </div>
       ) : (
         <div className="mb-4">
-          <label className="block text-sm font-medium text-slate-700 mb-1">
+          <label className="block mb-1 text-sm font-medium text-slate-700">
             Select a .txt file
           </label>
           <input
@@ -182,7 +211,7 @@ export default function DocumentUpload({ onSuccess }: Props) {
             className="w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
           {content && (
-            <p className="text-xs text-green-600 mt-1">
+            <p className="mt-1 text-xs text-green-600">
               ✅ {content.length.toLocaleString()} characters loaded
             </p>
           )}
@@ -191,15 +220,15 @@ export default function DocumentUpload({ onSuccess }: Props) {
 
       {/* ── Error message ── */}
       {error && (
-        <div className="mb-3 p-3 bg-red-50 border border-red-200 rounded-lg">
+        <div className="p-3 mb-3 border border-red-200 rounded-lg bg-red-50">
           <p className="text-sm text-red-700">{error}</p>
         </div>
       )}
 
       {/* ── Success message ── */}
       {lastResult && (
-        <div className="mb-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-          <p className="text-sm text-green-700 font-medium">
+        <div className="p-3 mb-3 border border-green-200 rounded-lg bg-green-50">
+          <p className="text-sm font-medium text-green-700">
             ✅ "{lastResult.name}" ingested successfully
           </p>
           <p className="text-xs text-green-600 mt-0.5">
@@ -216,15 +245,15 @@ export default function DocumentUpload({ onSuccess }: Props) {
       >
         {isLoading ? (
           <>
-            <span className="w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            Ingesting...
+            <span className="w-4 h-4 border-2 border-white rounded-full border-t-transparent animate-spin" />
+            {progressMessage || "Ingesting..."}
           </>
         ) : (
           "Ingest Document"
         )}
       </button>
 
-      <p className="text-xs text-slate-400 mt-2 text-center">
+      <p className="mt-2 text-xs text-center text-slate-400">
         Document will be chunked, embedded, and stored in pgvector
       </p>
     </div>

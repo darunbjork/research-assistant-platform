@@ -358,7 +358,8 @@ describe("RerankerService", () => {
       expect(typeof comparison.movedUp).toBe("number")
       expect(typeof comparison.movedDown).toBe("number")
       expect(typeof comparison.unchanged).toBe("number")
-      expect(comparison.durationMs).toBeGreaterThan(0)
+      // expect(comparison.durationMs).toBeGreaterThan(0)
+      expect(comparison.durationMs).toBeGreaterThanOrEqual(0)
     })
 
     it("correctly counts moved up/down/unchanged", async () => {

@@ -1,5 +1,4 @@
 /* eslint-disable no-console */
-
 import express, { type Request, type Response } from "express"
 import cors from "cors"
 import helmet from "helmet"
@@ -35,7 +34,7 @@ app.use(
 )
 app.use(
   cors({
-    origin: ["http://localhost:5173", "http://localhost:3000"],
+    origin: ["http://localhost:5174", "http://localhost:3001"],
     credentials: true,
   })
 )

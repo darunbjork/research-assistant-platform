@@ -1,19 +1,3 @@
-// backend/src/websocket/ws.server.ts
-// Creates and configures the WebSocket server.
-// Attaches it to the existing HTTP server (not a separate port).
-//
-// WHY SAME PORT AS HTTP?
-// Sharing port 3001 for both HTTP and WebSocket means:
-//   - No extra firewall rules needed
-//   - NGINX reverse proxy handles both with one upstream
-//   - Simpler deployment configuration
-//
-// HOW IT WORKS:
-// The ws library detects the Upgrade header on incoming requests.
-// If it is an HTTP Upgrade to WebSocket: ws handles it.
-// If it is a normal HTTP request: Express handles it.
-// Both share the same port 3001.
-
 import { WebSocketServer, type WebSocket } from "ws"
 import type { Server } from "http"
 import { AgentWsHandler } from "./agent.ws.handler"

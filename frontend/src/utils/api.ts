@@ -1,14 +1,3 @@
-// frontend/src/utils/api.ts
-// Centralised API client for all backend requests.
-// Uses axios with a base URL and automatic auth token injection.
-//
-// WHY AXIOS OVER FETCH:
-// Axios automatically:
-//   - Throws for non-2xx status codes (fetch does not)
-//   - Parses JSON responses (fetch requires .json())
-//   - Supports request interceptors (adding the Bearer token to every call)
-//   - Provides better TypeScript generics for response shapes
-
 import axios, { type AxiosError } from "axios"
 import type {
   ApiResult,

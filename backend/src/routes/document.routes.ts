@@ -1,5 +1,3 @@
-// backend/src/routes/document.routes.ts
-
 import { Router } from "express"
 import { DocumentController } from "../controllers/document.controller"
 import { authMiddleware } from "../middleware/auth.middleware"
@@ -7,24 +5,22 @@ import { authMiddleware } from "../middleware/auth.middleware"
 const router = Router()
 const controller = new DocumentController()
 
-// All document routes require authentication —
-// authMiddleware is applied to the whole router
 router.use(authMiddleware)
 
 /**
  * @swagger
  * /documents/ingest:
  *   post:
- *     summary: Ingest a document into the RAG pipeline
+ *     summary: Ingest a document (async — returns immediately)
  *     description: |
- *       Runs the full ingestion pipeline:
- *       1. Validates the document
- *       2. Creates a Document record in PostgreSQL
- *       3. Chunks the text using recursive strategy
- *       4. Embeds all chunks via Gemini text-embedding-004
- *       5. Stores chunks + vectors in pgvector
+ *       Queues a document for background ingestion via Bull Queue.
+ *       Returns 202 Accepted immediately with a jobId.
+ *       Poll GET /documents/jobs/{jobId} to track progress.
  *
- *       After ingestion, the document is immediately searchable.
+ *       Pipeline (runs in background):
+ *       1. Chunk text with recursive strategy
+ *       2. Embed all chunks with Gemini text-embedding-004
+ *       3. Store chunks + vectors in pgvector
  *     tags: [Documents]
  *     security:
  *       - bearerAuth: []
@@ -36,36 +32,20 @@ router.use(authMiddleware)
  *             type: object
  *             required: [name, content, mimeType]
  *             properties:
- *               name:
- *                 type: string
- *                 example: "Q3-Report.txt"
- *               content:
- *                 type: string
- *                 description: The full text content of the document
- *                 example: "Q3 revenue was $4.2 million, representing a 23% increase..."
- *               mimeType:
- *                 type: string
- *                 example: "text/plain"
+ *               name:     { type: string, example: "Q3-Report.txt" }
+ *               content:  { type: string }
+ *               mimeType: { type: string, example: "text/plain" }
  *     responses:
  *       202:
- *         description: Document ingested successfully
+ *         description: Document queued for background ingestion
  *         content:
  *           application/json:
  *             schema:
- *               allOf:
- *                 - $ref: '#/components/schemas/ApiResult'
- *                 - type: object
- *                   properties:
- *                     data:
- *                       type: object
- *                       properties:
- *                         documentId:  { type: string }
- *                         name:        { type: string }
- *                         chunkCount:  { type: integer, example: 12 }
- *                         tokenCount:  { type: integer, example: 1847 }
- *                         strategy:    { type: string, example: "recursive" }
- *                         durationMs:  { type: integer, example: 1823 }
- *                         warnings:    { type: array, items: { type: string } }
+ *               type: object
+ *               properties:
+ *                 jobId:   { type: string }
+ *                 status:  { type: string, example: "queued" }
+ *                 message: { type: string }
  *       400:
  *         $ref: '#/components/responses/ValidationError'
  *       401:
@@ -75,72 +55,51 @@ router.post("/ingest", controller.ingest)
 
 /**
  * @swagger
- * /documents:
+ * /documents/jobs/{jobId}:
  *   get:
- *     summary: List all documents for the authenticated user
+ *     summary: Get ingestion job status and progress
  *     tags: [Documents]
  *     security:
  *       - bearerAuth: []
  *     parameters:
- *       - name: limit
- *         in: query
- *         schema: { type: integer, default: 20, maximum: 100 }
- *       - name: offset
- *         in: query
- *         schema: { type: integer, default: 0 }
+ *       - name: jobId
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
  *     responses:
  *       200:
- *         description: Paginated list of documents with chunk counts
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
+ *         description: Job status with progress percentage
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 jobId:      { type: string }
+ *                 status:     { type: string, enum: [waiting, active, completed, failed] }
+ *                 progress:   { type: number, minimum: 0, maximum: 100 }
+ *                 result:     { type: object, description: "Present when status is completed" }
+ *                 error:      { type: string, description: "Present when status is failed" }
+ *       404:
+ *         description: Job not found (expired or invalid ID)
  */
+router.get("/jobs/:jobId", controller.getJobStatus)
+
+/**
+ * @swagger
+ * /documents/cache/stats:
+ *   get:
+ *     summary: Get search cache performance statistics
+ *     tags: [Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     responses:
+ *       200:
+ *         description: Cache hit rate and statistics
+ */
+router.get("/cache/stats", controller.cacheStats)
+
 router.get("/", controller.list)
-
-/**
- * @swagger
- * /documents/{id}:
- *   get:
- *     summary: Get a document and its chunks
- *     tags: [Documents]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: id
- *         in: path
- *         required: true
- *         schema: { type: string }
- *     responses:
- *       200:
- *         description: Document with chunk previews (no vectors)
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       404:
- *         $ref: '#/components/responses/NotFound'
- */
 router.get("/:id", controller.getById)
-
-/**
- * @swagger
- * /documents/{id}:
- *   delete:
- *     summary: Delete a document and all its chunks
- *     description: Permanently removes the document and all pgvector embeddings.
- *     tags: [Documents]
- *     security:
- *       - bearerAuth: []
- *     parameters:
- *       - name: id
- *         in: path
- *         required: true
- *         schema: { type: string }
- *     responses:
- *       204:
- *         description: Document deleted successfully
- *       401:
- *         $ref: '#/components/responses/Unauthorized'
- *       404:
- *         $ref: '#/components/responses/NotFound'
- */
 router.delete("/:id", controller.delete)
 
 export default router
