@@ -19,6 +19,7 @@ import { swaggerSpec } from "./utils/swagger"
 import { checkRedisHealth } from "./utils/redis"
 import { createWebSocketServer } from "./websocket/ws.server"
 import evalRouter from "./routes/eval.routes"
+import rateLimitRouter from "./routes/rate-limit.routes"
 
 dotenv.config()
 
@@ -64,6 +65,7 @@ app.use("/api/v1/documents", documentRouter)
 app.use("/api/v1/rag", ragRouter)
 app.use("/api/v1/agent", agentRouter)
 app.use("/api/v1/eval", evalRouter)
+app.use("/api/v1/rate-limits", rateLimitRouter)
 
 // ── Health Check ──────────────────────────────────────────────────────────
 app.get("/health", async (_req: Request, res: Response) => {

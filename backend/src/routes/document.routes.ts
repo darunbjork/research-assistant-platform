@@ -1,11 +1,16 @@
 import { Router } from "express"
 import { DocumentController } from "../controllers/document.controller"
 import { authMiddleware } from "../middleware/auth.middleware"
+import { checkDocumentOwnership } from "../middleware/access-control.middleware"
+import { createRateLimiter, UPLOAD_LIMIT, LIGHT_LIMIT } from "../middleware/rate-limit.middleware"
 
 const router = Router()
 const controller = new DocumentController()
 
 router.use(authMiddleware)
+
+const uploadRateLimiter = createRateLimiter(UPLOAD_LIMIT)
+const lightRateLimiter = createRateLimiter(LIGHT_LIMIT)
 
 /**
  * @swagger
@@ -17,10 +22,7 @@ router.use(authMiddleware)
  *       Returns 202 Accepted immediately with a jobId.
  *       Poll GET /documents/jobs/{jobId} to track progress.
  *
- *       Pipeline (runs in background):
- *       1. Chunk text with recursive strategy
- *       2. Embed all chunks with Gemini text-embedding-004
- *       3. Store chunks + vectors in pgvector
+ *       **Rate limit**: 20 uploads per day per user.
  *     tags: [Documents]
  *     security:
  *       - bearerAuth: []
@@ -51,7 +53,7 @@ router.use(authMiddleware)
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
-router.post("/ingest", controller.ingest)
+router.post("/ingest", uploadRateLimiter, controller.ingest)
 
 /**
  * @swagger
@@ -82,7 +84,7 @@ router.post("/ingest", controller.ingest)
  *       404:
  *         description: Job not found (expired or invalid ID)
  */
-router.get("/jobs/:jobId", controller.getJobStatus)
+router.get("/jobs/:jobId", lightRateLimiter, controller.getJobStatus)
 
 /**
  * @swagger
@@ -96,10 +98,69 @@ router.get("/jobs/:jobId", controller.getJobStatus)
  *       200:
  *         description: Cache hit rate and statistics
  */
-router.get("/cache/stats", controller.cacheStats)
+router.get("/cache/stats", lightRateLimiter, controller.cacheStats)
 
-router.get("/", controller.list)
-router.get("/:id", controller.getById)
-router.delete("/:id", controller.delete)
+/**
+ * @swagger
+ * /documents:
+ *   get:
+ *     summary: List all documents for the authenticated user
+ *     tags: [Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: limit
+ *         in: query
+ *         schema: { type: integer, default: 20 }
+ *       - name: offset
+ *         in: query
+ *         schema: { type: integer, default: 0 }
+ *     responses:
+ *       200:
+ *         description: Paginated document list
+ */
+router.get("/", lightRateLimiter, controller.list)
+
+/**
+ * @swagger
+ * /documents/{id}:
+ *   get:
+ *     summary: Get document details and chunk previews
+ *     tags: [Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       200:
+ *         description: Document with chunk list
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ */
+router.get("/:id", lightRateLimiter, checkDocumentOwnership, controller.getById)
+
+/**
+ * @swagger
+ * /documents/{id}:
+ *   delete:
+ *     summary: Delete a document and its chunks
+ *     tags: [Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     parameters:
+ *       - name: id
+ *         in: path
+ *         required: true
+ *         schema: { type: string }
+ *     responses:
+ *       204:
+ *         description: Document deleted (no content)
+ *       404:
+ *         $ref: '#/components/responses/NotFound'
+ */
+router.delete("/:id", lightRateLimiter, checkDocumentOwnership, controller.delete)
 
 export default router

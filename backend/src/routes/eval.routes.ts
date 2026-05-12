@@ -1,13 +1,15 @@
-// backend/src/routes/eval.routes.ts
-
 import { Router } from "express"
 import { EvalController } from "../controllers/eval.controller"
 import { authMiddleware } from "../middleware/auth.middleware"
+import { createRateLimiter, EVAL_LIMIT, LIGHT_LIMIT } from "../middleware/rate-limit.middleware"
 
 const router = Router()
 const controller = new EvalController()
 
 router.use(authMiddleware)
+
+const evalRateLimiter = createRateLimiter(EVAL_LIMIT)
+const lightRateLimiter = createRateLimiter(LIGHT_LIMIT)
 
 /**
  * @swagger
@@ -23,6 +25,8 @@ router.use(authMiddleware)
  *
  *       Uses Gemini as an LLM judge to score each dimension separately.
  *       Scores are recorded in Prometheus at /metrics.
+ *
+ *       **Rate limit**: 20 evaluations per hour per user.
  *     tags: [Evaluation]
  *     security:
  *       - bearerAuth: []
@@ -55,8 +59,10 @@ router.use(authMiddleware)
  *         $ref: '#/components/responses/ValidationError'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       429:
+ *         description: Rate limit exceeded
  */
-router.post("/score", controller.score)
+router.post("/score", evalRateLimiter, controller.score)
 
 /**
  * @swagger
@@ -67,6 +73,8 @@ router.post("/score", controller.score)
  *       Evaluates a batch of query-answer pairs and returns aggregate scores.
  *       Use this for systematic pipeline quality measurement.
  *       Maximum 20 pairs per request (API rate limit protection).
+ *
+ *       **Rate limit**: 20 evaluations per hour per user.
  *     tags: [Evaluation]
  *     security:
  *       - bearerAuth: []
@@ -96,8 +104,10 @@ router.post("/score", controller.score)
  *         $ref: '#/components/responses/ValidationError'
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
+ *       429:
+ *         description: Rate limit exceeded
  */
-router.post("/batch", controller.batch)
+router.post("/batch", evalRateLimiter, controller.batch)
 
 /**
  * @swagger
@@ -111,6 +121,6 @@ router.post("/batch", controller.batch)
  *       200:
  *         description: Summary of evaluation capabilities and thresholds
  */
-router.get("/summary", controller.summary)
+router.get("/summary", lightRateLimiter, controller.summary)
 
 export default router
