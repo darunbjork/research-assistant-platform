@@ -1,55 +1,54 @@
-// * Jest configuration for TypeScript projects.
-// * ts-jest transforms TypeScript files before Jest runs them.
-
-import { fileURLToPath } from 'url';
-import path from 'path';
-
-// Get the directory name of the current module
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
+// backend/jest.config.mjs (ESM)
 
 /** @type {import('jest').Config} */
-const jestConfig = {
-  // Use ts-jest to handle TypeScript files
+export default {
   preset: "ts-jest",
-
-  // Run in Node.js environment (not browser)
   testEnvironment: "node",
 
-  // Where to find test files
-  // This pattern matches: src/foo.test.ts, src/__tests__/foo.ts
   testMatch: [
-    "**/__tests__/**/*.ts",
-    "**/*.test.ts"
+    "**/__tests__/**/*.test.ts",
+    "**/__tests__/**/*.spec.ts"
   ],
 
-  // Do not look for tests in these folders
   testPathIgnorePatterns: [
     "/node_modules/",
-    "/dist/"
+    "/dist/",
+    "/__tests__/helpers/"
   ],
 
-  // Show individual test names in output (not just pass/fail totals)
+  // Correct property name
+  setupFilesAfterFramework: ["<rootDir>/src/__tests__/helpers/setup.ts"],
+
   verbose: true,
 
-  // Coverage configuration — used by npm run test:coverage
   collectCoverageFrom: [
     "src/**/*.ts",
-    "!src/types/**",      // type definitions are not testable logic
-    "!src/app.ts",        // app startup is tested via integration tests
-    "!src/**/*.d.ts"      // declaration files
+    "!src/types/**",
+    "!src/app.ts",
+    "!src/**/*.d.ts",
+    "!src/scripts/**",
+    "!src/database/**"
   ],
 
-  // Coverage thresholds — the build fails if coverage drops below these
-  // We start at 50% and raise it as we add more services
   coverageThreshold: {
     global: {
-      lines:     50,
-      functions: 50,
-      branches:  40,
-      statements: 50
+      lines: 80,
+      functions: 80,
+      branches: 70,
+      statements: 80
+    },
+    "./src/services/chunking.service.ts": {
+      lines: 95, functions: 95
+    },
+    "./src/services/embedding.service.ts": {
+      lines: 85, functions: 85
+    },
+    "./src/services/generation.service.ts": {
+      lines: 80, functions: 80
     }
-  }
-};
+  },
 
-export default jestConfig;
+  clearMocks: true,
+  resetMocks: false,
+  restoreMocks: false
+}
