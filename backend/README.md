@@ -1,267 +1,96 @@
-```markdown
-# Research Assistant Platform – RAG System
+# Research Assistant Platform 🤖
 
-A production‑grade **Retrieval‑Augmented Generation (RAG)** platform that ingests documents, converts them into vector embeddings, and enables semantic search over your private knowledge base.
+[![CI](https://github.com/darunbjork/research-assistant-platform/actions/workflows/ci.yml/badge.svg)](https://github.com/darunbjork/research-assistant-platform/actions)
+[![Coverage](https://img.shields.io/badge/coverage-82%25-green)](./coverage)
+[![TypeScript](https://img.shields.io/badge/TypeScript-strict-blue)](./tsconfig.json)
+[![Tests](https://img.shields.io/badge/tests-640%2B-brightgreen)](./src/__tests__)
 
-Built with **TypeScript**, **Express**, **PostgreSQL + pgvector**, **Redis**, and the **Gemini API**.
+A production-grade **Retrieval-Augmented Generation (RAG) + AI Agent**
+platform. Upload documents, get grounded, cited answers with full
+reasoning transparency.
 
----
+## What Makes This Production-Grade
 
-## 🧠 What This Project Does
+| Feature                  | Implementation                                |
+|--------------------------|-----------------------------------------------|
+| **Hybrid search**        | pgvector cosine + tsvector BM25 + RRF merge   |
+| **Self-correcting agent**| ReAct loop + RAG Triad quality evaluation     |
+| **Real-time streaming**  | WebSocket agent steps as they happen          |
+| **Zero hallucination**   | 3-layer: system prompt + faithfulness eval + citations |
+| **Performance**          | Redis embedding cache (24h) + search cache (5min) |
+| **Rate limiting**        | Per-user Redis INCR/EXPIRE, fail-open         |
+| **Observability**        | Prometheus + Grafana (12 panels) + OTel traces |
+| **Load tested**          | Artillery 6 scenarios, bottleneck identified   |
+| **Test coverage**        | 640+ Jest tests, 82% line coverage, CI enforced |
+| **Type safety**          | TypeScript strict, zero `any` in production   |
 
-- **Ingests** plain text documents (PDF support coming in Day 19)
-- **Chunks** text using recursive, sentence‑aware, or fixed‑size strategies
-- **Embeds** chunks into 3072‑dimensional vectors via `gemini-embedding-001`
-- **Caches** embeddings in Redis to avoid duplicate API calls
-- **Stores** vectors in PostgreSQL with pgvector for similarity search
-- **Prepares** for semantic search (Day 9) and LLM generation (Day 11)
+## Tech Stack
 
----
+**Backend**: Node.js 20 · Express · TypeScript (strict) · Prisma  
+**AI**: Gemini text-embedding-004 · Gemini 2.0 Flash  
+**Storage**: PostgreSQL 16 + pgvector · Redis 7  
+**Queue**: Bull Queue (async ingestion)  
+**Observability**: Prometheus · Grafana · OpenTelemetry · Jaeger  
+**Frontend**: React 18 · Vite · Tailwind CSS  
+**Testing**: Jest · Artillery · 640+ tests · 82% coverage  
+**CI/CD**: GitHub Actions · 9-step pipeline  
 
-## 🛠️ Tech Stack
-
-| Layer           | Technology                                                                 |
-|-----------------|----------------------------------------------------------------------------|
-| Runtime         | Node.js 20+                                                                |
-| Language        | TypeScript (strict mode, zero `any`)                                       |
-| Framework       | Express 5                                                                  |
-| Database        | PostgreSQL 16 + pgvector (vector(3072))                                    |
-| ORM             | Prisma (with raw SQL for pgvector)                                         |
-| Cache / Queue   | Redis 7 (embedding cache, future Bull queues)                              |
-| Embeddings      | Google Gemini `gemini-embedding-001` (3072 dimensions)                     |
-| Auth            | JWT (access + refresh tokens), bcrypt                                      |
-| Logging         | Winston (structured JSON logs + daily rotate)                              |
-| Metrics         | Prometheus client (`/metrics` endpoint)                                    |
-| API Docs        | Swagger UI (`/api/docs`)                                                   |
-| Testing         | Jest (85+ unit tests, mocked external APIs)                                |
-| Containerisation| Docker Compose                                                             |
-
----
-
-## 📦 Prerequisites
-
-- **Node.js** 20+ and npm
-- **Docker Desktop** (for PostgreSQL + Redis)
-- **Gemini API key** – get one free at [Google AI Studio](https://aistudio.google.com)
-
----
-
-## 🚀 Quick Start
-
-### 1. Clone the repository
+## Quick Start
 
 ```bash
-git clone https://github.com/darunbjork/research-assistant-platform.git
-cd research-assistant-platform
-```
+# Prerequisites: Docker, Node.js 20
 
-### 2. Set up environment variables
-
-```bash
-cp backend/.env.example backend/.env
-```
-
-Edit `backend/.env` and add your Gemini API key:
-
-```env
-GEMINI_API_KEY=your_gemini_api_key_here
-DATABASE_URL="postgresql://user:password@localhost:5432/ragdb"
-REDIS_URL="redis://localhost:6379"
-JWT_SECRET="a_secure_32_char_secret"
-JWT_REFRESH_SECRET="another_32_char_secret"
-```
-
-### 3. Start infrastructure (PostgreSQL + Redis)
-
-```bash
-docker compose up -d
-```
-
-### 4. Install dependencies & run database migrations
-
-```bash
-cd backend
+# 1. Clone and install
+git clone https://github.com/darunbjork/research-assistant-platform
+cd research-assistant-platform/backend
 npm install
-npx prisma migrate deploy
-```
 
-### 5. Start the development server
-
-```bash
-npm run dev
-```
-
-You should see:
-
-```
-✅ Server running  → http://localhost:3001
-🏥 Health check   → http://localhost:3001/health
-📊 Metrics        → http://localhost:3001/metrics
-📖 API Docs       → http://localhost:3001/api/docs
-```
-
----
-
-## 🧪 Testing the Pipeline (Postman or curl)
-
-### Register a new user
-
-```bash
-curl -X POST http://localhost:3001/api/v1/auth/register \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"securepass123"}'
-```
-
-### Login and copy the `accessToken`
-
-```bash
-curl -X POST http://localhost:3001/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"test@example.com","password":"securepass123"}'
-```
-
-### Ingest a document
-
-```bash
-curl -X POST http://localhost:3001/api/v1/documents/ingest \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN" \
-  -d '{
-    "name": "ml-intro.txt",
-    "content": "Machine learning is a subset of artificial intelligence.",
-    "mimeType": "text/plain"
-  }'
-```
-
-### List all documents
-
-```bash
-curl -X GET http://localhost:3001/api/v1/documents \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### Get a document and its chunks
-
-```bash
-curl -X GET http://localhost:3001/api/v1/documents/DOCUMENT_ID \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
-### Delete a document
-
-```bash
-curl -X DELETE http://localhost:3001/api/v1/documents/DOCUMENT_ID \
-  -H "Authorization: Bearer YOUR_ACCESS_TOKEN"
-```
-
----
-
-## 📁 Project Structure
-
-```
-backend/
-├── prisma/
-│   ├── schema.prisma          # Database schema (User, Document, DocumentChunk)
-│   └── migrations/            # Prisma migration files
-├── src/
-│   ├── services/              # Business logic (chunking, embedding, ingestion)
-│   ├── repositories/          # Database access (document, chunk)
-│   ├── controllers/           # HTTP request handlers
-│   ├── routes/                # Express route definitions
-│   ├── middleware/            # Auth, error handling, logging
-│   ├── types/                 # TypeScript interfaces (zero `any`)
-│   ├── utils/                 # Redis client, logger, metrics, Swagger
-│   └── __tests__/             # Unit tests (Jest)
-├── .env.example               # Environment variables template
-├── docker-compose.yml         # PostgreSQL + Redis containers
-└── package.json
-```
-
----
-
-## 🔐 Authentication
-
-- **JWT access token** (15 min expiry) – send in `Authorization: Bearer <token>`
-- **Refresh token** (7 days expiry) – use `POST /api/v1/auth/refresh` to obtain new tokens
-- Passwords hashed with **bcrypt** (cost factor 12)
-
----
-
-## 📊 Monitoring & Observability
-
-- **Health check** – `/health` returns status of API, database, and Redis
-- **Prometheus metrics** – `/metrics` exposes request counts, latencies, cache hit rates
-- **Structured logging** – Winston writes JSON logs to `logs/` directory and rotates daily
-- **RAG‑specific events** – `chunk`, `embed`, `ingest` events track pipeline performance
-
----
-
-## 🧪 Running Tests
-
-```bash
-npm test                 # Run all tests (85+)
-npm run test:coverage    # Generate coverage report
-npm run type-check       # TypeScript strict check
-npm run no-any           # Verify zero `any` types
-npm run lint             # ESLint
-```
-
----
-
-## 🐳 Docker Commands
-
-```bash
-# Start all services
+# 2. Start infrastructure
 docker compose up -d
 
-# Stop services (preserve data)
-docker compose down
+# 3. Configure environment
+cp .env.example .env
+# Fill in GEMINI_API_KEY (get from https://aistudio.google.com)
 
-# Stop and delete all data (fresh start)
-docker compose down -v
+# 4. Run migrations and start
+npx prisma migrate dev
+npm run dev
 
-# View logs
-docker compose logs -f
+# 5. Open the frontend
+cd ../frontend && npm install && npm run dev
+# → http://localhost:5173
 ```
 
----
+## Architecture
 
-## 🚧 What’s Next? (Days 9–25)
+See [docs/architecture.md](./docs/architecture.md) for:
+- Full system diagram (Mermaid C4 + sequence diagrams)
+- 4 Architecture Decision Records (ADRs)
+- Request lifecycle end-to-end walkthrough
+- Load test results and identified bottlenecks
+- Known limitations and planned improvements
 
-| Day | Feature |
-|-----|---------|
-| 9   | VectorSearchService – cosine similarity with pgvector (`<=>`) |
-| 10  | Reranking & hybrid search (BM25 + vector) |
-| 11  | GenerationService – call Gemini for answers |
-| 12  | Agent orchestration (LangGraph or custom) |
-| 13  | Web search integration (Tavily API) |
-| 14  | Multi‑turn conversations with memory |
-| 15  | PDF parsing (text extraction) |
-| 16  | File uploads (Multer) |
-| 17  | Async ingestion with Bull queues |
-| 18  | Rate limiting & API keys for external users |
-| 19  | Production deployment (Fly.io / Render) |
-| 20  | Monitoring (Sentry, Uptime) |
-| 21  | E2E tests with Playwright |
-| 22  | Prompt versioning & A/B testing |
-| 23  | Observability dashboards (Grafana) |
-| 24  | Fine‑tuning embeddings |
-| 25  | Launch & documentation |
+## Load Test Results
 
----
+Tested with Artillery at 50 concurrent users:
 
-## 🤝 Contributing
+| Stage       | P50    | P95    | Bottleneck?     |
+|-------------|--------|--------|-----------------|
+| Embedding   | 4ms    | 9ms    | ✅ (cached)     |
+| Vector search| 12ms  | 28ms   | ✅              |
+| Reranking   | 820ms  | 3.2s   | ⚠️ Secondary    |
+| Generation  | 1.5s   | 7.4s   | ❌ Primary      |
 
-This is a learning bootcamp project. Issues and pull requests are welcome for improvements or bug fixes.
+**Fix planned**: Cohere Rerank (150ms) + generation timeout with fallback.
 
----
+## API Documentation
 
-## 📄 License
+Start the server and visit: `http://localhost:3001/api/docs`
 
-ISC
-
----
-
-**Made with ❤️ as part of the 25‑Day RAG Bootcamp**  
-[GitHub Repository](https://github.com/darunbjork/research-assistant-platform)
-```
+Key endpoints:
+- `POST /api/v1/documents/ingest` — async document upload (returns jobId)
+- `POST /api/v1/rag/query` — grounded RAG answer
+- `POST /api/v1/agent/chat` — autonomous agent with reasoning steps
+- `POST /api/v1/eval/score` — RAG Triad quality evaluation
+- `GET  /metrics` — Prometheus metrics
+- `WS   /ws/agent` — real-time agent streaming
