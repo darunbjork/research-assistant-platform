@@ -12,7 +12,7 @@ import type {
 // ── Base URL ──────────────────────────────────────────────────────────────
 // Vite exposes env variables prefixed with VITE_ via import.meta.env
 // VITE_API_URL is set in frontend/.env
-const BASE_URL = import.meta.env.VITE_API_URL as string ?? "http://localhost:3001"
+const BASE_URL = import.meta.env.VITE_API_URL as string ?? "http://localhost:3006"
 
 // ── Axios Instance ────────────────────────────────────────────────────────
 const api = axios.create({

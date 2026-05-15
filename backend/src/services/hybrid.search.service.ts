@@ -1,3 +1,6 @@
+// backend/src/services/hybrid.search.service.ts
+// Updated Day 22: OpenTelemetry spans + search cache + metrics
+
 import type { PrismaClient } from "@prisma/client"
 import type { EmbeddingService } from "./embedding.service"
 import { VectorSearchService } from "./vector.search.service"
@@ -13,7 +16,9 @@ import { logRagEvent } from "../utils/logger"
 import type { RerankerService } from "./reranker.service"
 import type { RerankedResult } from "../types/retrieval.types"
 import { retrievalRequests, retrievalLatency } from "../utils/metrics"
-import { searchCache } from "../cache/index" // <-- NEW import
+import { getTracer } from "../telemetry/tracer"
+import { withSpan, RAG_ATTRS, DB_ATTRS } from "../telemetry/spans"
+import { searchCache } from "../cache/index"
 
 const RRF_K = 60
 const NOT_IN_LIST_RANK = 999
@@ -21,6 +26,7 @@ const NOT_IN_LIST_RANK = 999
 export class HybridSearchService {
   private readonly vectorSearchService: VectorSearchService
   private readonly keywordSearchService: KeywordSearchService
+  private readonly tracer = getTracer("hybrid.search.service")
 
   constructor(
     prisma: PrismaClient,
@@ -30,64 +36,80 @@ export class HybridSearchService {
     this.keywordSearchService = new KeywordSearchService(prisma)
   }
 
-  // ── search (with caching) ──────────────────────────────────────────────
   async search(
     query: string,
     options: Partial<HybridSearchOptions> = {}
   ): Promise<HybridSearchResult[]> {
-    if (!query || query.trim() === "") {
-      return []
-    }
+    return withSpan(this.tracer, "retrieval.hybridSearch", async span => {
+      span.setAttribute(RAG_ATTRS.QUERY, query.slice(0, 200))
+      span.setAttribute(RAG_ATTRS.STRATEGY, "hybrid")
+      span.setAttribute(DB_ATTRS.SYSTEM, "postgresql")
 
-    const topK = options.topK ?? 10
-    const minSimilarity = options.minSimilarity ?? 0.0
-    const documentIds = options.documentIds ?? []
-    const userId = options.userId
+      if (!query || query.trim() === "") return []
 
-    // ── Cache check ─────────────────────────────────────────────────────
-    if (userId) {
-      const cached = await searchCache.get(query, userId, topK, documentIds)
-      if (cached !== null) {
-        return cached
+      const topK = options.topK ?? 10
+      const minSimilarity = options.minSimilarity ?? 0.0
+      const documentIds = options.documentIds ?? []
+      const userId = options.userId
+
+      // ── Cache check ─────────────────────────────────────────────────
+      if (userId) {
+        const cached = await searchCache.get(query, userId, topK, documentIds)
+        if (cached !== null) {
+          span.setAttribute(RAG_ATTRS.CACHE_HIT, true)
+          return cached
+        }
       }
-    }
 
-    const timer = retrievalLatency.startTimer()
-    const start = Date.now()
+      const timer = retrievalLatency.startTimer()
+      const start = Date.now()
 
-    retrievalRequests.inc({ strategy: "hybrid" })
+      retrievalRequests.inc({ strategy: "hybrid" })
 
-    // ── Embed the query ─────────────────────────────────────────────────
-    const queryVector = await this.embeddingService.embedText(query, "RETRIEVAL_QUERY")
+      // ── Embed the query ─────────────────────────────────────────────
+      const queryVector = await this.embeddingService.embedText(query, "RETRIEVAL_QUERY")
 
-    // ── Run both searches in parallel ───────────────────────────────────
-    const searchOptions = { topK: topK * 2, documentIds, userId }
+      // ── Run both searches in parallel ───────────────────────────────
+      const searchOptions = { topK: topK * 2, documentIds, userId }
 
-    const [vectorResults, keywordResults] = await Promise.all([
-      this.vectorSearchService.search(queryVector, {
-        ...searchOptions,
-        minSimilarity,
-      }),
-      this.keywordSearchService.search(query, searchOptions),
-    ])
+      const [vectorResults, keywordResults] = await Promise.all([
+        withSpan(this.tracer, "retrieval.vectorSearch", async vs => {
+          vs.setAttribute(DB_ATTRS.OPERATION, "cosine_similarity")
+          vs.setAttribute("retrieval.topK", topK * 2)
+          return this.vectorSearchService.search(queryVector, {
+            ...searchOptions,
+            minSimilarity,
+          })
+        }),
+        withSpan(this.tracer, "retrieval.keywordSearch", async ks => {
+          ks.setAttribute(DB_ATTRS.OPERATION, "tsvector_search")
+          ks.setAttribute("retrieval.topK", topK * 2)
+          return this.keywordSearchService.search(query, searchOptions)
+        }),
+      ])
 
-    // ── RRF merge ───────────────────────────────────────────────────────
-    const merged = this.reciprocalRankFusion(vectorResults, keywordResults, topK)
+      // ── RRF merge ───────────────────────────────────────────────────
+      const merged = this.reciprocalRankFusion(vectorResults, keywordResults, topK)
 
-    timer()
+      timer()
 
-    logRagEvent("retrieve", "Hybrid search complete", {
-      service: "HybridSearchService",
-      chunkCount: merged.length,
-      durationMs: Date.now() - start,
+      logRagEvent("retrieve", "Hybrid search complete", {
+        service: "HybridSearchService",
+        chunkCount: merged.length,
+        durationMs: Date.now() - start,
+      })
+
+      // ── Store in cache ──────────────────────────────────────────────
+      if (userId) {
+        await searchCache.set(query, userId, topK, merged, documentIds)
+      }
+
+      span.setAttribute(RAG_ATTRS.CHUNKS_RETRIEVED, merged.length)
+      span.setAttribute("retrieval.vector_results", vectorResults.length)
+      span.setAttribute("retrieval.keyword_results", keywordResults.length)
+
+      return merged
     })
-
-    // ── Store in cache ──────────────────────────────────────────────────
-    if (userId) {
-      await searchCache.set(query, userId, topK, merged, documentIds)
-    }
-
-    return merged
   }
 
   // ── reciprocalRankFusion (unchanged) ──────────────────────────────────

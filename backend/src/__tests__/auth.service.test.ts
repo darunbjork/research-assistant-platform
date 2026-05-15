@@ -1,6 +1,3 @@
-// backend/src/__tests__/auth.service.test.ts
-// Comprehensive tests for AuthService.
-
 import { AuthService } from "../services/auth.service"
 import { makeMockPrismaClient } from "./helpers/mock-factories"
 

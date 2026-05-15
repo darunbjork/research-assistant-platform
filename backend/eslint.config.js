@@ -24,6 +24,6 @@ export default [
       'no-debugger': process.env.NODE_ENV === 'production' ? 'error' : 'warn',
       'prettier/prettier': 'warn',
     },
-    ignores: ['node_modules', 'dist'],
+    ignores: ['node_modules', 'dist', 'prisma.config.ts'], 
   },
 ];

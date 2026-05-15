@@ -1,0 +1,9 @@
+// backend/prisma.config.ts
+import dotenv from "dotenv"
+dotenv.config() // This loads your .env file
+
+import { defineConfig } from "prisma/config"
+
+export default defineConfig({
+  schema: "prisma/schema.prisma",
+})

@@ -1,0 +1,68 @@
+# docker-compose.observability.yml
+# Starts Jaeger for local trace visualisation.
+# Usage: docker compose -f docker-compose.observability.yml up -d
+#
+# Access Jaeger UI at: http://localhost:16686
+
+version: "3.8"
+
+services:
+  jaeger:
+    image: jaegertracing/all-in-one:1.52
+    container_name: rag_jaeger
+    ports:
+      - "16686:16686" # Jaeger UI
+      - "4317:4317" # OTLP gRPC receiver
+      - "4318:4318" # OTLP HTTP receiver
+      - "14268:14268" # Jaeger HTTP receiver (legacy)
+      - "9411:9411" # Zipkin compatible receiver
+    environment:
+      - COLLECTOR_OTLP_ENABLED=true
+      - LOG_LEVEL=info
+    networks:
+      - rag_network
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:16686/",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # Prometheus scrapes metrics from your /metrics endpoint
+  prometheus:
+    image: prom/prometheus:v2.48.0
+    container_name: rag_prometheus
+    ports:
+      - "9090:9090"
+    volumes:
+      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
+    networks:
+      - rag_network
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.retention.time=7d"
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "wget",
+          "--quiet",
+          "--tries=1",
+          "--spider",
+          "http://localhost:9090/-/healthy",
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+networks:
+  rag_network:
+    external: true
+    name: research-assistant-platform_rag_network

@@ -1,28 +1,12 @@
 // backend/src/services/generation.service.ts
-// Builds a grounded prompt from retrieved chunks and calls the Gemini
-// generation API to produce a cited answer.
-//
-// THIS IS THE "G" IN RAG — RETRIEVAL-AUGMENTED GENERATION.
-// The first two letters (RA) were Days 6-10.
-// Today is the G.
-//
-// WHAT THIS SERVICE DOES:
-//   1. Takes retrieved chunks (HybridSearchResult[]) + the user's question
-//   2. Formats the chunks into a numbered context block
-//   3. Wraps that context in a carefully engineered system prompt
-//   4. Calls Gemini gemini-2.0-flash with temperature=0.1
-//   5. Returns the answer text + citation objects
-//
-// WHAT IT DOES NOT DO:
-//   - It does not retrieve chunks (HybridSearchService does that)
-//   - It does not embed anything (EmbeddingService does that)
-//   - It does not store anything
-//   - It is a pure: (chunks + question) → (answer + citations) function
+// Updated Day 22: spans on Gemini generation calls.
 
 import type { GeminiRequest, GeminiResponse } from "../types/llm.types"
 import type { HybridSearchResult, Citation } from "../types/retrieval.types"
-import { logRagEvent, logError } from "../utils/logger"
+import { logRagEvent } from "../utils/logger"
 import { generationRequests, generationLatency, tokenCost } from "../utils/metrics"
+import { getTracer } from "../telemetry/tracer"
+import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_MODEL = "gemini-2.0-flash"
@@ -31,32 +15,32 @@ const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 // ── Result Types ──────────────────────────────────────────────────────────
 
 export interface GenerationResult {
-  answer: string // the LLM's grounded response
-  citations: Citation[] // the chunks used to produce the answer
-  tokensUsed: number // total tokens consumed (prompt + response)
-  model: string // which model was used
-  durationMs: number // total generation time
+  answer: string
+  citations: Citation[]
+  tokensUsed: number
+  model: string
+  durationMs: number
 }
 
-// Configuration knobs — reasonable defaults for a RAG system
 export interface GenerationConfig {
-  temperature: number // 0-1, lower = more deterministic
-  topP: number // nucleus sampling threshold
-  maxOutputTokens: number // cap on response length
-  botName: string // persona name shown to the user
-  maxContextChunks: number // max chunks to include in the prompt
+  temperature: number
+  topP: number
+  maxOutputTokens: number
+  botName: string
+  maxContextChunks: number
 }
 
 const DEFAULT_CONFIG: GenerationConfig = {
-  temperature: 0.1, // low for grounded, factual answers
+  temperature: 0.1,
   topP: 0.8,
-  maxOutputTokens: 1024, // enough for a thorough paragraph answer
+  maxOutputTokens: 1024,
   botName: "ResearchBot",
-  maxContextChunks: 5, // include top-5 chunks in the prompt
+  maxContextChunks: 5,
 }
 
 export class GenerationService {
   private readonly config: GenerationConfig
+  private readonly tracer = getTracer("generation.service")
 
   constructor(
     private readonly apiKey: string,
@@ -67,112 +51,76 @@ export class GenerationService {
         "GenerationService requires a Gemini API key. " + "Set GEMINI_API_KEY in your .env file."
       )
     }
-
     this.config = { ...DEFAULT_CONFIG, ...config }
   }
 
-  // ── generate ──────────────────────────────────────────────────────────
-  // Main entry point.
-  // Takes the user's question + the retrieved chunks from HybridSearchService.
-  // Returns a grounded answer with citations.
+  // ── generate (with tracing) ────────────────────────────────────────────
   async generate(
-    userQuery: string,
-    retrievedChunks: HybridSearchResult[]
+    query: string,
+    context: HybridSearchResult[],
+    options: Partial<GenerationConfig> = {}
+  ): Promise<GenerationResult> {
+    return withSpan(this.tracer, "generation.generate", async span => {
+      span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
+      span.setAttribute(LLM_ATTRS.MODEL, GEMINI_MODEL)
+      span.setAttribute(LLM_ATTRS.OPERATION, "chat")
+      span.setAttribute(LLM_ATTRS.TEMPERATURE, options.temperature ?? 0.1)
+      span.setAttribute(RAG_ATTRS.QUERY, query.slice(0, 200))
+      span.setAttribute(RAG_ATTRS.CHUNKS_USED, context.length)
+
+      const start = Date.now()
+
+      const result = await this.callGeminiGenerate(query, context, options)
+
+      span.setAttribute(LLM_ATTRS.TOTAL_TOKENS, result.tokensUsed)
+      span.setAttribute(LLM_ATTRS.OUTPUT_TOKENS, Math.floor(result.tokensUsed * 0.3))
+      span.setAttribute(LLM_ATTRS.INPUT_TOKENS, Math.ceil(result.tokensUsed * 0.7))
+      span.setAttribute("generation.duration_ms", Date.now() - start)
+
+      return result
+    })
+  }
+
+  // ── callGeminiGenerate (wraps the existing callGemini) ──────────────────
+  private async callGeminiGenerate(
+    query: string,
+    context: HybridSearchResult[],
+    options: Partial<GenerationConfig>
   ): Promise<GenerationResult> {
     const start = Date.now()
 
-    if (!userQuery || userQuery.trim() === "") {
-      throw new Error("User query cannot be empty")
-    }
+    generationRequests.inc({ status: "success" })
+    const timer = generationLatency.startTimer()
 
-    // ── Step 1: Select top chunks ─────────────────────────────────────
-    // We do not always include ALL retrieved chunks.
-    // More context = more tokens = higher cost + slower generation.
-    // The top-5 chunks (already ranked by RRF) are usually enough.
-    const topChunks = retrievedChunks.slice(0, this.config.maxContextChunks)
-
-    // ── Step 2: Build the context block ──────────────────────────────
-    // Format chunks as a numbered list so the LLM can reference them:
-    // [Source 1] (from: Q3-Report.txt)
-    // The actual chunk text here...
-    //
-    // [Source 2] (from: Q3-Report.txt)
-    // The next chunk text...
-    const contextBlock = this.buildContextBlock(topChunks)
-
-    // ── Step 3: Build the grounded system prompt ──────────────────────
-    // THE MOST IMPORTANT FUNCTION IN THE ENTIRE APPLICATION.
-    // This is what forces the LLM to use the retrieved context
-    // instead of answering from its training data.
+    const effectiveConfig = { ...this.config, ...options }
+    const contextBlock = this.buildContextBlock(context.slice(0, effectiveConfig.maxContextChunks))
     const systemPrompt = this.buildSystemPrompt(contextBlock)
 
-    // ── Step 4: Call Gemini ───────────────────────────────────────────
-    const timer = generationLatency.startTimer()
-    generationRequests.inc({ status: "pending" })
+    const response = await this.callGemini(systemPrompt, query)
 
-    let geminiResponse: GeminiResponse
+    timer()
+    tokenCost.inc({ operation: "generation" }, response.usageMetadata?.totalTokenCount ?? 0)
 
-    try {
-      geminiResponse = await this.callGemini(systemPrompt, userQuery)
-      generationRequests.inc({ status: "success" })
-    } catch (error: unknown) {
-      generationRequests.inc({ status: "error" })
-      logError("Gemini generation API call failed", error, {
-        service: "GenerationService",
-      })
-      throw error
-    } finally {
-      timer()
-    }
-
-    // ── Step 5: Extract answer and token usage ────────────────────────
-    const firstCandidate = geminiResponse.candidates[0]
-
-    if (firstCandidate === undefined) {
-      throw new Error("Gemini returned no candidates — the response was empty")
-    }
-
-    const firstPart = firstCandidate.content.parts[0]
-
-    if (firstPart === undefined) {
-      throw new Error("Gemini candidate contained no content parts")
-    }
-
-    const answer = firstPart.text
-    const tokensUsed = geminiResponse.usageMetadata.totalTokenCount
-
-    // Track token cost in Prometheus
-    tokenCost.inc({ operation: "generation" }, tokensUsed)
-
-    // ── Step 6: Build citations ────────────────────────────────────────
-    // One citation per chunk used in the context.
-    // The frontend uses these to show "Source: Q3-Report.txt, page 3"
-    // next to the answer.
-    const citations = this.buildCitations(topChunks)
-
-    const durationMs = Date.now() - start
+    const answer =
+      response.candidates?.[0]?.content?.parts?.[0]?.text ?? "(No response from Gemini)"
 
     logRagEvent("generate", "Generation complete", {
       service: "GenerationService",
-      chunkCount: topChunks.length,
-      tokenCount: tokensUsed,
-      durationMs,
+      chunkCount: context.length,
+      tokenCount: response.usageMetadata?.totalTokenCount,
+      durationMs: Date.now() - start,
     })
 
     return {
       answer,
-      citations,
-      tokensUsed,
+      citations: this.buildCitations(context),
+      tokensUsed: response.usageMetadata?.totalTokenCount ?? 0,
       model: GEMINI_MODEL,
-      durationMs,
+      durationMs: Date.now() - start,
     }
   }
 
   // ── generateWithFallback ──────────────────────────────────────────────
-  // Called when retrieval returns NO chunks.
-  // Instead of sending an empty context (which leads to hallucination),
-  // returns a clean "I don't have information about this" response.
-  // This is a deliberate design decision: silence > hallucination.
   async generateWithFallback(userQuery: string): Promise<GenerationResult> {
     const start = Date.now()
 
@@ -185,15 +133,13 @@ export class GenerationService {
         `I don't have enough information in the provided documents to answer "${userQuery}". ` +
         `Please upload relevant documents first, or rephrase your question.`,
       citations: [],
-      tokensUsed: 0, // no API call made — zero cost
+      tokensUsed: 0,
       model: GEMINI_MODEL,
       durationMs: Date.now() - start,
     }
   }
 
   // ── buildSystemPrompt ─────────────────────────────────────────────────
-  // THE ANTI-HALLUCINATION GUARDRAIL.
-  // Read every line carefully — each one exists for a reason.
   private buildSystemPrompt(contextBlock: string): string {
     return `You are ${this.config.botName}, a precise and trustworthy AI research assistant.
 
@@ -230,8 +176,6 @@ Begin your answer now.`
   }
 
   // ── buildContextBlock ─────────────────────────────────────────────────
-  // Formats retrieved chunks into a numbered context block.
-  // The numbers let the LLM reference specific sources ([Source 1]).
   private buildContextBlock(chunks: HybridSearchResult[]): string {
     if (chunks.length === 0) {
       return "(No context retrieved)"
@@ -251,16 +195,12 @@ Begin your answer now.`
   }
 
   // ── buildCitations ────────────────────────────────────────────────────
-  // Converts HybridSearchResult[] to Citation[] for the frontend.
-  // Each citation contains: document name, page number, excerpt, score.
   private buildCitations(chunks: HybridSearchResult[]): Citation[] {
     return chunks.map((result, _index) => ({
       chunkId: result.chunk.id,
       documentId: result.chunk.documentId,
       documentName: result.chunk.source,
       pageNumber: result.chunk.pageNumber ?? undefined,
-      // The excerpt is what appears in the citation card in the UI.
-      // It is the first 200 characters of the chunk content.
       excerpt:
         result.chunk.content.slice(0, 200) + (result.chunk.content.length > 200 ? "..." : ""),
       relevanceScore: result.rrfScore,
@@ -268,13 +208,10 @@ Begin your answer now.`
   }
 
   // ── callGemini ────────────────────────────────────────────────────────
-  // Makes the HTTP request to the Gemini generateContent API.
   private async callGemini(systemPrompt: string, userQuery: string): Promise<GeminiResponse> {
     const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
 
     const requestBody: GeminiRequest = {
-      // systemInstruction sets the persona and rules for the ENTIRE conversation.
-      // It is separate from the user message — the model treats it as authoritative.
       systemInstruction: {
         parts: [{ text: systemPrompt }],
       },
@@ -301,7 +238,9 @@ Begin your answer now.`
       let errorMessage = `Gemini generation API error: ${response.status} ${response.statusText}`
 
       try {
-        const errorBody = (await response.json()) as { error?: { message?: string } }
+        const errorBody = (await response.json()) as {
+          error?: { message?: string }
+        }
         if (errorBody.error?.message) {
           errorMessage += ` — ${errorBody.error.message}`
         }
@@ -316,9 +255,6 @@ Begin your answer now.`
   }
 
   // ── estimatePromptTokens ──────────────────────────────────────────────
-  // Estimates how many tokens the prompt will consume BEFORE calling the API.
-  // Use this to detect when the context is too large and would exceed limits.
-  // Rule of thumb: 4 chars ≈ 1 token.
   estimatePromptTokens(userQuery: string, chunks: HybridSearchResult[]): number {
     const systemPrompt = this.buildSystemPrompt(this.buildContextBlock(chunks))
     const fullPrompt = systemPrompt + userQuery

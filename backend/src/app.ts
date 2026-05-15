@@ -1,11 +1,12 @@
-/* eslint-disable no-console */
+import './preload-env'
+import "./telemetry/tracer"
 import express, { type Request, type Response } from "express"
 import cors from "cors"
 import helmet from "helmet"
 import dotenv from "dotenv"
 import { createServer } from "http"
 import swaggerUi from "swagger-ui-express"
-import { PrismaClient } from "@prisma/client"
+import { PrismaClient } from '@prisma/client';
 import { ok } from "./types"
 import { logStartup, logError } from "./utils/logger"
 import { requestLoggerMiddleware } from "./middleware/request-logger.middleware"
@@ -35,7 +36,7 @@ app.use(
 )
 app.use(
   cors({
-    origin: ["http://localhost:5174", "http://localhost:3001"],
+    origin: ["http://localhost:5174", "http://localhost:3006", "http://localhost:5173"],
     credentials: true,
   })
 )

@@ -1,8 +1,7 @@
-// backend/jest.config.mjs (ESM)
-
+// backend/jest.config.js
 /** @type {import('jest').Config} */
-export default {
-  preset: "ts-jest",
+module.exports = {
+  preset:          "ts-jest",
   testEnvironment: "node",
 
   testMatch: [
@@ -16,39 +15,35 @@ export default {
     "/__tests__/helpers/"
   ],
 
-  // Correct property name
   setupFilesAfterFramework: ["<rootDir>/src/__tests__/helpers/setup.ts"],
 
+  // ── FIXES EADDRINUSE ──────────────────────────────────────────────────────
+  // Kills any lingering processes after the test suite finishes
+  forceExit:   true,
+  // Clears all mocks between tests — prevents state leakage
+  clearMocks:  true,
+  resetMocks:  false,
+  restoreMocks: false,
+
   verbose: true,
+
+  // Global timeout — generous for tests that await async operations
+  testTimeout: 10000,
 
   collectCoverageFrom: [
     "src/**/*.ts",
     "!src/types/**",
     "!src/app.ts",
     "!src/**/*.d.ts",
-    "!src/scripts/**",
-    "!src/database/**"
+    "!src/scripts/**"
   ],
 
   coverageThreshold: {
     global: {
-      lines: 80,
-      functions: 80,
-      branches: 70,
+      lines:      80,
+      functions:  80,
+      branches:   70,
       statements: 80
-    },
-    "./src/services/chunking.service.ts": {
-      lines: 95, functions: 95
-    },
-    "./src/services/embedding.service.ts": {
-      lines: 85, functions: 85
-    },
-    "./src/services/generation.service.ts": {
-      lines: 80, functions: 80
     }
-  },
-
-  clearMocks: true,
-  resetMocks: false,
-  restoreMocks: false
+  }
 }

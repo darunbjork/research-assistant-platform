@@ -1,10 +1,5 @@
 // backend/prisma/schema.prisma
-// Prisma is the ORM (Object-Relational Mapper).
-// It reads this file, generates type-safe database client code,
-// and creates the actual tables in PostgreSQL via migrations.
 
-// The previewFeatures line enables PostgreSQL extension support.
-// Without it, you cannot declare the pgvector extension below.
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -13,78 +8,74 @@ generator client {
 datasource db {
   provider   = "postgresql"
   url        = env("DATABASE_URL")
-  extensions = [pgvector(map: "vector")]  // enables: CREATE EXTENSION vector
+  extensions = [vector]
 }
 
-// ── Document ──────────────────────────────────────────────────────────────
-// One uploaded file. A user uploads a PDF → one Document row is created.
-// The raw text is stored here. The chunks (below) are the sliced pieces.
+// ── Enums ──────────────────────────────────────────────────────────────────
+
+enum Role {
+  USER
+  ADMIN
+  GUEST
+}
+
+// ── Models ─────────────────────────────────────────────────────────────────
+
+model User {
+  id           String     @id @default(cuid())
+  email        String     @unique
+  passwordHash String
+  role         Role       @default(USER)
+  createdAt    DateTime   @default(now())
+  documents    Document[]
+  sessions     AgentSession[]
+
+  @@map("users")
+}
+
 model Document {
-  id        String   @id @default(cuid())  // cuid = collision-resistant unique id
-  name      String                          // original filename
-  content   String   @db.Text              // full extracted text (can be very long)
-  mimeType  String                          // "application/pdf", "text/plain", etc.
-  sizeBytes Int                             // file size for UI display
-  userId    String                          // which user uploaded this
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id        String          @id @default(cuid())
+  name      String
+  content   String
+  mimeType  String
+  sizeBytes Int
+  userId    String
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  chunks    DocumentChunk[]
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
 
-  chunks    DocumentChunk[]   // one document → many chunks
-  user      User @relation(fields: [userId], references: [id])
+  @@index([userId])
+  @@map("documents")
 }
 
-// ── DocumentChunk ─────────────────────────────────────────────────────────
 model DocumentChunk {
-  id               String                      @id @default(cuid())
+  id               String                  @id @default(cuid())
   documentId       String
-  content          String   @db.Text
+  document         Document                @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  content          String
   chunkIndex       Int
   tokenCount       Int
-  embedding  Unsupported("vector(3072)")?
+  /// pgvector 768-dimensional embedding (Gemini text-embedding-004)
+  embedding        Unsupported("vector(768)")?
   source           String
   pageNumber       Int?
   chunkingStrategy String
-  createdAt        DateTime @default(now())
-
-  document         Document @relation(fields: [documentId], references: [id], onDelete: Cascade)
+  createdAt        DateTime                @default(now())
 
   @@index([documentId])
+  @@map("document_chunks")
 }
 
-// ── AgentSession ──────────────────────────────────────────────────────────
-// Stores the full conversation history for one user's chat session.
-// The messages and state columns are JSON blobs — flexible for evolving schemas.
 model AgentSession {
-  id        String   @id @default(cuid())
-  userId    String
-  messages  Json     // ChatMessage[] — the full conversation history
-  state     Json     // AgentState snapshot — used to resume a session
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id         String   @id @default(cuid())
+  userId     String
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  query      String
+  result     Json?
+  durationMs Int?
+  createdAt  DateTime @default(now())
 
-  user      User @relation(fields: [userId], references: [id])
-}
-
-// ── User ──────────────────────────────────────────────────────────────────
-// A registered user of the platform.
-// Documents and sessions are isolated per user — you only search your own docs.
-model User {
-  id           String         @id @default(cuid())
-  email        String         @unique
-  passwordHash String                              // bcrypt hash — never plain text
-  role         Role           @default(USER)
-  createdAt    DateTime       @default(now())
-
-  documents    Document[]
-  sessions     AgentSession[]
-}
-
-// ── Role ──────────────────────────────────────────────────────────────────
-// GUEST  = read-only access (future: shared public collections)
-// USER   = standard account — upload and query their own documents
-// ADMIN  = platform management (future: usage dashboards, user management)
-enum Role {
-  GUEST
-  USER
-  ADMIN
+  @@index([userId])
+  @@map("agent_sessions")
 }
