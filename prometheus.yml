@@ -8,6 +8,6 @@ global:
 scrape_configs:
   - job_name: "research-assistant-backend"
     static_configs:
-      - targets: ["host.docker.internal:3006"]
+      - targets: ["host.docker.internal:3001"]
     metrics_path: "/metrics"
     scrape_interval: 10s
