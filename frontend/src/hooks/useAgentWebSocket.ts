@@ -53,7 +53,7 @@ export interface UseAgentWebSocketReturn {
 
 // ── WebSocket URL ─────────────────────────────────────────────────────────
 const WS_URL = (import.meta.env.VITE_WS_URL as string | undefined)
-  ?? "ws://localhost:3001"
+  ?? "ws://localhost:3002"
 
 function generateSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`

@@ -215,7 +215,7 @@ export class EmbeddingService {
       }
     })
 
-    return data.embeddings.map(e => e.values)
+    return data.embeddings.map(e => e.values ?? [])
   }
 
   // ── Private: Cache helpers ───────────────────────────────────────────
