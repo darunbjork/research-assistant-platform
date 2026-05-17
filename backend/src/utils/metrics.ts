@@ -1,159 +1,189 @@
-// Prometheus metrics — numeric measurements exposed at /metrics.
-// TODO: Grafana, Datadog, and other tools scrape this endpoint every 15-30 seconds
-// and build dashboards and alerts from the numbers.
+// backend/src/utils/metrics.ts
+// All Prometheus metrics for the Research Assistant Platform.
 //
-// TODO: THREE METRIC TYPES:
+// METRIC NAMING CONVENTIONS (Prometheus best practice):
+//   {service}_{noun}_{unit}_total    → counter
+//   {service}_{noun}_{unit}          → gauge or histogram
 //
-// * Counter   → only goes UP. Use for "how many times did X happen?"
-//             Examples: requests, errors, tokens consumed, API calls
-//             Never resets (unless process restarts).
+// CARDINALITY WARNING:
+// Each unique combination of label values creates a new time series.
+// High cardinality (e.g., labels with user IDs) causes performance issues.
+// Keep label values to a small, finite set.
 //
-// * Histogram → measures DISTRIBUTIONS. Use for "how long did X take?"
-//             Stores counts in "buckets" (how many requests took < 100ms, < 200ms, etc.)
-//             This lets Grafana show p50/p95/p99 latency — much more useful than average.
-//
-// * Gauge     → goes UP and DOWN. Use for "what is the current value of X?"
-//             Examples: active sessions, items in a queue, memory usage
+// UNITS:
+// Prometheus convention: use base units (seconds not milliseconds,
+// bytes not kilobytes). Grafana converts to human-readable units.
 
-import { Registry, Counter, Histogram, Gauge, collectDefaultMetrics } from "prom-client"
+import { Registry, Counter, Gauge, Histogram, collectDefaultMetrics } from "prom-client"
 
-// Custom registry — keeps our metrics separate from any library defaults.
-// Prevents naming conflicts if you add other Prometheus libraries later.
-export const registry = new Registry()
+// ── Registry ───────────────────────────────────────────────────────────────
+// One registry per application — all metrics registered here.
+export const register = new Registry()
 
-// * Collect Node.js built-in metrics: CPU usage, memory heap, event loop lag, etc.
-// These appear automatically at /metrics — useful for infrastructure monitoring.
-collectDefaultMetrics({ register: registry })
+// Collect default Node.js metrics (memory, CPU, event loop lag, etc.)
+collectDefaultMetrics({ register })
 
-// ── Embedding Metrics ─────────────────────────────────────────────────────
+// ── RAG Pipeline Metrics ──────────────────────────────────────────────────
 
-// How many embedding API calls have been made?
-// labelNames lets you split by outcome: status="success" vs status="error"
-export const embeddingRequests = new Counter({
-  name: "rag_embedding_requests_total",
-  help: "Total number of embedding API calls made to Gemini",
-  labelNames: ["status"] as const, // "success" | "error" | "cache_hit"
-  registers: [registry],
-})
-
-// How long do embedding calls take? (milliseconds)
-// Buckets: we care about calls under 100ms (great), under 1000ms (ok), over 5000ms (bad)
-export const embeddingLatency = new Histogram({
-  name: "rag_embedding_latency_ms",
-  help: "Gemini embedding API call latency in milliseconds",
-  buckets: [50, 100, 200, 500, 1000, 2000, 5000],
-  registers: [registry],
-})
-
-// ── Retrieval Metrics ─────────────────────────────────────────────────────
-
-export const retrievalRequests = new Counter({
-  name: "rag_retrieval_requests_total",
-  help: "Total retrieval pipeline executions",
-  labelNames: ["strategy"] as const, // "vector" | "keyword" | "hybrid"
-  registers: [registry],
+export const ragRequests = new Counter({
+  name: "rag_requests_total",
+  help: "Total number of RAG pipeline requests",
+  labelNames: ["status"], // "success" | "error"
+  registers: [register],
 })
 
 export const retrievalLatency = new Histogram({
-  name: "rag_retrieval_latency_ms",
-  help: "Full retrieval pipeline latency in milliseconds",
-  buckets: [10, 25, 50, 100, 250, 500, 1000],
-  registers: [registry],
-})
-
-// ── Generation Metrics ────────────────────────────────────────────────────
-
-export const generationRequests = new Counter({
-  name: "rag_generation_requests_total",
-  help: "Total LLM generation calls",
-  labelNames: ["status"] as const,
-  registers: [registry],
+  name: "retrieval_latency_seconds",
+  help: "End-to-end retrieval pipeline latency in seconds",
+  labelNames: ["strategy"], // "hybrid" | "vector" | "keyword"
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0, 5.0],
+  registers: [register],
 })
 
 export const generationLatency = new Histogram({
-  name: "rag_generation_latency_ms",
-  help: "LLM generation latency in milliseconds",
-  // Generation is slower than retrieval — buckets reflect that
-  buckets: [500, 1000, 2000, 3000, 5000, 10000, 20000],
-  registers: [registry],
+  name: "generation_latency_seconds",
+  help: "Gemini generation call latency in seconds",
+  buckets: [0.1, 0.5, 1.0, 2.0, 3.0, 5.0, 10.0, 30.0],
+  registers: [register],
 })
 
-// ── Token Cost Metrics ────────────────────────────────────────────────────
-// Track every token consumed — tokens cost money.
-// This tells you exactly what each operation type costs over time.
+export const embeddingLatency = new Histogram({
+  name: "embedding_latency_seconds",
+  help: "Gemini embedding call latency in seconds",
+  labelNames: ["cache_hit"], // "true" | "false"
+  buckets: [0.01, 0.05, 0.1, 0.25, 0.5, 1.0, 2.0],
+  registers: [register],
+})
 
-export const tokenCost = new Counter({
-  name: "rag_tokens_consumed_total",
-  help: "Total tokens consumed across all LLM API calls",
-  labelNames: ["operation"] as const, // "embedding" | "generation" | "agent_think"
-  registers: [registry],
+export const chunksRetrieved = new Histogram({
+  name: "chunks_retrieved_total",
+  help: "Number of chunks retrieved per query",
+  buckets: [1, 3, 5, 10, 15, 20],
+  registers: [register],
+})
+
+// ── Embedding Cache Metrics ───────────────────────────────────────────────
+
+export const embeddingCacheHits = new Counter({
+  name: "embedding_cache_hits_total",
+  help: "Total embedding cache hits",
+  registers: [register],
+})
+
+export const embeddingCacheMisses = new Counter({
+  name: "embedding_cache_misses_total",
+  help: "Total embedding cache misses",
+  registers: [register],
+})
+
+// ── Search Cache Metrics ──────────────────────────────────────────────────
+
+export const searchCacheHits = new Counter({
+  name: "search_cache_hits_total",
+  help: "Total search result cache hits",
+  registers: [register],
+})
+
+export const searchCacheMisses = new Counter({
+  name: "search_cache_misses_total",
+  help: "Total search result cache misses",
+  registers: [register],
 })
 
 // ── Agent Metrics ─────────────────────────────────────────────────────────
 
 export const agentIterations = new Counter({
-  name: "rag_agent_iterations_total",
-  help: "Total ReAct loop iterations across all agent sessions",
-  labelNames: ["tool"] as const, // which tool was called each iteration
-  registers: [registry],
+  name: "agent_iterations_total",
+  help: "Total agent ReAct loop iterations",
+  labelNames: ["tool"], // "rag_search" | "calculator" | "web_search"
+  registers: [register],
 })
 
-export const agentSessionDuration = new Histogram({
-  name: "rag_agent_session_duration_ms",
-  help: "Total agent session duration from first message to final answer",
-  buckets: [1000, 2000, 5000, 10000, 20000, 30000, 60000],
-  registers: [registry],
+export const activeAgentSessions = new Gauge({
+  name: "active_agent_sessions",
+  help: "Currently active agent sessions (HTTP + WebSocket)",
+  registers: [register],
 })
 
-// ── RAG Quality Metrics ───────────────────────────────────────────────────
-// These record the RAG Triad scores (Day 18).
-// labelNames: dimension = "context_relevance" | "faithfulness" | "answer_relevance"
+export const agentQualityScore = new Histogram({
+  name: "agent_quality_score",
+  help: "Self-evaluation quality scores from the agent evaluator",
+  buckets: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
+  registers: [register],
+})
+
+// ── RAG Triad Evaluation Metrics ──────────────────────────────────────────
 
 export const ragTriadScores = new Histogram({
   name: "rag_triad_score",
-  help: "RAG Triad evaluation scores (0 to 1, higher is better)",
-  labelNames: ["dimension"] as const,
+  help: "RAG Triad evaluation scores per dimension",
+  labelNames: ["dimension"], // "context_relevance" | "faithfulness" | "answer_relevance"
   buckets: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1.0],
-  registers: [registry],
+  registers: [register],
 })
 
-// ── System State Metrics ──────────────────────────────────────────────────
+// ── Document Ingestion Metrics ────────────────────────────────────────────
 
-// How many users are actively in a chat session right now?
-export const activeAgentSessions = new Gauge({
-  name: "rag_active_agent_sessions",
-  help: "Number of currently active agent sessions (real-time)",
-  registers: [registry],
+export const indexedDocuments = new Counter({
+  name: "indexed_documents_total",
+  help: "Total documents successfully ingested and indexed",
+  registers: [register],
 })
 
-// How many chunks are indexed in pgvector right now?
-// Important for capacity planning — pgvector performance degrades above ~1M chunks without indexing.
 export const indexedChunks = new Gauge({
-  name: "rag_indexed_chunks_total",
-  help: "Total document chunks currently indexed in pgvector",
-  registers: [registry],
+  name: "indexed_chunks_total",
+  help: "Current total chunks stored in pgvector",
+  registers: [register],
 })
 
-// How many documents have been ingested?
-export const indexedDocuments = new Gauge({
-  name: "rag_indexed_documents_total",
-  help: "Total documents currently in the system",
-  registers: [registry],
+export const ingestionLatency = new Histogram({
+  name: "ingestion_latency_seconds",
+  help: "Full document ingestion pipeline latency",
+  buckets: [0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
+  registers: [register],
 })
 
-// ── HTTP Metrics ──────────────────────────────────────────────────────────
-
-export const httpRequestDuration = new Histogram({
-  name: "http_request_duration_ms",
-  help: "HTTP request duration in milliseconds",
-  labelNames: ["method", "path", "status"] as const,
-  buckets: [10, 25, 50, 100, 250, 500, 1000, 2500],
-  registers: [registry],
+export const queueDepth = new Gauge({
+  name: "ingestion_queue_depth",
+  help: "Current number of jobs waiting in the ingestion queue",
+  registers: [register],
 })
 
-export const httpRequestsTotal = new Counter({
-  name: "http_requests_total",
-  help: "Total HTTP requests received",
-  labelNames: ["method", "path", "status"] as const,
-  registers: [registry],
+// ── Rate Limiting Metrics ─────────────────────────────────────────────────
+
+export const rateLimitHits = new Counter({
+  name: "rate_limit_hits_total",
+  help: "Total requests rejected by rate limiting",
+  labelNames: ["endpoint"], // "rag" | "agent" | "upload" | "eval"
+  registers: [register],
 })
+
+// ── Reranking Metrics ─────────────────────────────────────────────────────
+
+export const rerankLatency = new Histogram({
+  name: "rerank_latency_seconds",
+  help: "Cross-encoder reranking latency",
+  buckets: [0.1, 0.5, 1.0, 2.0, 5.0, 10.0],
+  registers: [register],
+})
+
+// ── WebSocket Metrics ─────────────────────────────────────────────────────
+
+export const wsConnections = new Gauge({
+  name: "websocket_connections_active",
+  help: "Currently active WebSocket connections",
+  registers: [register],
+})
+
+export const wsMessages = new Counter({
+  name: "websocket_messages_total",
+  help: "Total WebSocket messages processed",
+  labelNames: ["type"], // "start" | "ping" | "auth"
+  registers: [register],
+})
+
+// ── Helper: update queue depth gauge ─────────────────────────────────────
+// Call this periodically to keep the gauge current.
+export async function updateQueueDepthGauge(depth: number): Promise<void> {
+  queueDepth.set(depth)
+}
