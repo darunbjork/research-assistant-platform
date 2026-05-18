@@ -1,0 +1,69 @@
+# load-tests/scenarios/06-websocket.yml
+# Scenario 6: WebSocket agent sessions under load.
+# Purpose: Ensure WebSocket connections scale and heartbeat works.
+#
+# Artillery supports WebSocket testing natively.
+# Usage: artillery run load-tests/scenarios/06-websocket.yml
+
+config:
+  target: "ws://localhost:3001"
+  http:
+    timeout: 30
+
+  phases:
+    - name:        "WS baseline"
+      duration:    60
+      arrivalRate: 1
+      maxVusers:   5
+
+before:
+  flow:
+    - post:
+        url:     "http://localhost:3001/api/v1/auth/login"
+        name:    "LOGIN"
+        json:
+          email:    "{{ $env.TEST_USER_EMAIL }}"
+          password: "{{ $env.TEST_USER_PASSWORD }}"
+        capture:
+          - json: "$.data.tokens.accessToken"
+            as:   "accessToken"
+
+scenarios:
+  - name:   "WebSocket agent session"
+    engine: "ws"
+    flow:
+      # Connect to WebSocket
+      - connect:
+          target: "ws://localhost:3001/ws/agent"
+
+      # Wait for connected message
+      - receive:
+          data:    '{"type":"connected"}'
+          timeout: 5000
+
+      # Authenticate
+      - send:
+          data: '{"type":"auth","token":"{{ accessToken }}"}'
+
+      # Wait for auth confirmation
+      - receive:
+          timeout: 5000
+
+      # Send a query
+      - send:
+          data: '{"type":"start","query":"What is machine learning?","sessionId":"test-{{ $randomString() }}"}'
+
+      # Wait for the complete event (up to 30s)
+      - receive:
+          timeout: 30000
+
+      # Send a ping (heartbeat test)
+      - send:
+          data: '{"type":"ping"}'
+
+      # Wait for pong
+      - receive:
+          timeout: 5000
+
+      # Disconnect
+      - close: {}

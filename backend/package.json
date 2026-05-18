@@ -1,17 +1,33 @@
 {
   "scripts": {
-    "dev":              "ts-node-dev --respawn --transpile-only src/app.ts",
-    "build":            "tsc",
-    "start":            "node dist/app.js",
-    "test":             "jest",
-    "test:coverage":    "jest --coverage",
-    "type-check":       "tsc --noEmit",
-    "lint":             "eslint src --ext .ts",
-    "no-any":           "grep -r 'any' src --include='*.ts' | grep -v '// eslint\\|node_modules\\|dist\\|.test.ts\\|mock' && echo '❌ Found any types' || echo '✅ Zero any types'",
-    "monitoring:up":    "docker compose -f docker-compose.monitoring.yml up -d",
-    "monitoring:down":  "docker compose -f docker-compose.monitoring.yml down",
-    "monitoring:logs":  "docker compose -f docker-compose.monitoring.yml logs -f",
-    "seed:metrics":     "npx ts-node src/scripts/seed-metrics.ts",
-    "promql:reference": "npx ts-node src/scripts/promql-reference.ts"
+    "dev": "ts-node-dev --respawn --transpile-only src/app.ts",
+    "build": "tsc",
+    "start": "node dist/app.js",
+    "test": "jest",
+    "test:coverage": "jest --coverage",
+    "type-check": "tsc --noEmit",
+    "lint": "eslint src --ext .ts",
+    "no-any": "grep -r 'any' src --include='*.ts' | grep -v '// eslint\\|node_modules\\|dist\\|.test.ts\\|mock' && echo '❌ Found any types' || echo '✅ Zero any types'",
+    "monitoring:up": "docker compose -f docker-compose.monitoring.yml up -d",
+    "monitoring:down": "docker compose -f docker-compose.monitoring.yml down",
+    "monitoring:logs": "docker compose -f docker-compose.monitoring.yml logs -f",
+    "loadtest:setup": "npx ts-node load-tests/scripts/setup-test-user.ts",
+    "loadtest:baseline": "artillery run load-tests/scenarios/01-baseline.yml --output load-tests/reports/baseline.json",
+    "loadtest:ramp": "artillery run load-tests/scenarios/02-ramp-up.yml --output load-tests/reports/ramp.json",
+    "loadtest:cache": "artillery run load-tests/scenarios/03-cache-warming.yml --output load-tests/reports/cache.json",
+    "loadtest:spike": "artillery run load-tests/scenarios/04-spike.yml --output load-tests/reports/spike.json",
+    "loadtest:sustained": "artillery run load-tests/scenarios/05-sustained.yml --output load-tests/reports/sustained.json",
+    "loadtest:ws": "artillery run load-tests/scenarios/06-websocket.yml --output load-tests/reports/websocket.json",
+    "loadtest:analyze": "npx ts-node load-tests/scripts/analyze-results.ts",
+    "loadtest:all": "npm run loadtest:baseline && npm run loadtest:ramp && npm run loadtest:cache && npm run loadtest:analyze load-tests/reports/ramp.json"
+  },
+  "devDependencies": {
+    "@types/dotenv": "^6.1.1",
+    "@types/jest": "^30.0.0",
+    "@types/node": "^25.9.0",
+    "artillery": "^2.0.21"
+  },
+  "dependencies": {
+    "dotenv": "^17.4.2"
   }
 }

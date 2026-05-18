@@ -1,0 +1,19 @@
+# yaml-language-server: $schema=null
+# monitoring/grafana/provisioning/datasources/prometheus.yml
+# Tells VSCode YAML extension: do not validate this file against any schema.
+# The "Property apiVersion/datasources not allowed" errors are false positives —
+# VSCode was applying the Prometheus scrape-config schema to a Grafana file.
+
+apiVersion: 1
+
+datasources:
+  - name:      Prometheus
+    type:      prometheus
+    access:    proxy
+    url:       http://prometheus:9090
+    isDefault: true
+    editable:  true
+    jsonData:
+      timeInterval: "15s"
+      queryTimeout: "60s"
+      httpMethod:   "POST"

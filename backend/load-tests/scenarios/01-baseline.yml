@@ -1,0 +1,80 @@
+# load-tests/scenarios/01-baseline.yml
+# Scenario 1: Baseline — 5 concurrent users for 2 minutes.
+# Purpose: Establish baseline latency before load tests.
+# Run first to get the "healthy" P95.
+#
+# Usage: artillery run load-tests/scenarios/01-baseline.yml
+
+config:
+  target: "http://localhost:3001"
+  http:
+    timeout: 30
+
+  # 5 virtual users, sustained for 2 minutes
+  phases:
+    - name:     "Baseline"
+      duration: 120      # 2 minutes
+      arrivalRate: 1     # 1 new user per second = 5 users total at steady state
+      maxVusers: 5       # cap at 5 concurrent users
+
+  # Load environment variables from .env
+  dotenv:
+    path: "../backend/.env"
+
+  # Variables shared across all scenarios
+  variables:
+    baseUrl:  "http://localhost:3001"
+    apiPath:  "/api/v1"
+
+before:
+  flow:
+    # Authenticate before tests run and store the token
+    - post:
+        url:  "/api/v1/auth/login"
+        name: "LOGIN"
+        json:
+          email:    "{{ $env.TEST_USER_EMAIL }}"
+          password: "{{ $env.TEST_USER_PASSWORD }}"
+        capture:
+          - json:    "$.data.tokens.accessToken"
+            as:      "accessToken"
+        expect:
+          - statusCode: 200
+
+scenarios:
+  # ── Scenario A: RAG Query ───────────────────────────────────────────────
+  - name:   "RAG Query — baseline"
+    weight: 60   # 60% of traffic is RAG queries
+    flow:
+      - post:
+          url:  "/api/v1/rag/query"
+          name: "RAG_QUERY"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          json:
+            query: "{{ $randomString() }}"
+            topK:  5
+          expect:
+            - statusCode: 200
+
+  # ── Scenario B: Document List ────────────────────────────────────────────
+  - name:   "Document List — baseline"
+    weight: 30   # 30% of traffic is listing documents
+    flow:
+      - get:
+          url:  "/api/v1/documents"
+          name: "LIST_DOCUMENTS"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          expect:
+            - statusCode: 200
+
+  # ── Scenario C: Health Check ─────────────────────────────────────────────
+  - name:   "Health check"
+    weight: 10   # 10% of traffic is health checks
+    flow:
+      - get:
+          url:  "/health"
+          name: "HEALTH_CHECK"
+          expect:
+            - statusCode: 200

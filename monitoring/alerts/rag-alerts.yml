@@ -1,0 +1,101 @@
+# monitoring/alerts/rag-alerts.yml
+# Prometheus alerting rules.
+# Grafana reads these and fires alerts when conditions are met.
+# For now: rules are defined but notifications are not configured.
+# Day 25 adds notification channels (email, Slack, PagerDuty).
+
+groups:
+  - name: rag_quality_alerts
+    interval: 1m
+    rules:
+
+      # ── Quality degradation alert ───────────────────────────────────────
+      - alert: RAGFaithfulnessLow
+        expr: |
+          histogram_quantile(0.50,
+            rate(rag_triad_score_bucket{dimension="faithfulness"}[10m])
+          ) < 0.7
+        for: 5m
+        labels:
+          severity: warning
+          team:     ml-platform
+        annotations:
+          summary:     "RAG faithfulness score below threshold"
+          description: |
+            The median faithfulness score has been below 0.7 for 5 minutes.
+            Current value: {{ $value | humanizePercentage }}.
+            This may indicate hallucination in generated answers.
+            Check if the system prompt was changed recently.
+          runbook_url: "https://github.com/{{ github_org }}/research-assistant-platform/wiki/runbooks/faithfulness-low"
+
+      - alert: RAGContextRelevanceLow
+        expr: |
+          histogram_quantile(0.50,
+            rate(rag_triad_score_bucket{dimension="context_relevance"}[10m])
+          ) < 0.6
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary:     "RAG context relevance below threshold"
+          description: |
+            Retrieval quality has degraded. The median context relevance
+            is {{ $value | humanizePercentage }}, below the 0.6 threshold.
+            Check chunk size, topK setting, and embedding model.
+
+      # ── Latency alerts ──────────────────────────────────────────────────
+      - alert: RetrievalLatencyHigh
+        expr: |
+          histogram_quantile(0.95,
+            rate(retrieval_latency_seconds_bucket[5m])
+          ) > 2.0
+        for: 3m
+        labels:
+          severity: warning
+        annotations:
+          summary:     "P95 retrieval latency above 2 seconds"
+          description: |
+            The 95th percentile retrieval latency is {{ $value }}s.
+            Check pgvector index health and Redis connection.
+
+      - alert: GenerationLatencyHigh
+        expr: |
+          histogram_quantile(0.99,
+            rate(generation_latency_seconds_bucket[5m])
+          ) > 15.0
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary:     "P99 generation latency above 15 seconds"
+          description: |
+            Gemini API may be under load. P99 latency: {{ $value }}s.
+            Consider adding a timeout with graceful degradation.
+
+      # ── Error rate alert ────────────────────────────────────────────────
+      - alert: RAGErrorRateHigh
+        expr: |
+          rate(rag_requests_total{status="error"}[5m])
+          /
+          (rate(rag_requests_total[5m]) + 0.0001)
+          > 0.05
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary:     "RAG error rate above 5%"
+          description: |
+            Error rate: {{ $value | humanizePercentage }}.
+            Check Gemini API status and database connectivity.
+
+      # ── Queue depth alert ───────────────────────────────────────────────
+      - alert: IngestionQueueDeep
+        expr: ingestion_queue_depth > 20
+        for: 5m
+        labels:
+          severity: warning
+        annotations:
+          summary:     "Ingestion queue backlog growing"
+          description: |
+            {{ $value }} jobs waiting. Consider increasing worker concurrency
+            or checking if Gemini embedding API is slow.

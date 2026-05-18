@@ -1,0 +1,9 @@
+{
+  "yaml.schemaStore.enable": false,
+  "files.associations": {
+    "**/monitoring/grafana/provisioning/datasources/*.yml": "yaml"
+  },
+  "yaml.schemas": {
+    "data:application/json;charset=utf-8,%7B%7D": "**/monitoring/grafana/provisioning/datasources/prometheus.yml"
+  }
+}

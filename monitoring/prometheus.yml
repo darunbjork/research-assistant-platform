@@ -1,0 +1,33 @@
+# Prometheus scrape configuration.
+#
+# Scrape interval: every 15 seconds (standard for a development system).
+# In production: 30s or 60s reduces storage costs.
+
+global:
+  scrape_interval:     15s
+  evaluation_interval: 15s
+  external_labels:
+    environment: "development"
+    service:     "research-assistant"
+
+# ── Alerting rules (stub for Day 25) ─────────────────────────────────────
+rule_files:
+  - "alerts/*.yml"
+
+# ── Scrape configs ─────────────────────────────────────────────────────────
+scrape_configs:
+
+  # Your backend /metrics endpoint
+  - job_name: "research-assistant-backend"
+    static_configs:
+      # host.docker.internal resolves to your Mac/Windows host from inside Docker
+      # On Linux: use 172.17.0.1 (Docker bridge gateway)
+      - targets: ["host.docker.internal:3001"]
+    metrics_path: "/metrics"
+    scrape_interval: 10s
+    scrape_timeout:  8s
+
+  # Prometheus self-monitoring
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]

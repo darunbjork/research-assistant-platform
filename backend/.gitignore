@@ -22,3 +22,6 @@ Thumbs.db
 node_modules/.prisma/
 /src/generated/prisma
 .DS_Store
+# Load test reports (large JSON files)
+load-tests/reports/*.json
+load-tests/reports/*.html

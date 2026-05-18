@@ -1,0 +1,73 @@
+# load-tests/scenarios/04-spike.yml
+# Scenario 4: Spike test — sudden 100 users for 30 seconds.
+# Purpose: Test graceful degradation under extreme load.
+# Expected: rate limiting kicks in (429s), no 500s.
+#
+# Usage: artillery run load-tests/scenarios/04-spike.yml
+#
+# WARNING: This will hit your Gemini API rate limits.
+# The test is designed to trigger rate limiting — that is the point.
+# Check your Gemini API console after running this.
+
+config:
+  target: "http://localhost:3001"
+  http:
+    timeout: 30
+
+  phases:
+    - name:        "Normal"
+      duration:    30
+      arrivalRate: 2
+      maxVusers:   5
+
+    - name:        "SPIKE"
+      duration:    30          # 30 second spike
+      arrivalRate: 50          # 50 new users per second
+      maxVusers:   100         # up to 100 concurrent
+
+    - name:        "Recovery"
+      duration:    60          # watch for recovery
+      arrivalRate: 2
+      maxVusers:   5
+
+before:
+  flow:
+    - post:
+        url:  "/api/v1/auth/login"
+        name: "LOGIN"
+        json:
+          email:    "{{ $env.TEST_USER_EMAIL }}"
+          password: "{{ $env.TEST_USER_PASSWORD }}"
+        capture:
+          - json: "$.data.tokens.accessToken"
+            as:   "accessToken"
+
+scenarios:
+  - name:   "Spike RAG queries"
+    weight: 80
+    flow:
+      - post:
+          url:  "/api/v1/rag/query"
+          name: "SPIKE_RAG"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          json:
+            query: "What are the main findings?"
+            topK:  5
+          # During a spike, expect 429s — that is correct behaviour
+          # 500 would mean the system is crashing
+          expect:
+            - statusCode: [200, 429]
+
+  - name:   "Spike agent chat"
+    weight: 20
+    flow:
+      - post:
+          url:  "/api/v1/agent/chat"
+          name: "SPIKE_AGENT"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          json:
+            query: "Summarise the key points"
+          expect:
+            - statusCode: [200, 429]

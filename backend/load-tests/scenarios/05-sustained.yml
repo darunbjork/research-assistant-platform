@@ -1,0 +1,81 @@
+# load-tests/scenarios/05-sustained.yml
+# Scenario 5: Sustained load — 20 users for 10 minutes.
+# Purpose: Detect memory leaks, connection pool exhaustion,
+#          and P95 drift (latency slowly getting worse over time).
+#
+# Usage: artillery run load-tests/scenarios/05-sustained.yml
+#
+# What to watch in Grafana during this test:
+#   1. Node.js heap memory: should NOT grow unbounded
+#   2. P95 retrieval latency: should stay stable (not drift upward)
+#   3. Cache hit rate: should increase as test progresses
+#   4. Error rate: should stay below 1%
+
+config:
+  target: "http://localhost:3001"
+  http:
+    timeout: 30
+
+  phases:
+    - name:        "Warm-up"
+      duration:    60
+      arrivalRate: 2
+      maxVusers:   5
+
+    - name:        "Sustained 20 users"
+      duration:    600      # 10 minutes
+      arrivalRate: 5
+      maxVusers:   20
+
+    - name:        "Cool-down"
+      duration:    60
+      arrivalRate: 1
+      maxVusers:   3
+
+before:
+  flow:
+    - post:
+        url:  "/api/v1/auth/login"
+        name: "LOGIN"
+        json:
+          email:    "{{ $env.TEST_USER_EMAIL }}"
+          password: "{{ $env.TEST_USER_PASSWORD }}"
+        capture:
+          - json: "$.data.tokens.accessToken"
+            as:   "accessToken"
+
+scenarios:
+  - name:   "Sustained RAG queries"
+    weight: 50
+    flow:
+      - post:
+          url:  "/api/v1/rag/query"
+          name: "SUSTAINED_RAG"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          json:
+            # Rotate queries to test cache miss behaviour
+            query: "{{ $randomString() }}"
+            topK:  5
+          expect:
+            - statusCode: [200, 429]
+
+  - name:   "Sustained document ops"
+    weight: 30
+    flow:
+      - get:
+          url:  "/api/v1/documents"
+          name: "SUSTAINED_LIST"
+          headers:
+            Authorization: "Bearer {{ accessToken }}"
+          expect:
+            - statusCode: 200
+
+  - name:   "Sustained health checks"
+    weight: 20
+    flow:
+      - get:
+          url:  "/health"
+          name: "SUSTAINED_HEALTH"
+          expect:
+            - statusCode: 200

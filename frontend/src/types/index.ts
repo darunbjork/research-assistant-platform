@@ -1,83 +1,41 @@
-// frontend/src/types/index.ts
-// Shared types between frontend and backend.
-// These mirror the backend types — one source of truth for both sides.
-// In a monorepo, you would share these from a packages/types folder.
-// For now, we duplicate them here and keep them in sync manually.
-export interface AgentStep {
-  stepNumber:  number
-  description: string
-  toolUsed?:   string
-  durationMs:  number
-  timestamp:   string  
-}
-
-// ── Agent Result ──────────────────────────────────────────────────────────
-// Mirrors AgentResult from backend/src/types/agent.types.ts
-
-export interface AgentResult {
-  sessionId:      string
-  finalAnswer:    string
-  citations:      Citation[]
-  steps:          AgentStep[]
-  iterationCount: number
-  status:         AgentStatus
-  tokensUsed:     number
-  durationMs:     number
-}
-
-
-export interface ApiResult<TData> {
+export interface ApiResult<T> {
   success: boolean
-  data:    TData | null
+  data:    T | null
   error:   string | null
-  meta?: {
-    page?:  number
-    limit?: number
-    total?: number
-  }
 }
-
-// ── Auth Types ────────────────────────────────────────────────────────────
 export interface AuthTokens {
   accessToken:  string
   refreshToken: string
 }
 
-export interface PublicUser {
+export interface AuthUser {
   id:        string
   email:     string
-  role:      "GUEST" | "USER" | "ADMIN"
+  role:      "USER" | "ADMIN" | "GUEST"
   createdAt: string
 }
-
 export interface AuthResponse {
   tokens: AuthTokens
-  user:   PublicUser
+  user:   AuthUser
 }
-
-// ── Document Types ────────────────────────────────────────────────────────
 export interface DocumentSummary {
   id:         string
   name:       string
   mimeType:   string
   sizeBytes:  number
   userId:     string
+  chunkCount: number
   createdAt:  string
   updatedAt:  string
-  chunkCount: number
 }
 
 export interface IngestionResult {
-  documentId:  string
-  name:        string
-  chunkCount:  number
-  tokenCount:  number
-  strategy:    string
-  durationMs:  number
-  warnings:    string[]
+  documentId: string
+  name:       string
+  chunkCount: number
+  tokenCount: number
+  durationMs: number
 }
-
-// ── RAG / Citation Types ──────────────────────────────────────────────────
 export interface Citation {
   chunkId:        string
   documentId:     string
@@ -99,17 +57,34 @@ export interface RagResult {
   generationMs:    number
 }
 
-// ── Chat Types ────────────────────────────────────────────────────────────
 export type AgentStatus =
   | "idle"
   | "thinking"
   | "searching"
   | "calculating"
-  | "web_searching"
   | "generating"
   | "evaluating"
   | "done"
   | "error"
+
+export interface AgentStep {
+  stepNumber:  number
+  description: string
+  toolUsed?:   string
+  durationMs:  number
+  timestamp:   string
+}
+
+export interface AgentResult {
+  sessionId:      string
+  finalAnswer:    string
+  citations:      Citation[]
+  steps:          AgentStep[]
+  iterationCount: number
+  status:         AgentStatus
+  tokensUsed:     number
+  durationMs:     number
+}
 
 export type MessageSender = "user" | "agent"
 
@@ -119,12 +94,12 @@ export interface ChatMessage {
   sender:      MessageSender
   timestamp:   string
   citations?:  Citation[]
-  agentSteps?: AgentStep[]      
+  agentSteps?: AgentStep[]
   status?:     AgentStatus
   metadata?: {
     chunksRetrieved: number
     tokensUsed:      number
     durationMs:      number
-    iterationCount?: number    
+    iterationCount?: number
   }
 }

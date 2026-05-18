@@ -1,0 +1,490 @@
+{
+  "__inputs": [],
+  "__requires": [
+    { "type": "grafana",    "id": "grafana",    "name": "Grafana",    "version": "10.0.0" },
+    { "type": "datasource", "id": "prometheus", "name": "Prometheus", "version": "1.0.0" }
+  ],
+  "annotations": { "list": [] },
+  "description": "Research Assistant Platform — RAG pipeline monitoring",
+  "editable": true,
+  "fiscalYearStartMonth": 0,
+  "graphTooltip": 1,
+  "id": null,
+  "links": [],
+  "panels": [
+
+    {
+      "id": 1,
+      "title": "🟢 System Health",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 0, "y": 0 },
+      "options": {
+        "colorMode":   "background",
+        "graphMode":   "none",
+        "justifyMode": "center",
+        "textMode":    "auto",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",   "value": null },
+              { "color": "green", "value": 1 }
+            ]
+          },
+          "mappings": [
+            { "type": "value", "options": { "1": { "text": "HEALTHY" } } },
+            { "type": "value", "options": { "0": { "text": "DOWN"    } } }
+          ]
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "up{job=\"research-assistant-backend\"}",
+        "legendFormat": "Backend",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 2,
+      "title": "📈 RAG Requests / minute",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 4, "y": 0 },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqpm",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "rate(rag_requests_total[5m]) * 60",
+        "legendFormat": "Requests/min",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 3,
+      "title": "❌ Error Rate",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 8, "y": 0 },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 0.01 },
+              { "color": "red",    "value": 0.05 }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr": "rate(rag_requests_total{status=\"error\"}[5m]) / (rate(rag_requests_total[5m]) + 0.0001)",
+        "legendFormat": "Error rate",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 4,
+      "title": "💾 Embedding Cache Hit Rate",
+      "type": "gauge",
+      "gridPos": { "h": 4, "w": 4, "x": 12, "y": 0 },
+      "options": {
+        "reduceOptions": { "calcs": ["lastNotNull"] },
+        "showThresholdLabels": false,
+        "showThresholdMarkers": true
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min":  0,
+          "max":  1,
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 0.3  },
+              { "color": "green",  "value": 0.6  }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr": "rate(embedding_cache_hits_total[5m]) / (rate(embedding_cache_hits_total[5m]) + rate(embedding_cache_misses_total[5m]) + 0.0001)",
+        "legendFormat": "Cache hit rate",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 5,
+      "title": "🤖 Active Agent Sessions",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 16, "y": 0 },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "active_agent_sessions",
+        "legendFormat": "Active sessions",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 6,
+      "title": "📦 Indexed Chunks",
+      "type": "stat",
+      "gridPos": { "h": 4, "w": 4, "x": 20, "y": 0 },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "area",
+        "reduceOptions": { "calcs": ["lastNotNull"] }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "indexed_chunks_total",
+        "legendFormat": "Chunks in pgvector",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 10,
+      "title": "⏱ Retrieval Latency (P50 / P95 / P99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 4 },
+      "options": {
+        "legend":  { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "s",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr":         "histogram_quantile(0.50, rate(retrieval_latency_seconds_bucket[5m]))",
+          "legendFormat": "P50",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "histogram_quantile(0.95, rate(retrieval_latency_seconds_bucket[5m]))",
+          "legendFormat": "P95",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "histogram_quantile(0.99, rate(retrieval_latency_seconds_bucket[5m]))",
+          "legendFormat": "P99",
+          "datasource":   "Prometheus"
+        }
+      ]
+    },
+
+    {
+      "id": 11,
+      "title": "⚡ Generation Latency (P50 / P95 / P99)",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 4 },
+      "options": {
+        "legend":  { "calcs": ["mean", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "s",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr":         "histogram_quantile(0.50, rate(generation_latency_seconds_bucket[5m]))",
+          "legendFormat": "P50",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "histogram_quantile(0.95, rate(generation_latency_seconds_bucket[5m]))",
+          "legendFormat": "P95",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "histogram_quantile(0.99, rate(generation_latency_seconds_bucket[5m]))",
+          "legendFormat": "P99",
+          "datasource":   "Prometheus"
+        }
+      ]
+    },
+
+    {
+      "id": 20,
+      "title": "📐 RAG Triad Quality Scores",
+      "description": "Mean scores per dimension. Below 0.7 triggers recommendations.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 0, "y": 12 },
+      "options": {
+        "legend":  { "calcs": ["mean", "min", "max"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit",
+          "min":  0,
+          "max":  1,
+          "color": { "mode": "palette-classic" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "red",    "value": null },
+              { "color": "yellow", "value": 0.5  },
+              { "color": "green",  "value": 0.7  }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr":         "histogram_quantile(0.50, rate(rag_triad_score_bucket{dimension=\"context_relevance\"}[10m]))",
+          "legendFormat": "Context Relevance (P50)",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "histogram_quantile(0.50, rate(rag_triad_score_bucket{dimension=\"faithfulness\"}[10m]))",
+          "legendFormat": "Faithfulness (P50)",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "histogram_quantile(0.50, rate(rag_triad_score_bucket{dimension=\"answer_relevance\"}[10m]))",
+          "legendFormat": "Answer Relevance (P50)",
+          "datasource":   "Prometheus"
+        }
+      ]
+    },
+
+    {
+      "id": 21,
+      "title": "🔁 Agent ReAct Iterations",
+      "description": "How many tool calls per agent session. High values = complex queries or low quality threshold.",
+      "type": "timeseries",
+      "gridPos": { "h": 8, "w": 12, "x": 12, "y": 12 },
+      "options": {
+        "legend":  { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr":         "rate(agent_iterations_total{tool=\"rag_search\"}[5m]) * 60",
+          "legendFormat": "RAG searches / min",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "rate(agent_iterations_total{tool=\"calculator\"}[5m]) * 60",
+          "legendFormat": "Calculator calls / min",
+          "datasource":   "Prometheus"
+        }
+      ]
+    },
+
+    {
+      "id": 30,
+      "title": "🔌 WebSocket Connections",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 0, "y": 20 },
+      "options": {
+        "legend":  { "calcs": ["lastNotNull"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "websocket_connections_active",
+        "legendFormat": "Active WS connections",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 31,
+      "title": "📥 Ingestion Queue Depth",
+      "description": "Jobs waiting to be processed. Spike = documents uploaded faster than workers can process.",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 8, "y": 20 },
+      "options": {
+        "legend":  { "calcs": ["max"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "short",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null },
+              { "color": "yellow", "value": 3    },
+              { "color": "red",    "value": 10   }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "ingestion_queue_depth",
+        "legendFormat": "Queue depth",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 32,
+      "title": "🚦 Rate Limit Hits",
+      "description": "Requests rejected by rate limiting. High values = users hitting limits or DDoS.",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 8, "x": 16, "y": 20 },
+      "options": {
+        "legend":  { "calcs": ["sum"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "short",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "rate(rate_limit_hits_total[5m]) * 60",
+        "legendFormat": "{{endpoint}} / min",
+        "datasource":   "Prometheus"
+      }]
+    },
+
+    {
+      "id": 40,
+      "title": "🖥 Node.js Memory Usage",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 0, "y": 26 },
+      "options": {
+        "legend":  { "calcs": ["lastNotNull"], "displayMode": "table", "placement": "bottom" },
+        "tooltip": { "mode": "multi" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "bytes",
+          "color": { "mode": "palette-classic" }
+        },
+        "overrides": []
+      },
+      "targets": [
+        {
+          "expr":         "process_heap_bytes",
+          "legendFormat": "Heap used",
+          "datasource":   "Prometheus"
+        },
+        {
+          "expr":         "process_resident_memory_bytes",
+          "legendFormat": "RSS",
+          "datasource":   "Prometheus"
+        }
+      ]
+    },
+
+    {
+      "id": 41,
+      "title": "⚙️ Node.js Event Loop Lag",
+      "description": "Event loop lag > 100ms indicates the main thread is blocked.",
+      "type": "timeseries",
+      "gridPos": { "h": 6, "w": 12, "x": 12, "y": 26 },
+      "options": {
+        "legend":  { "calcs": ["mean", "max"], "displayMode": "list", "placement": "bottom" },
+        "tooltip": { "mode": "single" }
+      },
+      "fieldConfig": {
+        "defaults": {
+          "unit":  "s",
+          "color": { "mode": "thresholds" },
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [
+              { "color": "green",  "value": null   },
+              { "color": "yellow", "value": 0.05   },
+              { "color": "red",    "value": 0.1    }
+            ]
+          }
+        },
+        "overrides": []
+      },
+      "targets": [{
+        "expr":         "nodejs_eventloop_lag_seconds",
+        "legendFormat": "Event loop lag",
+        "datasource":   "Prometheus"
+      }]
+    }
+
+  ],
+
+  "refresh": "15s",
+  "schemaVersion": 38,
+  "tags": ["rag", "ai", "research-assistant"],
+  "templating": { "list": [] },
+  "time": { "from": "now-1h", "to": "now" },
+  "timepicker": {},
+  "timezone": "browser",
+  "title": "Research Assistant — RAG Overview",
+  "uid": "rag-overview-v1",
+  "version": 1
+}

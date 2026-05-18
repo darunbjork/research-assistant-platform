@@ -1,29 +1,34 @@
-import axios, { type AxiosError } from "axios"
+// frontend/src/utils/api.ts
+
+import axios from "axios"
+import type { AxiosError, InternalAxiosRequestConfig } from "axios"
 import type {
   ApiResult,
   AuthResponse,
   IngestionResult,
   DocumentSummary,
   RagResult,
-  AgentResult  
+  AgentResult
 } from "../types"
 
+// ── Extended request config with retry flag ────────────────────────────────
+// We add _retry to track whether we've already tried refreshing the token.
+// Using a proper interface avoids the `any` type.
+interface RetryableRequest extends InternalAxiosRequestConfig {
+  _retry?: boolean
+}
 
-// ── Base URL ──────────────────────────────────────────────────────────────
-// Vite exposes env variables prefixed with VITE_ via import.meta.env
-// VITE_API_URL is set in frontend/.env
-const BASE_URL = import.meta.env.VITE_API_URL as string ?? "http://localhost:3001"
+// ── Base URL ───────────────────────────────────────────────────────────────
+const BASE_URL =
+  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001"
 
-// ── Axios Instance ────────────────────────────────────────────────────────
+// ── Axios Instance ─────────────────────────────────────────────────────────
 const api = axios.create({
   baseURL: `${BASE_URL}/api/v1`,
   headers: { "Content-Type": "application/json" }
 })
 
-// ── Request Interceptor: Inject Auth Token ────────────────────────────────
-// Runs before EVERY request. Reads the access token from localStorage
-// and adds it as the Authorization header.
-// This means individual API functions do not need to handle auth.
+// ── Request Interceptor: Inject Auth Token ─────────────────────────────────
 api.interceptors.request.use(config => {
   const token = localStorage.getItem("accessToken")
   if (token) {
@@ -32,22 +37,56 @@ api.interceptors.request.use(config => {
   return config
 })
 
-// ── Response Interceptor: Handle 401 ──────────────────────────────────────
-// If the backend returns 401 (token expired), clear auth and redirect to login.
+// ── Response Interceptor: Handle 401 + Token Refresh ─────────────────────
 api.interceptors.response.use(
   response => response,
   async (error: AxiosError) => {
-    if (error.response?.status === 401) {
+    const originalRequest = error.config as RetryableRequest | undefined
+
+    if (
+      error.response?.status === 401 &&
+      originalRequest !== undefined &&
+      !originalRequest._retry
+    ) {
+      originalRequest._retry = true
+
+      const refreshToken = localStorage.getItem("refreshToken")
+
+      if (refreshToken) {
+        try {
+          const response = await api.post<ApiResult<AuthResponse>>(
+            "/auth/refresh",
+            { refreshToken }
+          )
+
+          if (response.data.success && response.data.data) {
+            // AuthResponse has a nested `tokens` object
+            const { accessToken, refreshToken: newRefreshToken } =
+              response.data.data.tokens
+
+            localStorage.setItem("accessToken",  accessToken)
+            localStorage.setItem("refreshToken", newRefreshToken)
+
+            originalRequest.headers.Authorization = `Bearer ${accessToken}`
+            return api(originalRequest)
+          }
+        } catch {
+          // Refresh failed — fall through to logout below
+          // (catch block intentionally empty — no variable needed)
+        }
+      }
+
+      // No refresh token or refresh failed — clear auth and redirect
       localStorage.removeItem("accessToken")
       localStorage.removeItem("refreshToken")
-      // Redirect to login — avoids circular dependency with React Router
       window.location.href = "/login"
     }
+
     return Promise.reject(error)
   }
 )
 
-// ── Auth API ──────────────────────────────────────────────────────────────
+// ── Auth API ───────────────────────────────────────────────────────────────
 
 export async function register(
   email:    string,
@@ -81,7 +120,7 @@ export async function login(
   return response.data.data
 }
 
-// ── Document API ──────────────────────────────────────────────────────────
+// ── Document API ───────────────────────────────────────────────────────────
 
 export async function ingestDocument(
   name:     string,
@@ -114,12 +153,12 @@ export async function deleteDocument(documentId: string): Promise<void> {
   await api.delete(`/documents/${documentId}`)
 }
 
-// ── RAG API ───────────────────────────────────────────────────────────────
+// ── RAG API ────────────────────────────────────────────────────────────────
 
 export async function queryRag(
   query:         string,
-  topK:          number  = 10,
-  minSimilarity: number  = 0.0,
+  topK:          number   = 10,
+  minSimilarity: number   = 0.0,
   documentIds?:  string[]
 ): Promise<RagResult> {
   const response = await api.post<ApiResult<RagResult>>("/rag/query", {
@@ -136,12 +175,13 @@ export async function queryRag(
   return response.data.data
 }
 
-// frontend/src/utils/api.ts
-// ADD THIS FUNCTION after queryRag():
+// ── Agent API ──────────────────────────────────────────────────────────────
 
-// ── Agent API ─────────────────────────────────────────────────────────────
 export async function queryAgent(query: string): Promise<AgentResult> {
-  const response = await api.post<ApiResult<AgentResult>>("/agent/chat", { query })
+  const response = await api.post<ApiResult<AgentResult>>(
+    "/agent/chat",
+    { query }
+  )
 
   if (!response.data.success || !response.data.data) {
     throw new Error(response.data.error ?? "Agent query failed")

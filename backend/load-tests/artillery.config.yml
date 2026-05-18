@@ -1,0 +1,25 @@
+# load-tests/artillery.config.yml
+# Base Artillery configuration shared by all scenarios.
+# Individual scenario files extend this.
+
+config:
+  # Target: your local backend
+  target: "http://localhost:3001"
+
+  # HTTP timeout — fail a request if no response within 30s
+  http:
+    timeout: 30
+
+  # Default headers for all requests
+  defaults:
+    headers:
+      Content-Type: "application/json"
+      Accept:       "application/json"
+
+  # Plugins: metrics-by-endpoint gives per-endpoint breakdown
+  plugins:
+    metrics-by-endpoint:
+      useOnlyRequestNames: true
+
+  # Output format
+  output: "./load-tests/reports/latest.json"
