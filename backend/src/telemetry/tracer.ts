@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 // backend/src/telemetry/tracer.ts
 
+import { IncomingMessage } from "http"
 import { NodeSDK } from "@opentelemetry/sdk-node"
 import {
   SimpleSpanProcessor,
@@ -39,7 +40,7 @@ const sdk = new NodeSDK({
     getNodeAutoInstrumentations({
       "@opentelemetry/instrumentation-http": {
         enabled: true,
-        ignoreIncomingRequestHook: req => {
+        ignoreIncomingRequestHook: (req: IncomingMessage) => {
           const path = req.url ?? ""
           return path === "/health" || path === "/metrics" || path === "/ws/agent"
         },
@@ -57,11 +58,11 @@ process.on("SIGTERM", () => {
   sdk
     .shutdown()
     .then(() => console.log("✅ OTel SDK shutdown complete"))
-    .catch(err => console.error("❌ OTel SDK shutdown error:", err))
+    .catch((err: Error | unknown) => console.error("❌ OTel SDK shutdown error:", err))
 })
 
 process.on("SIGINT", () => {
-  sdk.shutdown().catch(err => console.error("❌ OTel SDK shutdown error:", err))
+  sdk.shutdown().catch((err: Error | unknown) => console.error("❌ OTel SDK shutdown error:", err))
 })
 
 export function getTracer(name: string): Tracer {
