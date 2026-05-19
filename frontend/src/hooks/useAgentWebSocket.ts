@@ -156,7 +156,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
 
     setConnectionState("connecting")
 
-    const ws = new WebSocket(`${WS_URL}`)
+    const ws = new WebSocket(`${WS_URL}/ws/agent`)
     wsRef.current = ws
 
     ws.onopen = () => {
@@ -204,7 +204,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
 
     if (wsRef.current) {
       wsRef.current.onclose = null   // prevent auto-reconnect
-      if (wsRef.current.readyState === WebSocket.OPEN || wsRef.current.readyState === WebSocket.CONNECTING) { wsRef.current.close() }
+      if (wsRef.current.readyState === WebSocket.OPEN) { wsRef.current.close() }
       wsRef.current = null
     }
 

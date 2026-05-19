@@ -11,16 +11,12 @@ import type {
   AgentResult
 } from "../types"
 
-// ── Extended request config with retry flag ────────────────────────────────
-// We add _retry to track whether we've already tried refreshing the token.
-// Using a proper interface avoids the `any` type.
 interface RetryableRequest extends InternalAxiosRequestConfig {
   _retry?: boolean
 }
 
-// ── Base URL ───────────────────────────────────────────────────────────────
 const BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3001"
+  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3002"
 
 // ── Axios Instance ─────────────────────────────────────────────────────────
 const api = axios.create({
