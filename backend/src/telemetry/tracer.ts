@@ -52,7 +52,9 @@ const sdk = new NodeSDK({
   ],
 })
 
-sdk.start()
+if (process.env.NODE_ENV !== "development") {
+  sdk.start()
+}
 
 process.on("SIGTERM", () => {
   sdk
