@@ -199,6 +199,36 @@ export const httpRequestsTotal = new Counter({
   registers: [register],
 })
 
+// ... (all existing metrics)
+
+export const retrievalRequests = new Counter({
+  name: "retrieval_requests_total",
+  help: "Total number of retrieval requests",
+  labelNames: ["strategy"],
+  registers: [register],
+})
+
+export const generationRequests = new Counter({
+  name: "generation_requests_total",
+  help: "Total number of generation requests",
+  labelNames: ["status"],
+  registers: [register],
+})
+
+export const tokenCost = new Counter({
+  name: "token_cost_total",
+  help: "Total token cost",
+  labelNames: ["operation"],
+  registers: [register],
+})
+
+export const embeddingRequests = new Counter({
+  name: "embedding_requests_total",
+  help: "Total number of embedding requests",
+  labelNames: ["status"],
+  registers: [register],
+})
+
 // ── Helper: update queue depth gauge ─────────────────────────────────────
 // Call this periodically to keep the gauge current.
 export async function updateQueueDepthGauge(depth: number): Promise<void> {

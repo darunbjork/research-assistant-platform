@@ -10,7 +10,7 @@
     "test:coverage": "jest --coverage",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
-    "no-any": "grep -r 'any' src --include='*.ts' | grep -v '// eslint\\|node_modules\\|dist\\|.test.ts\\|mock' && echo '❌ Found any types' || echo '✅ Zero any types'",
+    "no-any": "grep -rn ': any' src --include='*.ts' | grep -v '// eslint\\|node_modules\\|dist\\|.test.ts\\|mock' && { echo '❌ Found any types'; exit 1; } || echo '✅ Zero any types'",
     "monitoring:up": "docker compose -f docker-compose.monitoring.yml up -d",
     "monitoring:down": "docker compose -f docker-compose.monitoring.yml down",
     "monitoring:logs": "docker compose -f docker-compose.monitoring.yml logs -f",
@@ -78,6 +78,7 @@
     "prisma": "^6.19.3",
     "ts-jest": "^29.4.9",
     "ts-node-dev": "^2.0.0",
-    "typescript": "^6.0.3"
+    "typescript": "^6.0.3",
+    "wait-on": "^9.0.10"
   }
 }

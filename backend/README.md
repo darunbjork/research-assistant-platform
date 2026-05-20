@@ -94,7 +94,3 @@ Key endpoints:
 - `POST /api/v1/eval/score` — RAG Triad quality evaluation
 - `GET  /metrics` — Prometheus metrics
 - `WS   /ws/agent` — real-time agent streaming
-
-## Remediation History
-
-- [2026-05-19] Ran `npm audit fix` to automatically patch vulnerable dependencies. <br>

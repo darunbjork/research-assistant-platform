@@ -1,112 +1,125 @@
-# TODO: This pipeline runs automatically on every push to main or develop,
-# * and on every pull request targeting main.
-#
-# TODO: WHAT IT DOES:
-# 1. Checks out your code on a fresh Ubuntu machine
-# 2. Installs Node.js 20 with npm cache enabled (faster runs)
-# 3. Installs exact dependencies from package-lock.json (npm ci, not npm install)
-# 4. Runs every quality gate in sequence
-# 5. If any step fails → the whole pipeline fails → GitHub shows a red X
-# 6. Main branch is only ever green code
+# .github/workflows/ci.yml
+# Final production CI pipeline.
+# All 9 steps must pass for a PR to merge.
 
-name: CI Pipeline
+name: CI
 
 on:
   push:
-    branches:
-      - main
-      - develop
+    branches: [main, dev]
   pull_request:
-    branches:
-      - main
+    branches: [main]
+
+defaults:
+  run:
+    working-directory: backend
 
 jobs:
-  quality:
-    name: Type Check · Lint · Test · Build
+  ci:
+    name: CI Pipeline
     runs-on: ubuntu-latest
 
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER:     testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB:       rag_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL:        postgresql://testuser:testpass@localhost:5432/rag_test
+      REDIS_URL:           redis://localhost:6379
+      GEMINI_API_KEY:      test-key-not-real
+      JWT_SECRET:          test-secret-32-characters-minimum-abc
+      JWT_REFRESH_SECRET:  test-refresh-32-characters-minimum-xyz
+      NODE_ENV:            test
+
     steps:
-      # ── Step 1: Get the code ─────────────────────────────────────────────
+      # ── Step 1: Checkout ─────────────────────────────────────────────
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── Step 2: Set up Node.js ───────────────────────────────────────────
-      - name: Set up Node.js 20
+      # ── Step 2: Setup Node.js ─────────────────────────────────────────
+      - name: Setup Node.js 20
         uses: actions/setup-node@v4
         with:
           node-version: "20"
-          # Cache npm dependencies — speeds up repeated runs significantly
-          # GitHub caches the node_modules between runs
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
-      # ── Step 3: Install dependencies ─────────────────────────────────────
+      # ── Step 3: Install dependencies ──────────────────────────────────
       - name: Install dependencies
-        working-directory: backend
-        run: |
-          # npm ci = "clean install"
-          # Difference from npm install:
-          #   npm install: may update package-lock.json
-          #   npm ci:      uses EXACT versions from package-lock.json
-          #                fails if package-lock.json is missing
-          #                always deletes node_modules first (clean state)
-          # CI/CD always uses npm ci for reproducible, deterministic installs.
-          npm ci
+        run: npm ci
 
-      # ── Step 4: TypeScript type check ────────────────────────────────────
-      - name: TypeScript type check
-        working-directory: backend
-        run: |
-          echo "Checking for TypeScript errors..."
-          npm run type-check
-          echo "✅ Zero TypeScript errors"
+      # ── Step 4: TypeScript strict type check ──────────────────────────
+      - name: Type check (strict)
+        run: npm run type-check
 
-      # ── Step 5: No-any check ─────────────────────────────────────────────
-      - name: Zero-any enforcement
-        working-directory: backend
+      # ── Step 5: Zero any types ────────────────────────────────────────
+      - name: Zero any types
         run: |
-          echo "Scanning for 'any' types..."
-          # This command returns exit code 1 if any ": any" is found
-          # which causes the CI step to fail
-          npm run no-any
+          FOUND=$(grep -rn '\bany\b' src --include='*.ts' 
+            | grep -v '// eslint\|\.test\.ts\|mock\|__tests__' 
+            | grep -v 'node_modules\|dist' || true)
+          if [ -n "$FOUND" ]; then
+            echo "❌ Found 'any' types:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "✅ Zero any types"
 
-      # ── Step 6: ESLint ───────────────────────────────────────────────────
-      - name: Lint
-        working-directory: backend
-        run: |
-          echo "Running ESLint..."
-          npm run lint
-          echo "✅ Zero lint warnings"
+      # ── Step 6: ESLint ────────────────────────────────────────────────
+      - name: Lint (ESLint)
+        run: npm run lint
 
-      # ── Step 7: Prettier ─────────────────────────────────────────────────
-      - name: Formatting check
-        working-directory: backend
-        run: |
-          echo "Checking code formatting..."
-          npm run prettier:check
-          echo "✅ All files formatted correctly"
+      # ── Step 7: Prettier format check ────────────────────────────────
+      - name: Format check (Prettier)
+        run: npx prettier --check "src/**/*.ts"
 
-      # ── Step 8: Tests ────────────────────────────────────────────────────
-      - name: Run tests
-        working-directory: backend
-        run: |
-          echo "Running test suite..."
-          npm test
-          echo "✅ All tests passed"
+      # ── Step 8: Run Prisma migrations ────────────────────────────────
+      - name: Run database migrations
+        run: npx prisma migrate deploy
 
-      # ── Step 9: Build ────────────────────────────────────────────────────
-      - name: Build
-        working-directory: backend
-        run: |
-          echo "Compiling TypeScript to JavaScript..."
-          npm run build
-          echo "✅ Build successful"
+      # ── Step 9: Test with coverage ────────────────────────────────────
+      - name: Test with coverage (80% threshold)
+        run: npm run test:coverage
 
-      # ── Step 10: Verify build output ─────────────────────────────────────
+      # ── Step 10: Build TypeScript ─────────────────────────────────────
+      - name: Build TypeScript
+        run: npm run build
+
+      # ── Step 11: Verify build output ─────────────────────────────────
       - name: Verify build output
-        working-directory: backend
         run: |
-          echo "Verifying dist/ directory exists..."
-          ls dist/
-          # Check that app.js was compiled (the entry point)
-          test -f dist/app.js && echo "✅ dist/app.js exists" || exit 1
+          if [ ! -f dist/app.js ]; then
+            echo "❌ Build failed: dist/app.js not found"
+            exit 1
+          fi
+          echo "✅ Build verified: dist/app.js exists"
+
+      # ── Upload coverage report ────────────────────────────────────────
+      - name: Upload coverage report
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: coverage-report
+          path: backend/coverage/
+          retention-days: 7

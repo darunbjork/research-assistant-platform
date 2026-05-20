@@ -41,10 +41,11 @@ export function verifyAccessToken(token: string): JwtPayload {
   try {
     return jwt.verify(token, secret) as JwtPayload
   } catch (error: unknown) {
-    if (error instanceof jwt.TokenExpiredError) {
+    const err = error as jwt.JsonWebTokenError
+    if (err.name === "TokenExpiredError") {
       throw new UnauthorizedError("Access token expired — please refresh")
     }
-    if (error instanceof jwt.JsonWebTokenError) {
+    if (err.name === "JsonWebTokenError") {
       throw new UnauthorizedError("Invalid access token")
     }
     throw new UnauthorizedError("Token verification failed")
@@ -61,7 +62,8 @@ export function verifyRefreshToken(token: string): JwtPayload {
   try {
     return jwt.verify(token, secret) as JwtPayload
   } catch (error: unknown) {
-    if (error instanceof jwt.TokenExpiredError) {
+    const err = error as jwt.JsonWebTokenError
+    if (err.name === "TokenExpiredError") {
       throw new UnauthorizedError("Refresh token expired — please log in again")
     }
     throw new UnauthorizedError("Invalid refresh token")

@@ -1,6 +1,4 @@
-// backend/jest.config.js
-/** @type {import('jest').Config} */
-module.exports = {
+export default {
   preset:          "ts-jest",
   testEnvironment: "node",
 
