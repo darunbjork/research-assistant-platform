@@ -5,4 +5,4 @@ if [ -n "$PID" ]; then
   echo "Killing process on port $PORT: $PID"
   kill -9 $PID
 fi
-npm run dev
+cd backend && npm run dev

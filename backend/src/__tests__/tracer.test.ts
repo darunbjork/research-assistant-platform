@@ -198,40 +198,40 @@
 
 jest.mock("@opentelemetry/sdk-node", () => ({
   NodeSDK: jest.fn().mockImplementation(() => ({
-    start:    jest.fn(),
-    shutdown: jest.fn().mockResolvedValue(undefined)
-  }))
+    start: jest.fn(),
+    shutdown: jest.fn().mockResolvedValue(undefined),
+  })),
 }))
 
 jest.mock("@opentelemetry/resources", () => ({
   Resource: jest.fn().mockImplementation(() => ({
-    merge: jest.fn().mockReturnThis()
-  }))
+    merge: jest.fn().mockReturnThis(),
+  })),
 }))
 
 jest.mock("@opentelemetry/semantic-conventions", () => ({
-  SEMRESATTRS_SERVICE_NAME:           "service.name",
-  SEMRESATTRS_SERVICE_VERSION:        "service.version",
-  SEMRESATTRS_DEPLOYMENT_ENVIRONMENT: "deployment.environment"
+  SEMRESATTRS_SERVICE_NAME: "service.name",
+  SEMRESATTRS_SERVICE_VERSION: "service.version",
+  SEMRESATTRS_DEPLOYMENT_ENVIRONMENT: "deployment.environment",
 }))
 
 jest.mock("@opentelemetry/sdk-trace-base", () => ({
   SimpleSpanProcessor: jest.fn().mockImplementation(() => ({})),
-  BatchSpanProcessor:  jest.fn().mockImplementation(() => ({})),
+  BatchSpanProcessor: jest.fn().mockImplementation(() => ({})),
   ConsoleSpanExporter: jest.fn().mockImplementation(() => ({})),
-  AlwaysOnSampler:     jest.fn().mockImplementation(() => ({}))
+  AlwaysOnSampler: jest.fn().mockImplementation(() => ({})),
 }))
 
 jest.mock("@opentelemetry/exporter-trace-otlp-http", () => ({
-  OTLPTraceExporter: jest.fn().mockImplementation(() => ({}))
+  OTLPTraceExporter: jest.fn().mockImplementation(() => ({})),
 }))
 
 jest.mock("@opentelemetry/exporter-trace-otlp-grpc", () => ({
-  OTLPTraceExporter: jest.fn().mockImplementation(() => ({}))
+  OTLPTraceExporter: jest.fn().mockImplementation(() => ({})),
 }))
 
 jest.mock("@opentelemetry/auto-instrumentations-node", () => ({
-  getNodeAutoInstrumentations: jest.fn().mockReturnValue([])
+  getNodeAutoInstrumentations: jest.fn().mockReturnValue([]),
 }))
 
 // ── Mock @opentelemetry/api — the most important one ──────────────────────
@@ -239,65 +239,64 @@ jest.mock("@opentelemetry/auto-instrumentations-node", () => ({
 jest.mock("@opentelemetry/api", () => {
   // Define mock objects INSIDE the factory to avoid TDZ
   const mockSpanInstance = {
-    setAttribute:    jest.fn().mockReturnThis(),
-    setStatus:       jest.fn().mockReturnThis(),
+    setAttribute: jest.fn().mockReturnThis(),
+    setStatus: jest.fn().mockReturnThis(),
     recordException: jest.fn().mockReturnThis(),
-    end:             jest.fn(),
-    spanContext:     jest.fn().mockReturnValue({
-      traceId:    "abc123def456abc123def456abc12345",
-      spanId:     "abc123def456abc1",
-      traceFlags: 1
+    end: jest.fn(),
+    spanContext: jest.fn().mockReturnValue({
+      traceId: "abc123def456abc123def456abc12345",
+      spanId: "abc123def456abc1",
+      traceFlags: 1,
     }),
-    isRecording: jest.fn().mockReturnValue(true)
+    isRecording: jest.fn().mockReturnValue(true),
   }
 
   const mockTracerInstance = {
-    startActiveSpan: jest.fn().mockImplementation(
-      (_name: string, fn: (span: typeof mockSpanInstance) => unknown) =>
+    startActiveSpan: jest
+      .fn()
+      .mockImplementation((_name: string, fn: (span: typeof mockSpanInstance) => unknown) =>
         fn(mockSpanInstance)
-    ),
-    startSpan: jest.fn().mockReturnValue(mockSpanInstance)
+      ),
+    startSpan: jest.fn().mockReturnValue(mockSpanInstance),
   }
 
   return {
     trace: {
-      getTracer:     jest.fn().mockReturnValue(mockTracerInstance),
+      getTracer: jest.fn().mockReturnValue(mockTracerInstance),
       getActiveSpan: jest.fn().mockReturnValue(mockSpanInstance),
-      setSpan:       jest.fn(),
-      deleteSpan:    jest.fn()
+      setSpan: jest.fn(),
+      deleteSpan: jest.fn(),
     },
     context: {
-      active:   jest.fn().mockReturnValue({}),
-      with:     jest.fn().mockImplementation(
-        (_ctx: unknown, fn: () => unknown) => fn()
-      ),
-      bind:     jest.fn(),
-      disable:  jest.fn()
+      active: jest.fn().mockReturnValue({}),
+      with: jest.fn().mockImplementation((_ctx: unknown, fn: () => unknown) => fn()),
+      bind: jest.fn(),
+      disable: jest.fn(),
     },
     propagation: {
-      inject:  jest.fn(),
-      extract: jest.fn()
+      inject: jest.fn(),
+      extract: jest.fn(),
     },
     SpanStatusCode: {
       UNSET: 0,
-      OK:    1,
-      ERROR: 2
+      OK: 1,
+      ERROR: 2,
     },
     SpanKind: {
       INTERNAL: 0,
-      SERVER:   1,
-      CLIENT:   2,
+      SERVER: 1,
+      CLIENT: 2,
       PRODUCER: 3,
-      CONSUMER: 4
+      CONSUMER: 4,
     },
     diag: {
-      setLogger:   jest.fn(),
-      error:       jest.fn(),
-      warn:        jest.fn(),
-      info:        jest.fn(),
-      debug:       jest.fn(),
-      verbose:     jest.fn()
-    }
+      setLogger: jest.fn(),
+      error: jest.fn(),
+      warn: jest.fn(),
+      info: jest.fn(),
+      debug: jest.fn(),
+      verbose: jest.fn(),
+    },
   }
 })
 
@@ -341,7 +340,7 @@ describe("withSpan()", () => {
   })
 
   it("calls span.end() after the function completes", async () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     await withSpan(tracer, "test.op", async () => "result")
@@ -350,7 +349,7 @@ describe("withSpan()", () => {
   })
 
   it("calls span.end() even when the function throws", async () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     await expect(
@@ -364,71 +363,75 @@ describe("withSpan()", () => {
   })
 
   it("sets initial attributes on the span", async () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
-    await withSpan(
-      tracer,
-      "test.op",
-      async () => "ok",
-      { [LLM_ATTRS.MODEL]: "test-model", "custom.attr": 42 }
-    )
+    await withSpan(tracer, "test.op", async () => "ok", {
+      [LLM_ATTRS.MODEL]: "test-model",
+      "custom.attr": 42,
+    })
 
     expect(mockSpan.setAttribute).toHaveBeenCalledWith(LLM_ATTRS.MODEL, "test-model")
     expect(mockSpan.setAttribute).toHaveBeenCalledWith("custom.attr", 42)
   })
 
   it("records the exception on the span when function throws", async () => {
-    const tracer    = getTracer("test")
-    const mockSpan  = getMockSpan()
+    const tracer = getTracer("test")
+    const mockSpan = getMockSpan()
     const testError = new Error("captured error")
 
     await expect(
-      withSpan(tracer, "test.op", async () => { throw testError })
+      withSpan(tracer, "test.op", async () => {
+        throw testError
+      })
     ).rejects.toThrow()
 
     expect(mockSpan.recordException).toHaveBeenCalledWith(testError)
   })
 
   it("sets ERROR status when function throws", async () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     await expect(
-      withSpan(tracer, "test.op", async () => { throw new Error("failure") })
+      withSpan(tracer, "test.op", async () => {
+        throw new Error("failure")
+      })
     ).rejects.toThrow()
 
     expect(mockSpan.setStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 2 })  // SpanStatusCode.ERROR = 2
+      expect.objectContaining({ code: 2 }) // SpanStatusCode.ERROR = 2
     )
   })
 
   it("sets OK status when function succeeds", async () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     await withSpan(tracer, "test.op", async () => "ok")
 
     expect(mockSpan.setStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 1 })  // SpanStatusCode.OK = 1
+      expect.objectContaining({ code: 1 }) // SpanStatusCode.OK = 1
     )
   })
 
   it("re-throws the original error type", async () => {
-    const tracer    = getTracer("test")
+    const tracer = getTracer("test")
     const customErr = new TypeError("type mismatch")
 
     await expect(
-      withSpan(tracer, "test.op", async () => { throw customErr })
+      withSpan(tracer, "test.op", async () => {
+        throw customErr
+      })
     ).rejects.toBeInstanceOf(TypeError)
   })
 
   it("passes the span to the callback function", async () => {
-    const tracer    = getTracer("test")
-    const mockSpan  = getMockSpan()
+    const tracer = getTracer("test")
+    const mockSpan = getMockSpan()
     let capturedSpan: unknown = null
 
-    await withSpan(tracer, "test.op", async (span) => {
+    await withSpan(tracer, "test.op", async span => {
       capturedSpan = span
       return "ok"
     })
@@ -438,9 +441,7 @@ describe("withSpan()", () => {
 
   it("works with zero initial attributes (no attributes arg)", async () => {
     const tracer = getTracer("test")
-    await expect(
-      withSpan(tracer, "test.op", async () => "ok")
-    ).resolves.toBe("ok")
+    await expect(withSpan(tracer, "test.op", async () => "ok")).resolves.toBe("ok")
   })
 })
 
@@ -461,7 +462,7 @@ describe("withSyncSpan()", () => {
   })
 
   it("ends the span after synchronous completion", () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     withSyncSpan(tracer, "sync.op", () => "result")
@@ -470,7 +471,7 @@ describe("withSyncSpan()", () => {
   })
 
   it("ends the span even when the synchronous function throws", () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     expect(() =>
@@ -483,16 +484,16 @@ describe("withSyncSpan()", () => {
   })
 
   it("sets ERROR status on sync throw", () => {
-    const tracer   = getTracer("test")
+    const tracer = getTracer("test")
     const mockSpan = getMockSpan()
 
     expect(() =>
-      withSyncSpan(tracer, "sync.op", () => { throw new Error("oops") })
+      withSyncSpan(tracer, "sync.op", () => {
+        throw new Error("oops")
+      })
     ).toThrow()
 
-    expect(mockSpan.setStatus).toHaveBeenCalledWith(
-      expect.objectContaining({ code: 2 })
-    )
+    expect(mockSpan.setStatus).toHaveBeenCalledWith(expect.objectContaining({ code: 2 }))
   })
 })
 

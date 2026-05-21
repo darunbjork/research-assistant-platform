@@ -1,5 +1,3 @@
-// backend/prisma/schema.prisma
-
 generator client {
   provider        = "prisma-client-js"
   previewFeatures = ["postgresqlExtensions"]
@@ -11,24 +9,14 @@ datasource db {
   extensions = [vector]
 }
 
-// ── Enums ──────────────────────────────────────────────────────────────────
-
-enum Role {
-  USER
-  ADMIN
-  GUEST
-}
-
-// ── Models ─────────────────────────────────────────────────────────────────
-
 model User {
-  id           String     @id @default(cuid())
-  email        String     @unique
+  id           String         @id @default(cuid())
+  email        String         @unique
   passwordHash String
-  role         Role       @default(USER)
-  createdAt    DateTime   @default(now())
-  documents    Document[]
+  role         Role           @default(USER)
+  createdAt    DateTime       @default(now())
   sessions     AgentSession[]
+  documents    Document[]
 
   @@map("users")
 }
@@ -40,28 +28,28 @@ model Document {
   mimeType  String
   sizeBytes Int
   userId    String
-  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  chunks    DocumentChunk[]
   createdAt DateTime        @default(now())
   updatedAt DateTime        @updatedAt
+  chunks    DocumentChunk[]
+  user      User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("documents")
 }
 
 model DocumentChunk {
-  id               String                  @id @default(cuid())
+  id               String                 @id @default(cuid())
   documentId       String
-  document         Document                @relation(fields: [documentId], references: [id], onDelete: Cascade)
   content          String
   chunkIndex       Int
   tokenCount       Int
   /// pgvector 768-dimensional embedding (Gemini text-embedding-004)
-  embedding        Unsupported("vector(768)")?
+  embedding        Unsupported("vector")?
   source           String
   pageNumber       Int?
   chunkingStrategy String
-  createdAt        DateTime                @default(now())
+  createdAt        DateTime               @default(now())
+  document         Document               @relation(fields: [documentId], references: [id], onDelete: Cascade)
 
   @@index([documentId])
   @@map("document_chunks")
@@ -70,12 +58,18 @@ model DocumentChunk {
 model AgentSession {
   id         String   @id @default(cuid())
   userId     String
-  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   query      String
   result     Json?
   durationMs Int?
   createdAt  DateTime @default(now())
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("agent_sessions")
+}
+
+enum Role {
+  GUEST
+  USER
+  ADMIN
 }

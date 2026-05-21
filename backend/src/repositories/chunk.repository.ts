@@ -66,12 +66,34 @@ export class ChunkRepository {
     // Either ALL chunks are stored, or NONE are.
     // This prevents partial ingestion.
     await this.prisma.$transaction(
-      chunks.map(
-        chunk =>
-          // $executeRaw: writes a single row with the vector column
-          // The ::vector cast tells PostgreSQL to interpret the string as a vector type
-          this.prisma.$executeRaw`
-          INSERT INTO "DocumentChunk" (
+      chunks.map(chunk => {
+        // Extract the vector array if it is wrapped in an object
+        let embeddingArray: number[]
+
+        if (Array.isArray(chunk.embedding)) {
+          embeddingArray = chunk.embedding
+        } else if (
+          typeof chunk.embedding === "object" &&
+          chunk.embedding !== null &&
+          "vector" in chunk.embedding
+        ) {
+          embeddingArray = (chunk.embedding as { vector: number[] }).vector
+        } else if (typeof chunk.embedding === "string") {
+          try {
+            embeddingArray = JSON.parse(chunk.embedding)
+          } catch {
+            throw new Error("Invalid embedding format: string parsing failed")
+          }
+        } else {
+          throw new Error("Invalid embedding format: unexpected type")
+        }
+
+        if (!Array.isArray(embeddingArray)) {
+          throw new Error("Invalid embedding format: resulting embedding is not an array")
+        }
+
+        return this.prisma.$executeRaw`
+          INSERT INTO "document_chunks" (
             id,
             "documentId",
             content,
@@ -88,14 +110,14 @@ export class ChunkRepository {
             ${chunk.content},
             ${chunk.chunkIndex},
             ${chunk.tokenCount},
-            ${`[${chunk.embedding.join(",")}]`}::vector,
+            ${`[${embeddingArray.join(",")}]`}::vector,
             ${chunk.metadata.source},
             ${chunk.metadata.pageNumber ?? null},
             ${chunk.metadata.chunkingStrategy},
             NOW()
           )
         `
-      )
+      })
     )
 
     // Update the Prometheus gauge: how many total chunks are now in pgvector?
