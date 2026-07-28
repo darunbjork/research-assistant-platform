@@ -3,10 +3,11 @@
 
 import type { GeminiRequest, GeminiResponse } from "../types/llm.types"
 import type { HybridSearchResult, Citation } from "../types/retrieval.types"
-import { logRagEvent } from "../utils/logger"
+import { logRagEvent, logError } from "../utils/logger"
 import { generationRequests, generationLatency, tokenCost } from "../utils/metrics"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
+import { RateLimitError } from "../middleware/error.middleware"
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_MODEL = "gemini-2.0-flash"
@@ -209,7 +210,8 @@ Begin your answer now.`
 
   // ── callGemini ────────────────────────────────────────────────────────
   private async callGemini(systemPrompt: string, userQuery: string): Promise<GeminiResponse> {
-    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
+    const maxRetries = 3
+    let delay = 1000
 
     const requestBody: GeminiRequest = {
       systemInstruction: {
@@ -228,30 +230,55 @@ Begin your answer now.`
       },
     }
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(requestBody),
-    })
-
-    if (!response.ok) {
-      let errorMessage = `Gemini generation API error: ${response.status} ${response.statusText}`
-
+    for (let attempt = 1; attempt <= maxRetries; attempt++) {
+      const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
       try {
-        const errorBody = (await response.json()) as {
-          error?: { message?: string }
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(requestBody),
+        })
+
+        if (response.status === 429) {
+          if (attempt === maxRetries) {
+            throw new RateLimitError(`Gemini generation API error: 429 Too Many Requests (rate limit / quota exceeded)`)
+          }
+          logError(`Gemini API rate limited (429). Retrying in ${delay}ms...`, new Error("Rate limit"), {
+            service: "GenerationService",
+            attempt,
+          })
+          await new Promise(resolve => setTimeout(resolve, delay))
+          delay *= 2 // Exponential backoff
+          continue
         }
-        if (errorBody.error?.message) {
-          errorMessage += ` — ${errorBody.error.message}`
+
+        if (!response.ok) {
+          let errorMessage = `Gemini generation API error: ${response.status} ${response.statusText}`
+
+          try {
+            const errorBody = (await response.json()) as {
+              error?: { message?: string }
+            }
+            if (errorBody.error?.message) {
+              errorMessage += ` — ${errorBody.error.message}`
+            }
+          } catch {
+            // Could not parse error body — use status code message
+          }
+
+          throw new Error(errorMessage)
         }
-      } catch {
-        // Could not parse error body — use status code message
+
+        return await (response.json() as Promise<GeminiResponse>)
+      } catch (error) {
+        if (attempt === maxRetries) {
+          throw error
+        }
+        await new Promise(resolve => setTimeout(resolve, delay))
+        delay *= 2
       }
-
-      throw new Error(errorMessage)
     }
-
-    return response.json() as Promise<GeminiResponse>
+    throw new Error("Failed to call Gemini API after maximum retries")
   }
 
   // ── estimatePromptTokens ──────────────────────────────────────────────

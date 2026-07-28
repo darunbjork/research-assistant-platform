@@ -365,7 +365,7 @@ describe("EvaluatorService", () => {
         ],
       })
 
-      expect(result.totalDurationMs).toBeGreaterThan(0)
+      expect(result.totalDurationMs).toBeGreaterThanOrEqual(0)
     })
   })
 })

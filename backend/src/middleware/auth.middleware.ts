@@ -13,6 +13,10 @@
 import type { Request, Response, NextFunction } from "express"
 import { verifyAccessToken } from "../utils/jwt.utils"
 import type { JwtPayload } from "../types"
+import { PrismaClient } from "@prisma/client"
+import { UnauthorizedError } from "./error.middleware"
+
+const prisma = new PrismaClient()
 
 declare global {
   namespace Express {
@@ -22,11 +26,11 @@ declare global {
   }
 }
 
-export function authMiddleware(req: Request, _res: Response, next: NextFunction): void {
+export async function authMiddleware(req: Request, _res: Response, next: NextFunction): Promise<void> {
   const authHeader = req.headers.authorization
 
   if (!authHeader?.startsWith("Bearer ")) {
-    next(new Error("No token provided"))
+    next(new UnauthorizedError("No token provided"))
     return
   }
 
@@ -34,8 +38,20 @@ export function authMiddleware(req: Request, _res: Response, next: NextFunction)
 
   try {
     const payload = verifyAccessToken(token)
-    req.user = payload
 
+    // Verify the user exists in the database to prevent database state desync
+    // (e.g. after a database reset/wipe where the JWT is still structurally valid)
+    const user = await prisma.user.findUnique({
+      where: { id: payload.userId },
+      select: { id: true },
+    })
+
+    if (user === null) {
+      next(new UnauthorizedError("User account no longer exists. Please register or log in again."))
+      return
+    }
+
+    req.user = payload
     next()
   } catch (error: unknown) {
     next(error)

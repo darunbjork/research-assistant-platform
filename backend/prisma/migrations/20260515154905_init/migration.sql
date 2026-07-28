@@ -60,7 +60,7 @@ CREATE TABLE "document_chunks" (
     "content" TEXT NOT NULL,
     "chunkIndex" INTEGER NOT NULL,
     "tokenCount" INTEGER NOT NULL,
-    "embedding" vector(768),
+    "embedding" vector(3072),
     "source" TEXT NOT NULL,
     "pageNumber" INTEGER,
     "chunkingStrategy" TEXT NOT NULL,

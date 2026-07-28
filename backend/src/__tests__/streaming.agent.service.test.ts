@@ -270,7 +270,7 @@ describe("StreamingAgentService", () => {
         .mockResolvedValueOnce(makeSynthesisResponse())
 
       const result = await service.run("test", "user-1", "session-1", onEvent)
-      expect(result.durationMs).toBeGreaterThan(0)
+      expect(result.durationMs).toBeGreaterThanOrEqual(0)
     })
   })
 

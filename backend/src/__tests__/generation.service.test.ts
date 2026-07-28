@@ -385,7 +385,7 @@ describe("GenerationService", () => {
   // ── Error handling ─────────────────────────────────────────────────────
   describe("generate() — error handling", () => {
     it("throws descriptive error for 429 rate limit", async () => {
-      fetchSpy.mockResolvedValueOnce(
+      fetchSpy.mockResolvedValue(
         new Response(JSON.stringify({ error: { message: "Resource exhausted" } }), {
           status: 429,
           statusText: "Too Many Requests",
@@ -398,7 +398,7 @@ describe("GenerationService", () => {
     })
 
     it("throws descriptive error for 401 invalid key", async () => {
-      fetchSpy.mockResolvedValueOnce(
+      fetchSpy.mockResolvedValue(
         new Response(JSON.stringify({ error: { message: "API key not valid" } }), {
           status: 401,
           statusText: "Unauthorized",

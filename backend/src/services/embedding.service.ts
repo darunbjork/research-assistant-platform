@@ -13,6 +13,7 @@ import { logRagEvent, logError } from "../utils/logger"
 import { embeddingRequests, embeddingLatency, tokenCost } from "../utils/metrics"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
+import { RateLimitError } from "../middleware/error.middleware"
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
@@ -113,7 +114,8 @@ export class EmbeddingService {
 
       cached.forEach((c, i) => {
         if (c !== null) {
-          results[i] = JSON.parse(c) as number[]
+          const parsed = JSON.parse(c) as CachedEmbedding
+          results[i] = parsed.vector
           this.cacheHits++
         } else {
           toEmbed.push({ index: i, text: texts[i]! })
@@ -187,6 +189,9 @@ export class EmbeddingService {
     })
 
     if (!response.ok) {
+      if (response.status === 429) {
+        throw new RateLimitError("Gemini embedding API error: 429 Too Many Requests (rate limit / quota exceeded)")
+      }
       let errorMessage = `Gemini embedding API error: ${response.status} ${response.statusText}`
       try {
         const errorBody = (await response.json()) as { error?: { message?: string } }
