@@ -1,8 +1,7 @@
 # ResearchBot — Production-Grade Agentic RAG Platform
+<img width="1440" height="900" alt="Screenshot 2026-07-28 at 17 40 06" src="https://github.com/user-attachments/assets/8b4e9650-448e-468b-a9be-048abcfb7362" />
+<img width="1440" height="900" alt="Screenshot 2026-07-28 at 17 40 22" src="https://github.com/user-attachments/assets/1ad075fb-78ba-4a57-9dc3-4b088823ea4d" />
 
-![ResearchBot Main Interface](docs/screenshots/app-interface-1.png)
-
-![ResearchBot Text Upload & Engine](docs/screenshots/app-interface-2.png)
 
 ---
 
