@@ -61,6 +61,21 @@ cd ../frontend && npm install && npm run dev
 # → http://localhost:5173
 ```
 
+## Development Commands
+
+```bash
+npm run dev             # Dev server with hot reload
+npm run type-check      # TypeScript strict check (tsc --noEmit)
+npm run lint            # ESLint — detect lint errors
+npx prettier --check "src/**/*.ts"   # Prettier — check formatting (CI fails on this)
+npx prettier --write "src/**/*.ts"   # Prettier — auto-fix formatting
+npm run no-any          # Fail if ': any' appears in src/
+npm test                # Unit tests
+npm run test:coverage   # Tests with coverage thresholds
+npm run build           # Compile TypeScript to dist/
+npm start               # Run the compiled build
+```
+
 ## Architecture
 
 See [docs/architecture.md](./docs/architecture.md) for:

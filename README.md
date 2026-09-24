@@ -127,6 +127,43 @@ When testing with a free Gemini API key:
 
 ---
 
+## 🔍 Code Quality & CI Checks
+
+Run these before pushing — they mirror the CI pipeline:
+
+```bash
+cd backend
+
+npm run lint                            # ESLint — detect lint errors
+npx prettier --check "src/**/*.ts"      # Prettier — check formatting (CI fails on this)
+npx prettier --write "src/**/*.ts"      # Prettier — auto-fix formatting
+npm run type-check                      # TypeScript strict check (tsc --noEmit)
+npm run no-any                          # Fail if ': any' appears in src/
+npm run test:coverage                   # Tests with coverage thresholds
+npm run build                           # Compile TypeScript to dist/
+```
+
+Frontend checks:
+
+```bash
+cd frontend
+
+npm run lint                            # ESLint
+npm run build                           # Type-check + production build (tsc -b && vite build)
+npm run preview                         # Serve the production build locally
+```
+
+### Other backend commands
+
+| Command | Purpose |
+| :--- | :--- |
+| `npm run dev` | Dev server with hot reload (`ts-node-dev`) |
+| `npm start` | Run the compiled build (`dist/app.js`) |
+| `npm run monitoring:up` / `monitoring:down` / `monitoring:logs` | Prometheus + Grafana + Jaeger stack |
+| `npm run loadtest:all` | Run all Artillery load-test scenarios (see [backend/load-tests/README.md](backend/load-tests/README.md)) |
+
+---
+
 ## 📖 API Documentation
 
 Once the backend is running, explore the interactive Swagger documentation at:
