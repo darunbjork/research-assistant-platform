@@ -13,7 +13,8 @@ export default {
     "/__tests__/helpers/"
   ],
 
-  setupFilesAfterFramework: ["<rootDir>/src/__tests__/helpers/setup.ts"],
+  // Registered in jest.config.mjs via setupFilesAfterEnv.
+  setupFilesAfterEnv: ["<rootDir>/src/__tests__/helpers/setup.ts"],
 
   // ── FIXES EADDRINUSE ──────────────────────────────────────────────────────
   // Kills any lingering processes after the test suite finishes
