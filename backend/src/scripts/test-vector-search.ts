@@ -1,10 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-vector-search.ts
-// End-to-end test: embed a question → search pgvector → see which chunks surface.
-// This calls the REAL Gemini API and the REAL database.
-// Run AFTER you have ingested at least one document via POST /api/v1/documents/ingest
-//
-// Usage: npx ts-node src/scripts/test-vector-search.ts
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -30,7 +24,6 @@ async function main(): Promise<void> {
   console.log("VECTOR SEARCH — END-TO-END TEST")
   console.log("=".repeat(60))
 
-  // ── Check how many chunks are in the database ─────────────────────────
   const stats = await searchService.getIndexStats()
   console.log(`\nDatabase state:`)
   console.log(`  Total chunks: ${stats.totalChunks}`)
@@ -47,7 +40,6 @@ async function main(): Promise<void> {
     return
   }
 
-  // ── Test queries ──────────────────────────────────────────────────────
   const queries = [
     "What is machine learning?",
     "How do neural networks work?",
@@ -88,7 +80,6 @@ async function main(): Promise<void> {
     })
   }
 
-  // ── Similarity explanation test ───────────────────────────────────────
   console.log(`\n${"─".repeat(50)}`)
   console.log("SIMILARITY EXPLANATION TEST")
   console.log("(Shows the exact similarity score between a query and a specific chunk)")
@@ -96,7 +87,6 @@ async function main(): Promise<void> {
   const testQuery = "What is machine learning?"
   const queryVector = await embeddingService.embedText(testQuery, "RETRIEVAL_QUERY")
 
-  // Get the ID of the first chunk in the database
   const firstChunks = await searchService.search(queryVector, { topK: 1 })
   const firstChunk = firstChunks[0]
 

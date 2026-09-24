@@ -1,9 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-self-correction.ts
-// Demonstrates the self-correction mechanism with real API calls.
-// Shows how quality scores change between iterations.
-//
-// Usage: npx ts-node src/scripts/test-self-correction.ts
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -35,7 +30,6 @@ async function main(): Promise<void> {
   console.log("SELF-CORRECTION DEMO — RAG Triad Evaluation")
   console.log("=".repeat(65))
 
-  // ── Demo 1: Heuristic evaluation with different answer qualities ──────
   console.log("\n📊 HEURISTIC EVALUATION DEMO\n")
 
   const scenarios = [
@@ -125,7 +119,6 @@ async function main(): Promise<void> {
     console.log()
   }
 
-  // ── Demo 2: Full agent run showing self-correction in action ──────────
   console.log("─".repeat(65))
   console.log("FULL AGENT RUN WITH SELF-CORRECTION\n")
 

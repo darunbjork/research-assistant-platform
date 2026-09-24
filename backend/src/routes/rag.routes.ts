@@ -6,10 +6,8 @@ import { createRateLimiter, RAG_LIMIT } from "../middleware/rate-limit.middlewar
 const router = Router()
 const controller = new RagController()
 
-// Apply auth to all routes
 router.use(authMiddleware)
 
-// Create the rate limiter for RAG endpoints
 const ragRateLimiter = createRateLimiter(RAG_LIMIT)
 
 /**

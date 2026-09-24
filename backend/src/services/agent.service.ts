@@ -1,6 +1,3 @@
-// backend/src/services/agent.service.ts
-// Updated Day 22: spans on every ReAct iteration.
-
 import crypto from "crypto"
 import type { HybridSearchService } from "./hybrid.search.service"
 import type { GenerationService } from "./generation.service"
@@ -22,12 +19,9 @@ import { agentIterations, activeAgentSessions } from "../utils/metrics"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
-// ── Constants ──────────────────────────────────────────────────────────────
 const GEMINI_MODEL = "gemini-2.0-flash"
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
-
-// ── Token tracking ─────────────────────────────────────────────────────────
 interface TokenUsage {
   total: number
 }
@@ -47,7 +41,6 @@ export class AgentService {
     this.evaluator = new EvaluatorNode(apiKey)
   }
 
-  // ── run ───────────────────────────────────────────────────────────────
   async run(userQuery: string, userId: string): Promise<AgentResult> {
     return withSpan(this.tracer, "agent.run", async span => {
       const sessionId = crypto.randomUUID()
@@ -85,8 +78,6 @@ export class AgentService {
       }
 
       const toolRegistry = createToolRegistry(this.hybridSearchService, userId)
-
-      // ── ReAct + Self-Correction Loop ───────────────────────────────────
       while (!state.isComplete && state.iterationCount < MAX_ITERATIONS) {
         state.iterationCount++
         state.status = "thinking"
@@ -97,7 +88,6 @@ export class AgentService {
           iterationCount: state.iterationCount,
         })
 
-        // ── REASON ──────────────────────────────────────────────────────
         let decision: ToolDecision
 
         try {
@@ -112,7 +102,6 @@ export class AgentService {
           break
         }
 
-        // ── CHECK: Agent says DONE ──────────────────────────────────────
         if (decision.toolName === "DONE") {
           steps.push({
             stepNumber: state.iterationCount,
@@ -124,7 +113,6 @@ export class AgentService {
           break
         }
 
-        // ── ACT ────────────────────────────────────────────────────────
         const tool = toolRegistry[decision.toolName]
 
         if (tool === undefined) {
@@ -164,7 +152,6 @@ export class AgentService {
 
         const toolDurationMs = Date.now() - toolStart
 
-        // ── OBSERVE ────────────────────────────────────────────────────
         const toolCall: ToolCall = {
           toolName: decision.toolName,
           input: decision.input,
@@ -193,7 +180,6 @@ export class AgentService {
           durationMs: toolDurationMs,
         })
 
-        // ── DRAFT + EVALUATE ────────────────────────────────────────────
         if (toolSuccess && state.toolCallHistory.length > 0) {
           state.status = "evaluating"
 
@@ -248,7 +234,6 @@ export class AgentService {
         }
       }
 
-      // ── SYNTHESISE ────────────────────────────────────────────────────
       state.status = "generating"
 
       const { answer, citations } = await this.synthesiseFinalAnswer(state, tokenUsage)
@@ -288,7 +273,6 @@ export class AgentService {
     })
   }
 
-  // ── draftAnswer ───────────────────────────────────────────────────────
   private async draftAnswer(state: AgentState, tokenUsage: TokenUsage): Promise<string> {
     if (state.toolCallHistory.length === 0) {
       return ""
@@ -335,7 +319,6 @@ Provide a brief, direct draft answer (2-4 sentences maximum):`
     }
   }
 
-  // ── reasonNextAction ──────────────────────────────────────────────────
   private async reasonNextAction(
     state: AgentState,
     toolRegistry: ReturnType<typeof createToolRegistry>,
@@ -408,7 +391,6 @@ Respond ONLY with valid JSON (no markdown):
     return this.parseToolDecision(rawText)
   }
 
-  // ── synthesiseFinalAnswer ─────────────────────────────────────────────
   private async synthesiseFinalAnswer(
     state: AgentState,
     tokenUsage: TokenUsage
@@ -463,14 +445,12 @@ RULES:
     return { answer, citations }
   }
 
-  // ── updateStatusForTool ───────────────────────────────────────────────
   private updateStatusForTool(state: AgentState, toolName: string): void {
     if (toolName === "rag_search") state.status = "searching"
     else if (toolName === "calculator") state.status = "calculating"
     else state.status = "searching"
   }
 
-  // ── parseToolDecision ─────────────────────────────────────────────────
   private parseToolDecision(rawText: string): ToolDecision {
     const cleaned = rawText
       .replace(/```json\s*/gi, "")
@@ -504,7 +484,6 @@ RULES:
     }
   }
 
-  // ── extractCitationsFromHistory ───────────────────────────────────────
   private extractCitationsFromHistory(toolCalls: ToolCall[]): Citation[] {
     const citations: Citation[] = []
 
@@ -536,7 +515,6 @@ RULES:
     return citations
   }
 
-  // ── describeStep ──────────────────────────────────────────────────────
   private describeStep(decision: ToolDecision): string {
     switch (decision.toolName) {
       case "rag_search":
@@ -550,7 +528,6 @@ RULES:
     }
   }
 
-  // ── callGemini ────────────────────────────────────────────────────────
   private async callGemini(requestBody: GeminiRequest): Promise<GeminiResponse> {
     const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
 

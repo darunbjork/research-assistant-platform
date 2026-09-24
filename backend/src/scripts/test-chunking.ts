@@ -1,8 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-chunking.ts
-// Run this to see chunking in action with real output.
-// Not a test file — a development tool.
-// Usage: npx ts-node src/scripts/test-chunking.ts
 
 import { ChunkingService } from "../services/chunking.service"
 
@@ -43,7 +39,6 @@ console.log(`Input: ${sampleDocument.length} characters`)
 console.log(`Estimated tokens: ${service.estimateTokens(sampleDocument)}`)
 console.log("")
 
-// Strategy 1: Fixed
 const fixedChunks = service.chunkFixed(sampleDocument, { chunkSize: 300, overlap: 30 })
 console.log(`FIXED (chunkSize=300, overlap=30): ${fixedChunks.length} chunks`)
 fixedChunks.forEach((chunk, i) => {
@@ -52,7 +47,6 @@ fixedChunks.forEach((chunk, i) => {
 })
 console.log("")
 
-// Strategy 2: Sentence
 const sentenceChunks = service.chunkBySentence(sampleDocument, { maxTokens: 80, minTokens: 10 })
 console.log(`SENTENCE (maxTokens=80): ${sentenceChunks.length} chunks`)
 sentenceChunks.forEach((chunk, i) => {
@@ -61,7 +55,6 @@ sentenceChunks.forEach((chunk, i) => {
 })
 console.log("")
 
-// Strategy 3: Recursive
 const recursiveChunks = service.chunkRecursive(sampleDocument, { maxChunkSize: 300, overlap: 30 })
 console.log(`RECURSIVE (maxChunkSize=300): ${recursiveChunks.length} chunks`)
 recursiveChunks.forEach((chunk, i) => {
@@ -70,7 +63,6 @@ recursiveChunks.forEach((chunk, i) => {
 })
 console.log("")
 
-// Validation
 console.log("VALIDATION:")
 const warnings = service.validateChunks(recursiveChunks)
 if (warnings.length === 0) {

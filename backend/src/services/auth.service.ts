@@ -1,13 +1,3 @@
-// * All authentication business logic lives here.
-// * Controllers call this service — they never touch bcrypt or JWT directly.
-//
-// TODO: WHY A SERVICE LAYER?
-// Your MERN apps might have put all logic in the controller.
-// A service layer separates concerns:
-//   Controller = handle HTTP (parse body, call service, send response)
-//   Service    = business logic (hash password, query database, sign tokens)
-// This makes services testable without HTTP — just call the function directly.
-
 import bcrypt from "bcryptjs"
 import { PrismaClient } from "@prisma/client"
 import type { RegisterRequest, LoginRequest, AuthResponse, PublicUser } from "../types"
@@ -27,40 +17,34 @@ export class AuthService {
   async register(data: RegisterRequest): Promise<AuthResponse> {
     const start = Date.now()
 
-    // Log: Start of registration process
-    logger.debug("Starting registration process", { service: "AuthService", email: data.email }) // Use logger.debug
+    logger.debug("Starting registration process", { service: "AuthService", email: data.email })
 
-    // Step 1: Check if user already exists
     const existing = await this.prisma.user.findUnique({
       where: { email: data.email.toLowerCase() },
     })
 
-    // Log: After checking for existing user
     logger.debug("Checked for existing user", {
       service: "AuthService",
       email: data.email,
       exists: existing !== null,
-    }) // Use logger.debug
+    })
 
     if (existing !== null) {
       throw new ValidationError("An account with this email already exists")
     }
 
-    // Step 2: Hash the password
     let passwordHash: string
     try {
       passwordHash = await bcrypt.hash(data.password, BCRYPT_ROUNDS)
-      // Log: After password hashing
-      logger.debug("Password hashed successfully", { service: "AuthService", email: data.email }) // Use logger.debug
+      logger.debug("Password hashed successfully", { service: "AuthService", email: data.email })
     } catch (error: unknown) {
       logError("Password hashing failed", error as Error, {
         service: "AuthService",
         email: data.email,
       })
-      throw error // Re-throw to be caught by the controller's catch block
+      throw error
     }
 
-    // Step 3: Create the user in the database
     let user: { id: string; email: string; role: "GUEST" | "USER" | "ADMIN"; createdAt: Date }
     try {
       user = await this.prisma.user.create({
@@ -70,21 +54,19 @@ export class AuthService {
           role: "USER",
         },
       })
-      // Log: After user creation
       logger.debug("User created in database", {
         service: "AuthService",
         userId: user.id,
         email: user.email,
-      }) // Use logger.debug
+      })
     } catch (error: unknown) {
       logError("Database user creation failed", error as Error, {
         service: "AuthService",
         email: data.email,
       })
-      throw error // Re-throw to be caught by the controller's catch block
+      throw error
     }
 
-    // Step 4: Sign JWT tokens
     let tokens: { accessToken: string; refreshToken: string }
     try {
       tokens = signTokens({
@@ -92,17 +74,15 @@ export class AuthService {
         email: user.email,
         role: user.role,
       })
-      // Log: After token signing
-      logger.debug("JWT tokens signed successfully", { service: "AuthService", userId: user.id }) // Use logger.debug
+      logger.debug("JWT tokens signed successfully", { service: "AuthService", userId: user.id })
     } catch (error: unknown) {
       logError("JWT token signing failed", error as Error, {
         service: "AuthService",
         userId: user.id,
       })
-      throw error // Re-throw to be caught by the controller's catch block
+      throw error
     }
 
-    // Log: Successful registration completion - this is a RAG event, so keep logRagEvent
     logRagEvent("ingest", "User registered", {
       service: "AuthService",
       userId: user.id,

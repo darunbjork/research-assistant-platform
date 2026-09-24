@@ -241,12 +241,18 @@ Begin your answer now.`
 
         if (response.status === 429) {
           if (attempt === maxRetries) {
-            throw new RateLimitError(`Gemini generation API error: 429 Too Many Requests (rate limit / quota exceeded)`)
+            throw new RateLimitError(
+              `Gemini generation API error: 429 Too Many Requests (rate limit / quota exceeded)`
+            )
           }
-          logError(`Gemini API rate limited (429). Retrying in ${delay}ms...`, new Error("Rate limit"), {
-            service: "GenerationService",
-            attempt,
-          })
+          logError(
+            `Gemini API rate limited (429). Retrying in ${delay}ms...`,
+            new Error("Rate limit"),
+            {
+              service: "GenerationService",
+              attempt,
+            }
+          )
           await new Promise(resolve => setTimeout(resolve, delay))
           delay *= 2 // Exponential backoff
           continue

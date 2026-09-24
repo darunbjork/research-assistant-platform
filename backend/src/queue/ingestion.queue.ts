@@ -1,34 +1,3 @@
-// backend/src/queue/ingestion.queue.ts
-// Bull Queue for async document ingestion.
-//
-// ARCHITECTURE:
-//
-//   HTTP REQUEST SIDE (fast):
-//     POST /api/v1/documents/ingest
-//       → validate the document
-//       → add a job to the queue: { name, content, mimeType, userId }
-//       → return 202 Accepted with jobId
-//     Total HTTP response time: < 50ms
-//
-//   WORKER SIDE (slow, runs in background):
-//     Bull picks up the job from Redis
-//       → ChunkingService.chunkRecursive()
-//       → EmbeddingService.embedBatch()
-//       → ChunkRepository.storeMany()
-//     Updates job progress: 0% → 33% → 66% → 100%
-//     Total worker time: 2-5 seconds
-//
-//   POLLING SIDE (user checks status):
-//     GET /api/v1/documents/jobs/:jobId
-//       → returns { status: "waiting" | "active" | "completed" | "failed", progress: 45 }
-//
-// BULL QUEUE FEATURES USED:
-//   - concurrency: 3 workers run 3 jobs simultaneously
-//   - attempts: failed jobs retry up to 3 times
-//   - backoff: wait 5s before first retry, 30s before second
-//   - progress: 0-100 progress tracking
-//   - events: completed, failed, progress events
-
 import Bull from "bull"
 import type Redis from "ioredis"
 import { ChunkingService } from "../services/chunking.service"
@@ -40,19 +9,14 @@ import { logRagEvent, logError } from "../utils/logger"
 import { indexedDocuments } from "../utils/metrics"
 import type { ChunkToStore } from "../repositories/chunk.repository"
 
-// ── Job Data Shape ────────────────────────────────────────────────────────
-// What we put into the queue when a document is uploaded
 export interface IngestionJobData {
   name: string
   content: string
   mimeType: string
   sizeBytes: number
   userId: string
-  requestId: string // for tracing — links the HTTP request to the job
+  requestId: string
 }
-
-// ── Job Result Shape ──────────────────────────────────────────────────────
-// What the worker returns when ingestion is complete
 export interface IngestionJobResult {
   documentId: string
   name: string
@@ -61,8 +25,6 @@ export interface IngestionJobResult {
   durationMs: number
 }
 
-// ── Progress Stages ───────────────────────────────────────────────────────
-// Progress percentage at each stage (for UI progress bars)
 const PROGRESS = {
   STARTED: 5,
   CHUNKED: 33,
@@ -71,15 +33,11 @@ const PROGRESS = {
   COMPLETE: 100,
 } as const
 
-// ── Queue Configuration ───────────────────────────────────────────────────
 const QUEUE_NAME = "document-ingestion"
-const CONCURRENCY = 3 // process 3 documents simultaneously
+const CONCURRENCY = 3
 const MAX_ATTEMPTS = 3
-const BACKOFF_DELAY_MS = 5_000 // 5 seconds between retries
+const BACKOFF_DELAY_MS = 5_000
 
-// ── Singleton Services ────────────────────────────────────────────────────
-// Shared across all worker executions within this process.
-// Lazy-initialised to avoid circular dependencies.
 let prismaInstance: PrismaClient | null = null
 let redisInstance: Redis | null = null
 
@@ -88,12 +46,9 @@ function getPrisma(): PrismaClient {
   return prismaInstance
 }
 
-// ── Create Queue ─────────────────────────────────────────────────────────
 export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJobData> {
   redisInstance = redisClient
 
-  // Bull accepts Redis connection options or a Redis URL string.
-  // We pass the URL from .env so Bull creates its own connection.
   const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379"
 
   const queue = new Bull<IngestionJobData>(QUEUE_NAME, {
@@ -104,18 +59,15 @@ export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJo
         type: "exponential",
         delay: BACKOFF_DELAY_MS,
       },
-      removeOnComplete: 50, // keep last 50 completed jobs for status queries
-      removeOnFail: 20, // keep last 20 failed jobs for debugging
+      removeOnComplete: 50,
+      removeOnFail: 20,
     },
   })
 
-  // ── Register the Worker ───────────────────────────────────────────────
-  // This function runs in the background for every job picked from the queue.
   queue.process(CONCURRENCY, async (job: Bull.Job<IngestionJobData>) => {
     return processIngestionJob(job)
   })
 
-  // ── Queue Events ──────────────────────────────────────────────────────
   queue.on("completed", (_job: Bull.Job<IngestionJobData>, result: IngestionJobResult) => {
     logRagEvent("ingest", "Ingestion job completed", {
       service: "IngestionQueue",
@@ -149,9 +101,6 @@ export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJo
   return queue
 }
 
-// ── Worker Function ───────────────────────────────────────────────────────
-// This runs for every job. It mirrors what IngestionService.ingest() does
-// but with progress tracking and Bull's retry support.
 async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<IngestionJobResult> {
   const { name, content, mimeType, sizeBytes, userId } = job.data
   const start = Date.now()
@@ -173,7 +122,6 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
   const documentRepository = new DocumentRepository(prisma)
   const chunkRepository = new ChunkRepository(prisma)
 
-  // ── Step 1: Create the Document row ──────────────────────────────────
   let document
   try {
     document = await documentRepository.create({ name, content, mimeType, sizeBytes }, userId)
@@ -188,7 +136,6 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
   const documentId = document.id
 
   try {
-    // ── Step 2: Chunk the document ────────────────────────────────────
     const rawChunks = chunkingService.chunk(content, "recursive", {
       maxChunkSize: 512,
       overlap: 50,
@@ -206,7 +153,6 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
       chunkCount: rawChunks.length,
     })
 
-    // ── Step 3: Embed all chunks ──────────────────────────────────────
     const chunkTexts = rawChunks.map(c => c.content)
     const embeddings = await embeddingService.embedBatch(chunkTexts, "RETRIEVAL_DOCUMENT")
 
@@ -218,7 +164,6 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
       chunkCount: rawChunks.length,
     })
 
-    // ── Step 4: Store chunks in pgvector ──────────────────────────────
     const chunksToStore: ChunkToStore[] = rawChunks.map((rawChunk, index) => {
       const embedding = embeddings[index]
       if (embedding === undefined) {
@@ -241,7 +186,6 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
     await chunkRepository.storeMany(documentId, chunksToStore)
     await job.progress(PROGRESS.STORED)
 
-    // ── Step 5: Complete ──────────────────────────────────────────────
     const totalTokens = rawChunks.reduce((sum, c) => sum + c.tokenCount, 0)
     const durationMs = Date.now() - start
 
@@ -264,7 +208,6 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
 
     return result
   } catch (error: unknown) {
-    // Clean up the orphaned document if ingestion failed
     try {
       await chunkRepository.deleteForDocument(documentId)
       await documentRepository.deleteForUser(documentId, userId)
@@ -281,19 +224,16 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
       userId,
     })
 
-    throw error // Bull retries on throw
+    throw error
   }
 }
-
-// ── Job Status Helper ──────────────────────────────────────────────────────
-// Converts a Bull job to a clean status object for the API response.
 export interface JobStatus {
   jobId: string
   status: "waiting" | "active" | "completed" | "failed" | "delayed" | "unknown"
   progress: number // 0-100
   result?: IngestionJobResult
   error?: string
-  createdAt: number // Unix timestamp ms
+  createdAt: number
   finishedAt?: number
 }
 

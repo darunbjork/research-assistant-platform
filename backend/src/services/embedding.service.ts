@@ -190,7 +190,9 @@ export class EmbeddingService {
 
     if (!response.ok) {
       if (response.status === 429) {
-        throw new RateLimitError("Gemini embedding API error: 429 Too Many Requests (rate limit / quota exceeded)")
+        throw new RateLimitError(
+          "Gemini embedding API error: 429 Too Many Requests (rate limit / quota exceeded)"
+        )
       }
       let errorMessage = `Gemini embedding API error: ${response.status} ${response.statusText}`
       try {

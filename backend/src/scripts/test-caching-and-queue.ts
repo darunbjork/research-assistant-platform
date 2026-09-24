@@ -29,7 +29,6 @@ async function main(): Promise<void> {
   const query = "What is machine learning?"
   const userId = "demo-user-123"
 
-  // ── First call (cache miss) ───────────────────────────────────────────
   console.log("1. First search (cache MISS — computes from scratch):")
   const start1 = Date.now()
   const results1 = await hybridService.search(query, { topK: 5, userId })
@@ -40,7 +39,6 @@ async function main(): Promise<void> {
   console.log(`   Cache: MISS → stored in Redis`)
   console.log()
 
-  // ── Second call (cache hit) ───────────────────────────────────────────
   console.log("2. Same search (cache HIT — served from Redis):")
   const start2 = Date.now()
   const results2 = await hybridService.search(query, { topK: 5, userId })
@@ -52,7 +50,6 @@ async function main(): Promise<void> {
   console.log(`   Speedup: ${(time1 / time2).toFixed(1)}× faster`)
   console.log()
 
-  // ── Cache stats ───────────────────────────────────────────────────────
   const stats = searchCacheInst.getStats()
   console.log("3. Cache statistics:")
   console.log(`   Hits:     ${stats.hits}`)
@@ -60,17 +57,14 @@ async function main(): Promise<void> {
   console.log(`   Hit rate: ${(stats.hitRate * 100).toFixed(1)}%`)
   console.log()
 
-  // ── Verify cached results match original ──────────────────────────────
   const resultsMatch = JSON.stringify(results1) === JSON.stringify(results2)
   console.log(`4. Results consistency: ${resultsMatch ? "✅ Identical" : "❌ Different"}`)
   console.log()
 
-  // ── Cache invalidation demo ───────────────────────────────────────────
   console.log("5. Cache invalidation (simulating document delete):")
   const deleted = await searchCacheInst.invalidateForUser(userId)
   console.log(`   Deleted ${deleted} cache entry/entries for user`)
 
-  // Third call after invalidation — should miss again
   const start3 = Date.now()
   await hybridService.search(query, { topK: 5, userId })
   const time3 = Date.now() - start3
@@ -82,11 +76,9 @@ async function main(): Promise<void> {
   console.log("=".repeat(65))
   console.log()
 
-  // Check queue is available
   const { getIngestionQueue } = await import("../queue/index")
   const queue = getIngestionQueue()
 
-  // Get queue stats
   const [waiting, active, completed, failed] = await Promise.all([
     queue.getWaitingCount(),
     queue.getActiveCount(),
@@ -101,7 +93,6 @@ async function main(): Promise<void> {
   console.log(`  Failed:    ${failed}`)
   console.log()
 
-  // Add a test job
   const testJob = await queue.add({
     name: "test-document.txt",
     content: "This is a test document for the queue demo. Machine learning is great.",
@@ -114,7 +105,6 @@ async function main(): Promise<void> {
   console.log(`Test job added: jobId=${testJob.id}`)
   console.log("Waiting for job to complete...")
 
-  // Poll for completion
   let status = "waiting"
   let attempts = 0
   while (status !== "completed" && status !== "failed" && attempts < 30) {

@@ -1,10 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-hybrid-search.ts
-// End-to-end demonstration of hybrid vs vector-only vs keyword-only.
-// Shows WHERE each strategy succeeds and fails.
-// Run AFTER ingesting at least one document.
-//
-// Usage: npx ts-node src/scripts/test-hybrid-search.ts
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -30,8 +24,6 @@ async function main(): Promise<void> {
   console.log("HYBRID SEARCH — STRATEGY COMPARISON")
   console.log("=".repeat(65))
 
-  // ── Test queries ──────────────────────────────────────────────────────
-  // These are designed to show different failure modes:
   const testCases = [
     {
       query: "What is machine learning?",
@@ -54,7 +46,6 @@ async function main(): Promise<void> {
 
     const comparison = await hybridService.compareStrategies(testCase.query, { topK: 3 })
 
-    // ── Vector only results ───────────────────────────────────────────
     console.log(`\n  📐 VECTOR ONLY (${comparison.vectorOnly.length} results):`)
     comparison.vectorOnly.slice(0, 3).forEach((r, i) => {
       console.log(
@@ -63,7 +54,6 @@ async function main(): Promise<void> {
       )
     })
 
-    // ── Keyword only results ──────────────────────────────────────────
     console.log(`\n  🔤 KEYWORD ONLY (${comparison.keywordOnly.length} results):`)
     if (comparison.keywordOnly.length === 0) {
       console.log("    (no keyword matches found)")
@@ -75,7 +65,6 @@ async function main(): Promise<void> {
       })
     }
 
-    // ── Hybrid results ────────────────────────────────────────────────
     console.log(`\n  🔀 HYBRID / RRF (${comparison.hybrid.length} results):`)
     comparison.hybrid.slice(0, 3).forEach((r, i) => {
       const inVector = r.vectorRank !== 999 ? `v=${r.vectorRank}` : "v=—"
@@ -86,7 +75,6 @@ async function main(): Promise<void> {
       )
     })
 
-    // ── Overlap analysis ──────────────────────────────────────────────
     console.log(`\n  📊 OVERLAP ANALYSIS:`)
     console.log(`    In both lists:     ${comparison.inBoth.length} chunks`)
     console.log(`    Only in vector:    ${comparison.onlyInVector.length} chunks`)
@@ -105,7 +93,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Citation format preview ───────────────────────────────────────────
   console.log(`\n${"─".repeat(65)}`)
   console.log("CITATION FORMAT (what the frontend will display):")
 

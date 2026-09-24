@@ -1,9 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-reranker.ts
-// End-to-end demonstration of reranking quality improvement.
-// Shows before/after comparison for the same query.
-//
-// Usage: npx ts-node src/scripts/test-reranker.ts
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -43,7 +38,6 @@ async function main(): Promise<void> {
     console.log(`QUERY: "${query}"`)
     console.log()
 
-    // ── Step 1: Hybrid search (before reranking) ──────────────────────
     const hybridResults = await hybridService.search(query, { topK: 6 })
 
     if (hybridResults.length === 0) {
@@ -60,14 +54,13 @@ async function main(): Promise<void> {
     })
     console.log()
 
-    // ── Step 2: Rerank ────────────────────────────────────────────────
     const reranked = await rerankerService.rerank(query, hybridResults, {
       topK: Math.min(hybridResults.length, 5),
     })
 
     console.log(`AFTER RERANKING (cross-encoder order):`)
     reranked.forEach((r, i) => {
-      const rankChange = r.originalRank - r.rerankedRank // positive = moved up
+      const rankChange = r.originalRank - r.rerankedRank
       const changeStr =
         rankChange > 0 ? `↑${rankChange}` : rankChange < 0 ? `↓${Math.abs(rankChange)}` : "→"
 
@@ -78,7 +71,6 @@ async function main(): Promise<void> {
     })
     console.log()
 
-    // ── Step 3: Compare ───────────────────────────────────────────────
     const movedUp = reranked.filter(r => r.rerankedRank < r.originalRank).length
     const movedDown = reranked.filter(r => r.rerankedRank > r.originalRank).length
     const unchanged = reranked.filter(r => r.rerankedRank === r.originalRank).length
@@ -90,7 +82,6 @@ async function main(): Promise<void> {
     console.log()
   }
 
-  // ── Reranker quality check ────────────────────────────────────────────
   console.log("─".repeat(65))
   console.log("QUALITY SIGNAL:")
   console.log("If movedUp > 0: reranker found better ordering than RRF alone.")

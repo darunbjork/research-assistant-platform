@@ -1,10 +1,4 @@
 /* eslint-disable no-console */
-// * Run this to call the REAL Gemini API and see actual vectors.
-// Usage: npx ts-node src/scripts/test-embedding.ts
-//
-// * This script is for development verification — not a test file.
-// It hits the real API so it costs a tiny amount per run.
-// Run it once to verify your API key works, then use the mocked tests.
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -27,7 +21,6 @@ async function main(): Promise<void> {
 
   const service = new EmbeddingService(apiKey, redis)
 
-  // ── Test 1: Single embedding ──────────────────────────────────────────
   console.log("\n1. Embedding a single text...")
   const start1 = Date.now()
   const vector1 = await service.embedText("What is machine learning?")
@@ -40,7 +33,6 @@ async function main(): Promise<void> {
       .join(", ")}]`
   )
 
-  // ── Test 2: Cache hit ─────────────────────────────────────────────────
   console.log("\n2. Embedding the same text again (should be from cache)...")
   const start2 = Date.now()
   const vector2 = await service.embedText("What is machine learning?")
@@ -48,12 +40,11 @@ async function main(): Promise<void> {
   console.log(`   ✅ Duration: ${time2}ms ${time2 < 10 ? "(cache hit! 🎉)" : "(cache miss)"}`)
   console.log(`   ✅ Vectors match: ${JSON.stringify(vector1) === JSON.stringify(vector2)}`)
 
-  // ── Test 3: Semantic similarity ───────────────────────────────────────
   console.log("\n3. Semantic similarity test...")
   const texts = [
     "What is machine learning?",
-    "Explain artificial intelligence", // similar meaning
-    "How do I bake chocolate chip cookies?", // unrelated
+    "Explain artificial intelligence",
+    "How do I bake chocolate chip cookies?",
   ]
 
   const [v1, v2, v3] = await service.embedBatch(texts)
@@ -76,7 +67,6 @@ async function main(): Promise<void> {
     }
   }
 
-  // ── Test 4: Cache stats ───────────────────────────────────────────────
   console.log("\n4. Cache performance:")
   const stats = service.getCacheStats()
   console.log(`   Hits:    ${stats.hits}`)
@@ -85,12 +75,9 @@ async function main(): Promise<void> {
 
   console.log("\n✅ All embedding tests passed!")
 
-  // Clean up Redis connection so the script exits cleanly
   await redis.quit()
 }
 
-// Compute cosine similarity between two vectors
-// Returns a value from 0 (completely different) to 1 (identical)
 function cosineSimilarity(a: number[], b: number[]): number {
   if (a.length !== b.length) throw new Error("Vector dimensions must match")
 
@@ -112,7 +99,6 @@ function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / magnitude
 }
 
-// Run and handle errors
 main().catch((error: unknown) => {
   console.error("❌ Test failed:", error instanceof Error ? error.message : String(error))
   process.exit(1)

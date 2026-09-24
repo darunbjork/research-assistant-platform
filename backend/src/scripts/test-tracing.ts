@@ -1,11 +1,6 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-tracing.ts
-// Demonstrates OpenTelemetry tracing by running a traced RAG query
-// and printing the resulting spans.
-//
-// Usage: npx ts-node -r ./src/telemetry/tracer src/scripts/test-tracing.ts
 
-import "../telemetry/tracer" // Must be first
+import "../telemetry/tracer"
 import dotenv from "dotenv"
 dotenv.config()
 
@@ -32,37 +27,31 @@ async function main(): Promise<void> {
 
   const tracer = getTracer("demo-script")
 
-  // Simulate a traced RAG pipeline
   await withSpan(tracer, "demo.ragPipeline", async rootSpan => {
     rootSpan.setAttribute(RAG_ATTRS.QUERY, "What is machine learning?")
 
-    // Simulate embedding
     await withSpan(tracer, "demo.embedding.embedText", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
       span.setAttribute(LLM_ATTRS.MODEL, "text-embedding-004")
       span.setAttribute(LLM_ATTRS.OPERATION, "embed")
       span.setAttribute(RAG_ATTRS.CACHE_HIT, false)
 
-      // Simulate async work
       await new Promise(r => setTimeout(r, 50))
 
       span.setAttribute("embedding.dimensions", 768)
       span.setAttribute(LLM_ATTRS.OUTPUT_TOKENS, 768)
     })
 
-    // Simulate hybrid search
     await withSpan(tracer, "demo.retrieval.hybridSearch", async span => {
       span.setAttribute(RAG_ATTRS.STRATEGY, "hybrid")
       span.setAttribute("db.system", "postgresql")
 
-      // Child: vector search
       await withSpan(tracer, "demo.retrieval.vectorSearch", async vs => {
         vs.setAttribute("db.operation", "cosine_similarity")
         await new Promise(r => setTimeout(r, 20))
         vs.setAttribute(RAG_ATTRS.CHUNKS_RETRIEVED, 10)
       })
 
-      // Child: keyword search
       await withSpan(tracer, "demo.retrieval.keywordSearch", async ks => {
         ks.setAttribute("db.operation", "tsvector_search")
         await new Promise(r => setTimeout(r, 8))
@@ -72,7 +61,6 @@ async function main(): Promise<void> {
       span.setAttribute(RAG_ATTRS.CHUNKS_RETRIEVED, 10)
     })
 
-    // Simulate generation
     await withSpan(tracer, "demo.generation.generate", async span => {
       span.setAttribute(LLM_ATTRS.MODEL, "gemini-2.0-flash")
       span.setAttribute(LLM_ATTRS.TEMPERATURE, 0.1)
@@ -88,7 +76,6 @@ async function main(): Promise<void> {
     rootSpan.setAttribute(LLM_ATTRS.TOTAL_TOKENS, 623)
   })
 
-  // Give the exporter time to flush
   await new Promise(r => setTimeout(r, 500))
 
   console.log()

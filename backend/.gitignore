@@ -25,3 +25,5 @@ node_modules/.prisma/
 # Load test reports (large JSON files)
 load-tests/reports/*.json
 load-tests/reports/*.html
+
+docs/

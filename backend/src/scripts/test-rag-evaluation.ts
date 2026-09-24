@@ -1,9 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-rag-evaluation.ts
-// End-to-end RAG Triad evaluation test.
-// Runs a full RAG pipeline, then evaluates the output quality.
-//
-// Usage: npx ts-node src/scripts/test-rag-evaluation.ts
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -36,11 +31,10 @@ async function main(): Promise<void> {
   console.log("=".repeat(65))
   console.log()
 
-  // ── Test queries ──────────────────────────────────────────────────────
   const testQueries = [
     "What is machine learning?",
     "How do systems learn from data?",
-    "What is the capital of Mars?", // out-of-scope — should expose low faithfulness
+    "What is the capital of Mars?",
   ]
 
   const batchPairs: Array<{
@@ -54,14 +48,12 @@ async function main(): Promise<void> {
     console.log(`QUERY: "${query}"`)
     console.log()
 
-    // ── Step 1: Run RAG pipeline ──────────────────────────────────────
     const ragResult = await ragService.query(query, { topK: 5 })
 
     console.log(`ANSWER: "${ragResult.answer.slice(0, 150)}..."`)
     console.log(`CHUNKS RETRIEVED: ${ragResult.chunksRetrieved}`)
     console.log()
 
-    // ── Step 2: Evaluate with RAG Triad ──────────────────────────────
     const evalResult = await evaluatorService.evaluate({
       query,
       retrievedContext: ragResult.citations.map(c => c.excerpt),
@@ -70,7 +62,6 @@ async function main(): Promise<void> {
 
     const s = evalResult.scores
 
-    // Visual score bars
     console.log("RAG TRIAD SCORES:")
     console.log(
       `  Context Relevance:  ${scoreBar(s.contextRelevance)} ${(s.contextRelevance * 100).toFixed(0)}%`
@@ -97,7 +88,6 @@ async function main(): Promise<void> {
       console.log()
     }
 
-    // Collect for batch summary
     batchPairs.push({
       query,
       retrievedContext: ragResult.citations.map(c => c.excerpt),
@@ -105,12 +95,10 @@ async function main(): Promise<void> {
     })
   }
 
-  // ── Batch summary ─────────────────────────────────────────────────────
   console.log("=".repeat(65))
   console.log("AGGREGATE PIPELINE QUALITY")
   console.log("=".repeat(65))
 
-  // Run batch evaluation to get aggregates
   const batchResult = await evaluatorService.evaluateBatch({ pairs: batchPairs })
   const agg = batchResult.aggregateScores
 
@@ -148,8 +136,6 @@ async function main(): Promise<void> {
   await prisma.$disconnect()
   await redis.quit()
 }
-
-// ── Helpers ───────────────────────────────────────────────────────────────
 
 function scoreBar(score: number): string {
   const filled = Math.round(score * 10)

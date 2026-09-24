@@ -1,14 +1,3 @@
-// * Wires HTTP paths to controller methods, with validation middleware in between.
-//
-// TODO: REQUEST FLOW for POST /api/v1/auth/register:
-// 1. requestLoggerMiddleware (logs the request)
-// 2. validateRegister        (checks body shape — returns 400 if invalid)
-// 3. controller.register     (calls AuthService, returns tokens)
-// 4. errorMiddleware         (catches any thrown errors)
-
-// * Auth routes with full Swagger JSDoc documentation.
-// * swagger-jsdoc reads the @swagger comments and generates the OpenAPI spec.
-
 import { Router } from "express"
 import { AuthController } from "../controllers/auth.controller"
 import { authMiddleware } from "../middleware/auth.middleware"

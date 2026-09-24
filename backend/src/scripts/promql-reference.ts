@@ -1,9 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/promql-reference.ts
-// A reference file showing every PromQL query used in the dashboards.
-// Run this to print all queries with explanations.
-//
-// Usage: npx ts-node src/scripts/promql-reference.ts
 
 const QUERIES = [
   {

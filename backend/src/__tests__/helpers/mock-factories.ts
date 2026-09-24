@@ -1,17 +1,3 @@
-// backend/src/__tests__/helpers/mock-factories.ts
-// Centralised mock factories for all services.
-// Import from here instead of duplicating in every test file.
-//
-// FACTORY PATTERN:
-// Each factory returns a fresh mock object.
-// Creating fresh mocks prevents state leakage between tests.
-// Tests that share a mock object can interfere with each other.
-//
-// USAGE:
-//   import { makeMockEmbeddingService, makeGeminiResponse } from "./helpers/mock-factories"
-//   const embedding = makeMockEmbeddingService()
-//   fetchSpy.mockResolvedValueOnce(makeGeminiResponse("answer text"))
-
 import type { HybridSearchService } from "../../services/hybrid.search.service"
 import type { EmbeddingService } from "../../services/embedding.service"
 import type { GenerationService } from "../../services/generation.service"
@@ -20,7 +6,6 @@ import type { PrismaClient } from "@prisma/client"
 
 // ── Gemini API Response Factories ─────────────────────────────────────────
 
-// Creates a realistic Gemini generateContent response
 export function makeGeminiResponse(
   text: string = "Default generated response.",
   totalTokens: number = 150,

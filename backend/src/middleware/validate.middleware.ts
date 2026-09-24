@@ -1,11 +1,4 @@
 // * Validates request bodies before they reach controllers.
-// Without validation, a missing email field causes a crash deep inside the service.
-// With validation, it returns a clean 400 error immediately.
-//
-// ! WHY NOT USE ZOD OR JOI?
-// Those are excellent libraries. We are keeping dependencies minimal for now.
-// You will see the same pattern — check shape, return error or call next().
-
 import type { Request, Response, NextFunction } from "express"
 import { ValidationError } from "./error.middleware"
 import type { RegisterRequest, LoginRequest } from "../types"

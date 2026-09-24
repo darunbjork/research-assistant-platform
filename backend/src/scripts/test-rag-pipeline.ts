@@ -1,9 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-rag-pipeline.ts
-// Full end-to-end RAG test: question → retrieve → generate → cited answer.
-// Calls the REAL Gemini API. Run after ingesting at least one document.
-//
-// Usage: npx ts-node src/scripts/test-rag-pipeline.ts
 
 import dotenv from "dotenv"
 dotenv.config()
@@ -38,7 +33,7 @@ async function main(): Promise<void> {
   const queries = [
     "What is machine learning?",
     "What is the difference between supervised and unsupervised learning?",
-    "What does quantum mechanics say about black holes?", // out-of-scope — should get fallback
+    "What does quantum mechanics say about black holes?",
   ]
 
   for (const query of queries) {
@@ -77,7 +72,6 @@ async function main(): Promise<void> {
     console.log()
   }
 
-  // ── Hallucination test ────────────────────────────────────────────────
   console.log("─".repeat(65))
   console.log("HALLUCINATION TEST:")
   console.log('Query: "What does quantum mechanics say about black holes?"')

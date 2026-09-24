@@ -1,9 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/test-agent.ts
-// End-to-end agent test — runs the full ReAct loop against real infrastructure.
-// Run AFTER ingesting at least one document.
-//
-// Usage: npx ts-node src/scripts/test-agent.ts
 
 import dotenv from "dotenv"
 dotenv.config()

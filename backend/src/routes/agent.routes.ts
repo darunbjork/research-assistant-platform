@@ -1,5 +1,3 @@
-// backend/src/routes/agent.routes.ts
-
 import { Router } from "express"
 import { AgentController } from "../controllers/agent.controller"
 import { authMiddleware } from "../middleware/auth.middleware"

@@ -1,8 +1,4 @@
 /* eslint-disable no-console */
-// backend/src/scripts/run-coverage-report.ts
-// Prints a human-readable coverage summary after running jest --coverage.
-// Usage: npm run test:coverage && npx ts-node src/scripts/run-coverage-report.ts
-
 import fs from "fs"
 import path from "path"
 
