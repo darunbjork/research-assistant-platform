@@ -33,8 +33,8 @@ export default function LoginPage() {
 
     try {
       const result = mode === "login"
-        ? await login(email, password)
-        : await register(email, password)
+        ? await login(email.trim(), password)
+        : await register(email.trim(), password)
 
       saveTokens(result.tokens.accessToken, result.tokens.refreshToken)
       navigate("/app")

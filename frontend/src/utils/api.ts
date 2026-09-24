@@ -33,7 +33,19 @@ api.interceptors.request.use(config => {
   return config
 })
 
-// ── Response Interceptor: Handle 401 + Token Refresh ─────────────────────
+// ── Response interceptor: handle 401 + token refresh, surface API errors ──
+// Backend errors arrive as { success: false, error: "..." } — unwrap the
+// message so UI catch blocks showing `err.message` display the real reason
+// (e.g. "An account with this email already exists") instead of axios's
+// generic "Request failed with status code 400".
+function toApiError(error: AxiosError): Error {
+  const data = error.response?.data as { error?: unknown } | undefined
+  if (data && typeof data.error === "string" && data.error.length > 0) {
+    return new Error(data.error)
+  }
+  return error instanceof Error ? error : new Error("Request failed")
+}
+
 api.interceptors.response.use(
   response => response,
   async (error: AxiosError) => {
@@ -78,7 +90,7 @@ api.interceptors.response.use(
       window.location.href = "/login"
     }
 
-    return Promise.reject(error)
+    return Promise.reject(toApiError(error))
   }
 )
 
