@@ -10,7 +10,7 @@ import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-2.0-flash"
+const GEMINI_MODEL = "gemini-3.6-flash"
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 // ── Result Types ──────────────────────────────────────────────────────────

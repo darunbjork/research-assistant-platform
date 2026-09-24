@@ -62,7 +62,7 @@ async function main(): Promise<void> {
     })
 
     await withSpan(tracer, "demo.generation.generate", async span => {
-      span.setAttribute(LLM_ATTRS.MODEL, "gemini-2.0-flash")
+      span.setAttribute(LLM_ATTRS.MODEL, "gemini-3.6-flash")
       span.setAttribute(LLM_ATTRS.TEMPERATURE, 0.1)
       span.setAttribute(RAG_ATTRS.CHUNKS_USED, 5)
 

@@ -90,7 +90,7 @@ describe("EvaluatorService", () => {
       expect(Array.isArray(result.recommendations)).toBe(true)
       expect(typeof result.evaluatedAt).toBe("string")
       expect(typeof result.durationMs).toBe("number")
-      expect(result.model).toBe("gemini-2.0-flash")
+      expect(result.model).toBe("gemini-3.6-flash")
     })
 
     it("returns correct dimension scores", async () => {

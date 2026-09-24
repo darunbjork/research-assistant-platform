@@ -43,7 +43,7 @@ import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations } from "../utils/metrics"
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-2.0-flash"
+const GEMINI_MODEL = "gemini-3.6-flash"
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
 

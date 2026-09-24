@@ -54,7 +54,7 @@ const QUALITY_THRESHOLD = 0.7
 const HEURISTIC_LOW_THRESHOLD = 0.3 // below this: definitely retry (no LLM needed)
 const HEURISTIC_HIGH_THRESHOLD = 0.85 // above this: definitely done (no LLM needed)
 
-const GEMINI_MODEL = "gemini-2.0-flash"
+const GEMINI_MODEL = "gemini-3.6-flash"
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 // ── Evaluator Class ───────────────────────────────────────────────────────

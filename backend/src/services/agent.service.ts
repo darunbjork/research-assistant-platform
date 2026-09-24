@@ -19,7 +19,7 @@ import { agentIterations, activeAgentSessions } from "../utils/metrics"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
-const GEMINI_MODEL = "gemini-2.0-flash"
+const GEMINI_MODEL = "gemini-3.6-flash"
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
 interface TokenUsage {

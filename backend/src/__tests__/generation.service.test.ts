@@ -144,7 +144,7 @@ describe("GenerationService", () => {
       const chunks = [makeFakeChunkResult()]
       const result = await service.generate("What is ML?", chunks)
 
-      expect(result.model).toBe("gemini-2.0-flash")
+      expect(result.model).toBe("gemini-3.6-flash")
     })
 
     it("returns a positive durationMs", async () => {
@@ -167,7 +167,7 @@ describe("GenerationService", () => {
 
       const callUrl = (fetchSpy.mock.calls[0] as [string])[0]
       expect(callUrl).toContain("generateContent")
-      expect(callUrl).toContain("gemini-2.0-flash")
+      expect(callUrl).toContain("gemini-3.6-flash")
     })
 
     it("uses temperature 0.1 in the request body", async () => {
