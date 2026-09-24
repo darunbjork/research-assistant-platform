@@ -76,9 +76,7 @@ jobs:
       # ── Step 5: Zero any types ────────────────────────────────────────
       - name: Zero any types
         run: |
-          FOUND=$(grep -rn '\bany\b' src --include='*.ts' 
-            | grep -v '// eslint\|\.test\.ts\|mock\|__tests__' 
-            | grep -v 'node_modules\|dist' || true)
+          FOUND=$(grep -rnE ':\s*any\b|\bas any\b' src --include='*.ts' | grep -vE '// eslint|\.test\.ts|mock|__tests__|node_modules|dist' || true)
           if [ -n "$FOUND" ]; then
             echo "❌ Found 'any' types:"
             echo "$FOUND"
