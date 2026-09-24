@@ -7,7 +7,7 @@
     "build": "tsc",
     "start": "node dist/app.js",
     "test": "jest",
-    "test:coverage": "jest --coverage",
+    "test:coverage": "jest --coverage --forceExit",
     "type-check": "tsc --noEmit",
     "lint": "eslint src --ext .ts",
     "no-any": "grep -rn ': any' src --include='*.ts' | grep -v '// eslint\\|node_modules\\|dist\\|.test.ts\\|mock' && { echo '❌ Found any types'; exit 1; } || echo '✅ Zero any types'",
