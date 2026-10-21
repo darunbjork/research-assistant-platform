@@ -17,7 +17,7 @@ import type { DocumentUploadRequest } from "../types"
 
 // ── Mock Factories ────────────────────────────────────────────────────────
 
-// Creates a mock EmbeddingService that returns fake 768-dim vectors instantly
+// Creates a mock EmbeddingService that returns fake embedding vectors instantly
 function makeMockEmbeddingService(): jest.Mocked<EmbeddingService> {
   return {
     embedText: jest.fn().mockResolvedValue(Array(768).fill(0.1) as number[]),

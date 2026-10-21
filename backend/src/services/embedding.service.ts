@@ -45,7 +45,7 @@ export class EmbeddingService {
   ): Promise<number[]> {
     return withSpan(this.tracer, "embedding.embedText", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
-      span.setAttribute(LLM_ATTRS.MODEL, "text-embedding-004")
+      span.setAttribute(LLM_ATTRS.MODEL, GEMINI_EMBEDDING_MODEL)
       span.setAttribute(LLM_ATTRS.OPERATION, "embed")
       span.setAttribute("embedding.task_type", taskType)
       span.setAttribute("embedding.text_length", text.length)
@@ -100,7 +100,7 @@ export class EmbeddingService {
   ): Promise<number[][]> {
     return withSpan(this.tracer, "embedding.embedBatch", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
-      span.setAttribute(LLM_ATTRS.MODEL, "text-embedding-004")
+      span.setAttribute(LLM_ATTRS.MODEL, GEMINI_EMBEDDING_MODEL)
       span.setAttribute(LLM_ATTRS.OPERATION, "embed_batch")
       span.setAttribute("embedding.batch_size", texts.length)
       span.setAttribute("embedding.task_type", taskType)

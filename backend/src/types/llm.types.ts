@@ -16,7 +16,7 @@ export interface GeminiEmbedRequest {
 }
 
 export interface GeminiEmbedRequestItem {
-  model: string // "models/text-embedding-004"
+  model: string // e.g. "models/gemini-embedding-001"
   content: {
     parts: Array<{ text: string }>
   }
@@ -37,7 +37,7 @@ export type EmbeddingTaskType =
 // What the Gemini batchEmbedContents endpoint returns
 export interface GeminiEmbedResponse {
   embeddings: Array<{
-    values: number[] // the 768-dimensional vector
+    values: number[] // the 3072-dimensional vector
   }>
 }
 
@@ -91,7 +91,7 @@ export interface UsageMetadata {
 
 // Metadata stored alongside the cached vector in Redis
 export interface CachedEmbedding {
-  vector: number[] // the 768-dimensional embedding
+  vector: number[] // the 3072-dimensional embedding
   model: string // which model produced this (for cache invalidation)
   createdAt: string // ISO timestamp
 }

@@ -43,7 +43,7 @@ model DocumentChunk {
   content          String
   chunkIndex       Int
   tokenCount       Int
-  /// pgvector 768-dimensional embedding (Gemini text-embedding-004)
+  /// pgvector 3072-dimensional embedding (Gemini gemini-embedding-001)
   embedding        Unsupported("vector")?
   source           String
   pageNumber       Int?

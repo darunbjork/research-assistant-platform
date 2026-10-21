@@ -32,7 +32,7 @@ async function main(): Promise<void> {
 
     await withSpan(tracer, "demo.embedding.embedText", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
-      span.setAttribute(LLM_ATTRS.MODEL, "text-embedding-004")
+      span.setAttribute(LLM_ATTRS.MODEL, "gemini-embedding-001")
       span.setAttribute(LLM_ATTRS.OPERATION, "embed")
       span.setAttribute(RAG_ATTRS.CACHE_HIT, false)
 

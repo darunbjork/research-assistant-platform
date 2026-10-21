@@ -53,7 +53,7 @@ export interface DocumentChunk {
   content: string
   chunkIndex: number
   tokenCount: number
-  embedding: number[] // 768-dimensional vector from Gemini
+  embedding: number[] // 3072-dimensional vector from Gemini
   metadata: ChunkMetadata
   createdAt: Date
 }
