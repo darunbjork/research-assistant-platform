@@ -1,10 +1,8 @@
 import type { Request, Response, NextFunction } from "express"
 import { verifyAccessToken } from "../utils/jwt.utils"
 import type { JwtPayload } from "../types"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { UnauthorizedError } from "./error.middleware"
-
-const prisma = new PrismaClient()
 
 declare global {
   namespace Express {

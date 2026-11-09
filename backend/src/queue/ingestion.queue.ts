@@ -4,7 +4,8 @@ import { ChunkingService } from "../services/chunking.service"
 import { EmbeddingService } from "../services/embedding.service"
 import { DocumentRepository } from "../repositories/document.repository"
 import { ChunkRepository } from "../repositories/chunk.repository"
-import { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { logRagEvent, logError } from "../utils/logger"
 import { indexedDocuments } from "../utils/metrics"
 import type { ChunkToStore } from "../repositories/chunk.repository"
@@ -38,12 +39,10 @@ const CONCURRENCY = 3
 const MAX_ATTEMPTS = 3
 const BACKOFF_DELAY_MS = 5_000
 
-let prismaInstance: PrismaClient | null = null
 let redisInstance: Redis | null = null
 
 function getPrisma(): PrismaClient {
-  if (!prismaInstance) prismaInstance = new PrismaClient()
-  return prismaInstance
+  return prisma
 }
 
 export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJobData> {

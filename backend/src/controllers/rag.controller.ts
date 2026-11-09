@@ -3,7 +3,7 @@
 // Parses the request → calls RagService → returns the answer with citations.
 
 import type { Request, Response, NextFunction } from "express"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { EmbeddingService } from "../services/embedding.service"
 import { HybridSearchService } from "../services/hybrid.search.service"
 import { GenerationService } from "../services/generation.service"
@@ -14,7 +14,6 @@ import { RerankerService } from "../services/reranker.service"
 import redis from "../utils/redis"
 
 // ── Service Initialisation ────────────────────────────────────────────────
-const prisma = new PrismaClient()
 const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
 const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")

@@ -7,12 +7,11 @@
 // * 4. Errors bubble to errorMiddleware automatically
 
 import type { Request, Response, NextFunction } from "express"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { AuthService } from "../services/auth.service"
 import { ok } from "../types"
 import type { RegisterRequest, LoginRequest, RefreshRequest } from "../types"
 
-const prisma = new PrismaClient()
 const authService = new AuthService(prisma)
 
 export class AuthController {

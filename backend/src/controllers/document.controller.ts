@@ -2,13 +2,11 @@
 // Updated Day 19: ingest() adds to Bull Queue and returns immediately.
 
 import type { Request, Response, NextFunction } from "express"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { getIngestionQueue, getJobStatus } from "../queue/index"
 import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { searchCache } from "../cache/index"
-
-const prisma = new PrismaClient()
 
 export class DocumentController {
   // ── POST /api/v1/documents/ingest ─────────────────────────────────────

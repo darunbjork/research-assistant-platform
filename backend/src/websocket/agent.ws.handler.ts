@@ -1,5 +1,5 @@
 import type WebSocket from "ws"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { verifyAccessToken } from "../utils/jwt.utils"
 import { EmbeddingService } from "../services/embedding.service"
 import { HybridSearchService } from "../services/hybrid.search.service"
@@ -12,7 +12,6 @@ import redis from "../utils/redis"
 // ── Service Instances ─────────────────────────────────────────────────────
 // Shared across all WebSocket connections — created once at module load.
 // This is safe because the services are stateless (no per-connection state).
-const prisma = new PrismaClient()
 const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
 const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")

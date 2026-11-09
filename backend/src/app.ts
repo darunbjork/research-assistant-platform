@@ -7,7 +7,7 @@ import helmet from "helmet"
 import dotenv from "dotenv"
 import { createServer } from "http"
 import swaggerUi from "swagger-ui-express"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "./utils/prisma"
 import { ok } from "./types"
 import { logStartup, logError } from "./utils/logger"
 import { requestLoggerMiddleware } from "./middleware/request-logger.middleware"
@@ -27,7 +27,6 @@ dotenv.config()
 
 const app = express()
 const PORT = process.env.PORT ?? "3001"
-const prisma = new PrismaClient()
 
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(
