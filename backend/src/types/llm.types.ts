@@ -21,6 +21,9 @@ export interface GeminiEmbedRequestItem {
     parts: Array<{ text: string }>
   }
   taskType?: EmbeddingTaskType
+  // Request a truncated embedding instead of the model's default 3072 dims.
+  // 768 keeps the vector indexable by pgvector (max 2,000 dims) — see EMBEDDING_DIMENSIONS.
+  outputDimensionality?: number
 }
 
 // Task type hints to the model what the embedding will be used for.
@@ -37,7 +40,7 @@ export type EmbeddingTaskType =
 // What the Gemini batchEmbedContents endpoint returns
 export interface GeminiEmbedResponse {
   embeddings: Array<{
-    values: number[] // the 3072-dimensional vector
+    values: number[] // the embedding vector (768 dims; historically 3072)
   }>
 }
 
@@ -91,7 +94,7 @@ export interface UsageMetadata {
 
 // Metadata stored alongside the cached vector in Redis
 export interface CachedEmbedding {
-  vector: number[] // the 3072-dimensional embedding
+  vector: number[] // the embedding (768 dims; historically 3072)
   model: string // which model produced this (for cache invalidation)
   createdAt: string // ISO timestamp
 }

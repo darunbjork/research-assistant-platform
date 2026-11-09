@@ -17,8 +17,8 @@ import type { VectorSearchResult, KeywordSearchResult, ChunkSearchResult } from 
 
 function makeMockEmbeddingService(): jest.Mocked<EmbeddingService> {
   return {
-    embedText: jest.fn().mockResolvedValue(Array(3072).fill(0.1) as number[]),
-    embedBatch: jest.fn().mockResolvedValue([Array(3072).fill(0.1) as number[]]),
+    embedText: jest.fn().mockResolvedValue(Array(768).fill(0.1) as number[]),
+    embedBatch: jest.fn().mockResolvedValue([Array(768).fill(0.1) as number[]]),
     getCacheStats: jest.fn().mockReturnValue({ hits: 0, misses: 0, hitRate: 0 }),
   } as unknown as jest.Mocked<EmbeddingService>
 }
@@ -271,7 +271,7 @@ describe("HybridSearchService", () => {
         .spyOn(service["keywordSearchService"], "search")
         .mockResolvedValue([makeMockKeywordResult("chunk-K", 0.9, 0)])
 
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
       const results = await service.search("test")
       expect(results).toHaveLength(1)
@@ -287,7 +287,7 @@ describe("HybridSearchService", () => {
         .mockResolvedValue([makeMockVectorResult("chunk-V", 0.85, 0)])
       const keywordSpy = jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue([])
 
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
       const results = await service.search("test")
       expect(results).toHaveLength(1)
@@ -300,7 +300,7 @@ describe("HybridSearchService", () => {
     it("works when both searches return empty results", async () => {
       jest.spyOn(service["vectorSearchService"], "search").mockResolvedValue([])
       jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue([])
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
       const results = await service.search("test")
       expect(results).toHaveLength(0)
@@ -316,7 +316,7 @@ describe("HybridSearchService", () => {
 
       jest.spyOn(service["vectorSearchService"], "search").mockResolvedValue(manyVectorResults)
       jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue(manyKeywordResults)
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
       const results = await service.search("test", { topK: 5 })
       expect(results.length).toBeLessThanOrEqual(5)
@@ -334,7 +334,7 @@ describe("HybridSearchService", () => {
 
       jest.spyOn(service["vectorSearchService"], "search").mockResolvedValue(sharedVectorResults)
       jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue(sharedKeywordResults)
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
       const results = await service.search("test")
       // Only 2 unique chunks, not 4

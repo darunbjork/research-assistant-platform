@@ -16,6 +16,7 @@
 
 import type { PrismaClient } from "@prisma/client"
 import type { VectorSearchResult, VectorSearchOptions, ChunkSearchResult } from "../types"
+import { EMBEDDING_DIMENSIONS } from "./embedding.service"
 import { logRagEvent, logError } from "../utils/logger"
 import { retrievalRequests, retrievalLatency } from "../utils/metrics"
 
@@ -296,10 +297,10 @@ export class VectorSearchService {
       throw new Error("Query vector must be a non-empty array")
     }
 
-    // Updated to 3072 dimensions for gemini-embedding-001
-    if (vector.length !== 3072) {
+    // Must match EMBEDDING_DIMENSIONS (768) — historically 3072 before task 1.1.
+    if (vector.length !== EMBEDDING_DIMENSIONS) {
       throw new Error(
-        `Query vector must have 3072 dimensions. Received: ${vector.length}. ` +
+        `Query vector must have ${EMBEDDING_DIMENSIONS} dimensions. Received: ${vector.length}. ` +
           `Make sure you are using the same embedding model as when indexing documents (gemini-embedding-001).`
       )
     }

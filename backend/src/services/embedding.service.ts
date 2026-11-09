@@ -18,7 +18,10 @@ import { RateLimitError } from "../middleware/error.middleware"
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-const EMBEDDING_DIMENSIONS = 3072
+// History: was 3072 (the model default). We request 768 explicitly because a
+// pgvector `vector` column cannot be indexed above 2,000 dimensions; see
+// docs/DEPLOY_READY_PLAN.md task 1.1. Must match `vector(768)` in schema.prisma.
+export const EMBEDDING_DIMENSIONS = 768
 const CACHE_TTL_SECONDS = 86_400 // 24 hours
 const MAX_BATCH_SIZE = 100 // Gemini API limit per batchEmbedContents call
 
@@ -179,6 +182,7 @@ export class EmbeddingService {
         model: `models/${GEMINI_EMBEDDING_MODEL}`,
         content: { parts: [{ text }] },
         taskType,
+        outputDimensionality: EMBEDDING_DIMENSIONS,
       })),
     }
 
