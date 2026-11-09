@@ -20,6 +20,12 @@ async function main(): Promise<void> {
   }
 
   const prisma = new PrismaClient()
+  const owner = await prisma.user.findFirst()
+  if (!owner) {
+    console.error("❌ No users in the database — register a user first.")
+    process.exit(1)
+  }
+  const userId = owner.id
   const embeddingService = new EmbeddingService(apiKey, redis)
   const hybridSearch = new HybridSearchService(prisma, embeddingService)
   const generationService = new GenerationService(apiKey)
@@ -48,7 +54,7 @@ async function main(): Promise<void> {
     console.log(`QUERY: "${query}"`)
     console.log()
 
-    const ragResult = await ragService.query(query, { topK: 5 })
+    const ragResult = await ragService.query(query, { topK: 5, userId })
 
     console.log(`ANSWER: "${ragResult.answer.slice(0, 150)}..."`)
     console.log(`CHUNKS RETRIEVED: ${ragResult.chunksRetrieved}`)

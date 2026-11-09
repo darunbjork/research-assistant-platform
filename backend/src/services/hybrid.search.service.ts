@@ -36,10 +36,7 @@ export class HybridSearchService {
     this.keywordSearchService = new KeywordSearchService(prisma)
   }
 
-  async search(
-    query: string,
-    options: Partial<HybridSearchOptions> = {}
-  ): Promise<HybridSearchResult[]> {
+  async search(query: string, options: HybridSearchOptions): Promise<HybridSearchResult[]> {
     return withSpan(this.tracer, "retrieval.hybridSearch", async span => {
       span.setAttribute(RAG_ATTRS.QUERY, query.slice(0, 200))
       span.setAttribute(RAG_ATTRS.STRATEGY, "hybrid")
@@ -168,7 +165,7 @@ export class HybridSearchService {
   // ── compareStrategies (unchanged) ─────────────────────────────────────
   async compareStrategies(
     query: string,
-    options: Partial<HybridSearchOptions> = {}
+    options: HybridSearchOptions
   ): Promise<{
     query: string
     vectorOnly: VectorSearchResult[]
@@ -208,7 +205,7 @@ export class HybridSearchService {
   async searchAndRerank(
     query: string,
     rerankerService: RerankerService,
-    options: Partial<HybridSearchOptions> = {}
+    options: HybridSearchOptions
   ): Promise<RerankedResult[]> {
     const topK = options.topK ?? 10
 

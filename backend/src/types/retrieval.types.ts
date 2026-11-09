@@ -70,26 +70,28 @@ export interface RerankComparison {
 }
 
 // ── Search Options ────────────────────────────────────────────────────────
+// userId is REQUIRED on every search: there is no "search all users" path.
+// The services JOIN documents to enforce ownership on every query.
 
 export interface VectorSearchOptions {
-  topK: number // how many results to return (default: 10)
-  minSimilarity: number // minimum cosine similarity threshold (default: 0.0)
+  topK?: number // how many results to return (default: 10)
+  minSimilarity?: number // minimum cosine similarity threshold (default: 0.0)
   documentIds?: string[] // optional: restrict search to specific documents
-  userId?: string // optional: restrict to documents owned by this user
+  userId: string // owning user — always enforced
 }
 
 export interface KeywordSearchOptions {
-  topK: number
+  topK?: number
   documentIds?: string[]
-  userId?: string
+  userId: string
 }
 
 export interface HybridSearchOptions {
-  topK: number
-  minSimilarity: number
-  useReranker: boolean // run cross-encoder second pass (Day 17)
+  topK?: number
+  minSimilarity?: number
+  useReranker?: boolean // run cross-encoder second pass (Day 17)
   documentIds?: string[]
-  userId?: string
+  userId: string
 }
 
 // ── Citation Types ────────────────────────────────────────────────────────

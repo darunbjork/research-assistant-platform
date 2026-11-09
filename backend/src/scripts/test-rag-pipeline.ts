@@ -19,6 +19,12 @@ async function main(): Promise<void> {
   }
 
   const prisma = new PrismaClient()
+  const owner = await prisma.user.findFirst()
+  if (!owner) {
+    console.error("❌ No users in the database — register a user first.")
+    process.exit(1)
+  }
+  const userId = owner.id
   const embeddingService = new EmbeddingService(apiKey, redis)
   const hybridSearch = new HybridSearchService(prisma, embeddingService)
   const generationService = new GenerationService(apiKey)
@@ -42,7 +48,7 @@ async function main(): Promise<void> {
     console.log()
 
     const start = Date.now()
-    const result = await ragService.query(query, { topK: 5 })
+    const result = await ragService.query(query, { topK: 5, userId })
     const total = Date.now() - start
 
     console.log(`ANSWER:`)
@@ -80,7 +86,7 @@ async function main(): Promise<void> {
 
   const outOfScope = await ragService.query(
     "What does quantum mechanics say about black holes?",
-    { topK: 5, minSimilarity: 0.7 } // high threshold — almost nothing should match
+    { topK: 5, minSimilarity: 0.7, userId } // high threshold — almost nothing should match
   )
 
   console.log(`Result: "${outOfScope.answer}"`)

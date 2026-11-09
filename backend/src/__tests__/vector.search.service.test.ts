@@ -62,35 +62,37 @@ describe("VectorSearchService", () => {
   // ── Input Validation ───────────────────────────────────────────────────
   describe("search() — input validation", () => {
     it("throws for an empty vector", async () => {
-      await expect(service.search(EMPTY_VECTOR)).rejects.toThrow(
+      await expect(service.search(EMPTY_VECTOR, { userId: "user-123" })).rejects.toThrow(
         "Query vector must be a non-empty array"
       )
     })
 
     it("throws for wrong dimensions (512 instead of 768)", async () => {
-      await expect(service.search(WRONG_DIM_VECTOR)).rejects.toThrow(
+      await expect(service.search(WRONG_DIM_VECTOR, { userId: "user-123" })).rejects.toThrow(
         "Query vector must have 768 dimensions. Received: 512."
       )
     })
 
     it("includes the received dimension count in the error message", async () => {
-      await expect(service.search(WRONG_DIM_VECTOR)).rejects.toThrow("Received: 512")
+      await expect(service.search(WRONG_DIM_VECTOR, { userId: "user-123" })).rejects.toThrow(
+        "Received: 512"
+      )
     })
 
     it("throws for a vector containing NaN", async () => {
-      await expect(service.search(NAN_VECTOR)).rejects.toThrow(
+      await expect(service.search(NAN_VECTOR, { userId: "user-123" })).rejects.toThrow(
         "Query vector contains NaN or Infinity values"
       )
     })
 
     it("throws for a vector containing Infinity", async () => {
-      await expect(service.search(INF_VECTOR)).rejects.toThrow(
+      await expect(service.search(INF_VECTOR, { userId: "user-123" })).rejects.toThrow(
         "Query vector contains NaN or Infinity values"
       )
     })
 
     it("does NOT call the database when validation fails", async () => {
-      await expect(service.search(EMPTY_VECTOR)).rejects.toThrow()
+      await expect(service.search(EMPTY_VECTOR, { userId: "user-123" })).rejects.toThrow()
       expect(mockPrisma.$queryRaw).not.toHaveBeenCalled()
     })
   })
@@ -98,7 +100,7 @@ describe("VectorSearchService", () => {
   // ── Happy Path ─────────────────────────────────────────────────────────
   describe("search() — happy path", () => {
     it("returns an array when given a valid 768‑dim vector", async () => {
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(Array.isArray(results)).toBe(true)
     })
 
@@ -111,7 +113,7 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results).toHaveLength(3)
     })
 
@@ -119,12 +121,12 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma([])
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results).toHaveLength(0)
     })
 
     it("calls the database exactly once per search", async () => {
-      await service.search(VALID_768_VECTOR)
+      await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1)
     })
 
@@ -137,7 +139,7 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.chunk.id).toBe("chunk-a")
       expect(results[1]?.chunk.id).toBe("chunk-b")
       expect(results[2]?.chunk.id).toBe("chunk-c")
@@ -147,12 +149,12 @@ describe("VectorSearchService", () => {
   // ── Result Shape ───────────────────────────────────────────────────────
   describe("search() — result shape", () => {
     it("each result has a chunk object", async () => {
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       results.forEach(result => expect(result.chunk).toBeDefined())
     })
 
     it("each result has a cosineSimilarity between 0 and 1", async () => {
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       results.forEach(result => {
         expect(result.cosineSimilarity).toBeGreaterThanOrEqual(0)
         expect(result.cosineSimilarity).toBeLessThanOrEqual(1)
@@ -160,7 +162,7 @@ describe("VectorSearchService", () => {
     })
 
     it("converts cosine distance to similarity correctly (1 - distance)", async () => {
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.cosineSimilarity).toBeCloseTo(0.85, 2)
     })
 
@@ -173,14 +175,14 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.rank).toBe(0)
       expect(results[1]?.rank).toBe(1)
       expect(results[2]?.rank).toBe(2)
     })
 
     it("each chunk has all required fields", async () => {
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       const chunk = results[0]?.chunk
 
       expect(chunk).toBeDefined()
@@ -200,7 +202,7 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.cosineSimilarity).toBeGreaterThanOrEqual(0)
     })
 
@@ -209,7 +211,7 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.chunk.pageNumber).toBeNull()
     })
 
@@ -218,7 +220,7 @@ describe("VectorSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search(VALID_768_VECTOR)
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.chunk.pageNumber).toBe(7)
     })
   })
@@ -226,16 +228,20 @@ describe("VectorSearchService", () => {
   // ── Search Options ─────────────────────────────────────────────────────
   describe("search() — options", () => {
     it("passes without error when topK is specified", async () => {
-      await expect(service.search(VALID_768_VECTOR, { topK: 5 })).resolves.toBeDefined()
+      await expect(
+        service.search(VALID_768_VECTOR, { topK: 5, userId: "user-123" })
+      ).resolves.toBeDefined()
     })
 
     it("passes without error when minSimilarity is specified", async () => {
-      await expect(service.search(VALID_768_VECTOR, { minSimilarity: 0.7 })).resolves.toBeDefined()
+      await expect(
+        service.search(VALID_768_VECTOR, { minSimilarity: 0.7, userId: "user-123" })
+      ).resolves.toBeDefined()
     })
 
     it("passes without error when documentIds are specified", async () => {
       await expect(
-        service.search(VALID_768_VECTOR, { documentIds: ["doc-1", "doc-2"] })
+        service.search(VALID_768_VECTOR, { documentIds: ["doc-1", "doc-2"], userId: "user-123" })
       ).resolves.toBeDefined()
     })
 
@@ -243,9 +249,26 @@ describe("VectorSearchService", () => {
       await expect(service.search(VALID_768_VECTOR, { userId: "user-123" })).resolves.toBeDefined()
     })
 
-    it("uses all-chunks query when no filters are specified", async () => {
-      await service.search(VALID_768_VECTOR)
+    it("always scopes the query to the current user (document_chunks + userId)", async () => {
+      await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1)
+      const [strings] = mockPrisma.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray]
+      const sql = strings.join("?")
+      expect(sql).toContain('"document_chunks"')
+      expect(sql).toContain('d."userId"')
+      expect(sql).not.toContain('"DocumentChunk"')
+    })
+
+    it("keeps the userId filter when documentIds are specified", async () => {
+      await service.search(VALID_768_VECTOR, {
+        documentIds: ["doc-1"],
+        userId: "user-123",
+      })
+      const [strings] = mockPrisma.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray]
+      const sql = strings.join("?")
+      expect(sql).toContain('"document_chunks"')
+      expect(sql).toContain('d."userId"')
+      expect(sql).toContain("ANY(")
     })
   })
 
@@ -253,7 +276,7 @@ describe("VectorSearchService", () => {
   describe("getIndexStats()", () => {
     it("returns indexExists: true when index row is returned", async () => {
       mockPrisma.$queryRaw
-        .mockResolvedValueOnce([{ indexname: "idx_document_chunk_embedding" }])
+        .mockResolvedValueOnce([{ indexname: "document_chunks_embedding_hnsw_idx" }])
         .mockResolvedValueOnce([{ count: BigInt(42) }])
 
       const stats = await service.getIndexStats()
@@ -269,7 +292,7 @@ describe("VectorSearchService", () => {
 
     it("returns the correct total chunk count", async () => {
       mockPrisma.$queryRaw
-        .mockResolvedValueOnce([{ indexname: "idx_document_chunk_embedding" }])
+        .mockResolvedValueOnce([{ indexname: "document_chunks_embedding_hnsw_idx" }])
         .mockResolvedValueOnce([{ count: BigInt(1337) }])
 
       const stats = await service.getIndexStats()
@@ -290,7 +313,7 @@ describe("VectorSearchService", () => {
       mockPrisma.$queryRaw.mockRejectedValueOnce(
         new Error("pgvector: index is not ready for scanning")
       )
-      await expect(service.search(VALID_768_VECTOR)).rejects.toThrow(
+      await expect(service.search(VALID_768_VECTOR, { userId: "user-123" })).rejects.toThrow(
         "pgvector: index is not ready for scanning"
       )
     })

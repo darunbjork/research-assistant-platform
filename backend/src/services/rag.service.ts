@@ -37,13 +37,13 @@ export interface RagResult {
 }
 
 export interface RagOptions {
-  topK: number // how many chunks to retrieve (default: 10)
-  minSimilarity: number // minimum similarity threshold (default: 0.0)
-  userId?: string // restrict to this user's documents
+  topK?: number // how many chunks to retrieve (default: 10)
+  minSimilarity?: number // minimum similarity threshold (default: 0.0)
+  userId: string // owning user — always enforced, no cross-tenant path
   documentIds?: string[] // restrict to these specific documents
 }
 
-const DEFAULT_RAG_OPTIONS: RagOptions = {
+const DEFAULT_RAG_OPTIONS = {
   topK: 10,
   minSimilarity: 0.0,
 }
@@ -56,7 +56,7 @@ export class RagService {
 
   // ── query ─────────────────────────────────────────────────────────────
   // The single public method — the complete RAG pipeline in one call.
-  async query(userQuery: string, options: Partial<RagOptions> = {}): Promise<RagResult> {
+  async query(userQuery: string, options: RagOptions): Promise<RagResult> {
     const opts = { ...DEFAULT_RAG_OPTIONS, ...options }
     const start = Date.now()
 

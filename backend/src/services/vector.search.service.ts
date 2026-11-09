@@ -3,7 +3,7 @@
 //
 // THE SINGLE RESPONSIBILITY OF THIS SERVICE:
 // Given a query vector (768 numbers), find the N most similar
-// chunk vectors stored in the DocumentChunk table.
+// chunk vectors stored in the document_chunks table (owned by one user).
 //
 // WHAT IT DOES NOT DO:
 //   - It does not embed the query (EmbeddingService does that)
@@ -37,20 +37,13 @@ interface RawVectorSearchRow {
 }
 
 export class VectorSearchService {
-  // Default IVFFlat probe count — how many clusters to search.
-  // Can be overridden per-query for accuracy vs speed tradeoff.
-  private readonly defaultProbes = 10
-
   constructor(private readonly prisma: PrismaClient) {}
 
   // ── search ────────────────────────────────────────────────────────────
   // The main entry point.
   // queryVector: the embedded form of the user's question
-  // options: topK, minSimilarity, optional document/user filters
-  async search(
-    queryVector: number[],
-    options: Partial<VectorSearchOptions> = {}
-  ): Promise<VectorSearchResult[]> {
+  // options: topK, minSimilarity, optional document filter — userId is required
+  async search(queryVector: number[], options: VectorSearchOptions): Promise<VectorSearchResult[]> {
     // Validate the vector before sending to pgvector
     this.validateVector(queryVector)
 
@@ -70,85 +63,42 @@ export class VectorSearchService {
       const vectorLiteral = `[${queryVector.join(",")}]`
 
       // ── The Core pgvector Query ────────────────────────────────────────
-      // SELECT ... ORDER BY embedding <=> $vector LIMIT N
+      // One query, always scoped to the owning user (cross-tenant isolation).
+      // An empty documentIds array means "all of this user's documents".
       //
       // embedding <=> $vector computes the cosine DISTANCE (0-2 range).
       // 1 - cosine_distance = cosine SIMILARITY (0-1 range).
       //
-      // We SELECT (1 - cosine_distance) AS similarity, then filter
-      // on similarity >= minSimilarity for quality control.
-      //
-      // The WHERE clause optionally restricts to specific documents or users.
-      // This is how data isolation works at the search level.
-      let results: RawVectorSearchRow[]
+      // minSimilarity is NOT in the WHERE clause: a threshold predicate stops
+      // the planner from using the HNSW index. We filter in TypeScript below.
+      const results = await this.prisma.$queryRaw<RawVectorSearchRow[]>`
+        SELECT
+          dc.id,
+          dc."documentId",
+          dc.content,
+          dc."chunkIndex",
+          dc."tokenCount",
+          dc.source,
+          dc."pageNumber",
+          dc."chunkingStrategy",
+          dc."createdAt",
+          (dc.embedding <=> ${vectorLiteral}::vector) AS cosine_distance
+        FROM "document_chunks" dc
+        JOIN "documents" d ON d.id = dc."documentId"
+        WHERE d."userId" = ${userId}
+          AND (cardinality(${documentIds}::text[]) = 0 OR dc."documentId" = ANY(${documentIds}::text[]))
+        ORDER BY dc.embedding <=> ${vectorLiteral}::vector
+        LIMIT ${topK}
+      `
 
-      if (documentIds.length > 0) {
-        // Restrict search to specific document IDs
-        results = await this.prisma.$queryRaw<RawVectorSearchRow[]>`
-          SET LOCAL ivfflat.probes = ${this.defaultProbes};
-
-          SELECT
-            dc.id,
-            dc."documentId",
-            dc.content,
-            dc."chunkIndex",
-            dc."tokenCount",
-            dc.source,
-            dc."pageNumber",
-            dc."chunkingStrategy",
-            dc."createdAt",
-            (dc.embedding <=> ${vectorLiteral}::vector) AS cosine_distance
-          FROM "DocumentChunk" dc
-          WHERE dc."documentId" = ANY(${documentIds}::text[])
-            AND (1 - (dc.embedding <=> ${vectorLiteral}::vector)) >= ${minSimilarity}
-          ORDER BY dc.embedding <=> ${vectorLiteral}::vector
-          LIMIT ${topK}
-        `
-      } else if (userId !== undefined) {
-        // Restrict search to documents owned by this user
-        // JOIN with Document table to check userId — data isolation
-        results = await this.prisma.$queryRaw<RawVectorSearchRow[]>`
-          SELECT
-            dc.id,
-            dc."documentId",
-            dc.content,
-            dc."chunkIndex",
-            dc."tokenCount",
-            dc.source,
-            dc."pageNumber",
-            dc."chunkingStrategy",
-            dc."createdAt",
-            (dc.embedding <=> ${vectorLiteral}::vector) AS cosine_distance
-          FROM "DocumentChunk" dc
-          INNER JOIN "Document" d ON d.id = dc."documentId"
-          WHERE d."userId" = ${userId}
-            AND (1 - (dc.embedding <=> ${vectorLiteral}::vector)) >= ${minSimilarity}
-          ORDER BY dc.embedding <=> ${vectorLiteral}::vector
-          LIMIT ${topK}
-        `
-      } else {
-        // Search all chunks (development/admin use only)
-        results = await this.prisma.$queryRaw<RawVectorSearchRow[]>`
-          SELECT
-            dc.id,
-            dc."documentId",
-            dc.content,
-            dc."chunkIndex",
-            dc."tokenCount",
-            dc.source,
-            dc."pageNumber",
-            dc."chunkingStrategy",
-            dc."createdAt",
-            (dc.embedding <=> ${vectorLiteral}::vector) AS cosine_distance
-          FROM "DocumentChunk" dc
-          WHERE (1 - (dc.embedding <=> ${vectorLiteral}::vector)) >= ${minSimilarity}
-          ORDER BY dc.embedding <=> ${vectorLiteral}::vector
-          LIMIT ${topK}
-        `
-      }
+      // minSimilarity filter — applied after the index-backed LIMIT.
+      const filtered =
+        minSimilarity > 0
+          ? results.filter(row => 1 - Number(row.cosine_distance) >= minSimilarity)
+          : results
 
       // Convert raw rows to typed VectorSearchResult objects
-      const searchResults = this.toVectorSearchResults(results)
+      const searchResults = this.toVectorSearchResults(filtered)
 
       logRagEvent("retrieve", "Vector search complete", {
         service: "VectorSearchService",
@@ -173,13 +123,17 @@ export class VectorSearchService {
   // This is useful for debugging retrieval quality.
   async searchSimilarToChunk(
     chunkId: string,
-    options: Partial<VectorSearchOptions> = {}
+    options: VectorSearchOptions
   ): Promise<VectorSearchResult[]> {
     const topK = (options.topK ?? 5) + 1 // +1 because the chunk itself will appear
 
-    // First, fetch the existing chunk's embedding
+    // First, fetch the existing chunk's embedding (ownership enforced via documents)
     const rows = await this.prisma.$queryRaw<Array<{ embedding: string }>>`
-      SELECT embedding::text FROM "DocumentChunk" WHERE id = ${chunkId}
+      SELECT dc.embedding::text
+      FROM "document_chunks" dc
+      JOIN "documents" d ON d.id = dc."documentId"
+      WHERE dc.id = ${chunkId}
+        AND d."userId" = ${options.userId}
     `
 
     const firstRow = rows[0]
@@ -201,9 +155,11 @@ export class VectorSearchService {
   // ── explainSimilarity ─────────────────────────────────────────────────
   // Development utility: show the similarity score between a query and a specific chunk.
   // Use this to debug why a chunk is or is not being retrieved.
+  // Ownership is enforced: another user's chunk behaves as "not found".
   async explainSimilarity(
     queryVector: number[],
-    chunkId: string
+    chunkId: string,
+    userId: string
   ): Promise<{ chunkId: string; similarity: number; content: string } | null> {
     this.validateVector(queryVector)
 
@@ -217,11 +173,13 @@ export class VectorSearchService {
       }>
     >`
       SELECT
-        id,
-        content,
-        (embedding <=> ${vectorLiteral}::vector) AS cosine_distance
-      FROM "DocumentChunk"
-      WHERE id = ${chunkId}
+        dc.id,
+        dc.content,
+        (dc.embedding <=> ${vectorLiteral}::vector) AS cosine_distance
+      FROM "document_chunks" dc
+      JOIN "documents" d ON d.id = dc."documentId"
+      WHERE dc.id = ${chunkId}
+        AND d."userId" = ${userId}
     `
 
     const row = rows[0]
@@ -235,7 +193,7 @@ export class VectorSearchService {
   }
 
   // ── getIndexStats ─────────────────────────────────────────────────────
-  // Check whether the IVFFlat index exists.
+  // Check whether the HNSW index exists.
   // Call this from the /health endpoint or admin dashboard.
   async getIndexStats(): Promise<{
     indexExists: boolean
@@ -245,12 +203,12 @@ export class VectorSearchService {
     const indexRows = await this.prisma.$queryRaw<Array<{ indexname: string }>>`
       SELECT indexname
       FROM pg_indexes
-      WHERE tablename = 'DocumentChunk'
-        AND indexname = 'idx_document_chunk_embedding'
+      WHERE tablename = 'document_chunks'
+        AND indexname = 'document_chunks_embedding_hnsw_idx'
     `
 
     const totalRows = await this.prisma.$queryRaw<Array<{ count: bigint }>>`
-      SELECT COUNT(*) as count FROM "DocumentChunk"
+      SELECT COUNT(*) as count FROM "document_chunks"
     `
 
     const firstRow = totalRows[0]
