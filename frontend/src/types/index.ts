@@ -62,6 +62,7 @@ export type AgentStatus =
   | "thinking"
   | "searching"
   | "calculating"
+  | "web_searching"
   | "generating"
   | "evaluating"
   | "done"
