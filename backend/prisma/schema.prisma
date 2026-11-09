@@ -43,8 +43,9 @@ model DocumentChunk {
   content          String
   chunkIndex       Int
   tokenCount       Int
-  /// pgvector 3072-dimensional embedding (Gemini gemini-embedding-001)
-  embedding        Unsupported("vector")?
+  /// pgvector 768-dimensional embedding (Gemini gemini-embedding-001, outputDimensionality=768).
+  /// History: was untyped `vector` (3072 dims), which pgvector cannot index above 2,000 dims.
+  embedding        Unsupported("vector(768)")?
   source           String
   pageNumber       Int?
   chunkingStrategy String
