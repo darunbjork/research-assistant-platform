@@ -11,6 +11,7 @@ import { RagService } from "../services/rag.service"
 import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { RerankerService } from "../services/reranker.service"
+import { consumeGlobalBudget } from "../utils/global-budget"
 import redis from "../utils/redis"
 
 // ── Service Initialisation ────────────────────────────────────────────────
@@ -40,6 +41,14 @@ export class RagController {
         throw new ValidationError("Request body must include 'query' (non-empty string)")
       }
 
+      // Global daily budget: a RAG query costs 1 unit.
+      if (!(await consumeGlobalBudget(1))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
+      }
+
       const result = await ragService.query(query.trim(), {
         topK: topK ?? 10,
         minSimilarity: minSimilarity ?? 0.0,
@@ -65,6 +74,14 @@ export class RagController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query'")
+      }
+
+      // Global daily budget: a RAG query costs 1 unit.
+      if (!(await consumeGlobalBudget(1))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
       }
 
       const start = Date.now()

@@ -21,12 +21,20 @@ const mockRedis = {
     let ttlResult = -1
     const pipeline: {
       incr: jest.Mock
+      incrby: jest.Mock
       expire: jest.Mock
       ttl: jest.Mock
       exec: jest.Mock
     } = {
       incr: jest.fn((key: string): typeof pipeline => {
         const next = (mockRedisStore.get(key) ?? 0) + 1
+        mockRedisStore.set(key, next)
+        incCount = next
+        return pipeline
+      }),
+      // consumeGlobalBudget() uses INCRBY (global daily budget), not INCR.
+      incrby: jest.fn((key: string, by: number): typeof pipeline => {
+        const next = (mockRedisStore.get(key) ?? 0) + by
         mockRedisStore.set(key, next)
         incCount = next
         return pipeline
@@ -255,6 +263,37 @@ describe("AGENT_LIMIT enforcement (D6)", () => {
 
       // Handler instance is still usable (not marked running)
       expect(handler).toBeDefined()
+    })
+  })
+
+  describe("global daily capacity (2.4)", () => {
+    afterEach(() => {
+      delete process.env.GLOBAL_DAILY_LLM_CALLS_MAX
+    })
+
+    it("rejects a start with CAPACITY_REACHED when the global budget is exhausted", async () => {
+      // A single unit of headroom: the first start costs 5 ⇒ over the max,
+      // while the per-user AGENT_LIMIT (30/h) still has room.
+      process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "1"
+
+      const fakeWs = new FakeWebSocket()
+      new AgentWsHandler(fakeWs as unknown as WebSocket)
+
+      fakeWs.emit("message", JSON.stringify({ type: "auth", token: "test-token" }))
+      await flush()
+
+      fakeWs.emit("message", JSON.stringify({ type: "start", query: "hello", sessionId: "s1" }))
+      await flush()
+
+      expect(mockStreamingRun).not.toHaveBeenCalled()
+      const parsed = (): ParsedMessage[] => fakeWs.sent.map(raw => JSON.parse(raw) as ParsedMessage)
+      const errors = parsed().filter(m => m.type === "error")
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({
+        code: "CAPACITY_REACHED",
+        sessionId: "s1",
+        message: "Daily capacity reached, try again tomorrow",
+      })
     })
   })
 })

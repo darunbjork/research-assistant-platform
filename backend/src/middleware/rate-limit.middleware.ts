@@ -110,7 +110,7 @@ export async function consumeRateLimit(
       remaining: Math.max(0, config.max - count),
       retryAfterSec: ttl,
     }
-  } catch (error: unknown) {
+  } catch {
     if (config.failMode === "closed") {
       logRagEvent("ingest", "Rate limiter Redis error — failing closed", {
         service: "RateLimiter",

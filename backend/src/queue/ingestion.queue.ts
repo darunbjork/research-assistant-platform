@@ -7,6 +7,7 @@ import { ChunkRepository } from "../repositories/chunk.repository"
 import type { PrismaClient } from "@prisma/client"
 import { prisma } from "../utils/prisma"
 import { logRagEvent, logError } from "../utils/logger"
+import { consumeGlobalBudget } from "../utils/global-budget"
 import { indexedDocuments } from "../utils/metrics"
 import type { ChunkToStore } from "../repositories/chunk.repository"
 
@@ -153,6 +154,14 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
     })
 
     const chunkTexts = rawChunks.map(c => c.content)
+
+    // Global daily budget: ceil(chunks/100) units — a 100-chunk document
+    // costs 1. Checked right before the embedding spend.
+    const budgetCost = Math.ceil(rawChunks.length / 100)
+    if (!(await consumeGlobalBudget(budgetCost))) {
+      throw new Error("Daily capacity reached, try again tomorrow")
+    }
+
     const embeddings = await embeddingService.embedBatch(chunkTexts, "RETRIEVAL_DOCUMENT")
 
     await job.progress(PROGRESS.EMBEDDED)

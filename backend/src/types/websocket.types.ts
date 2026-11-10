@@ -107,6 +107,7 @@ export type AgentErrorCode =
   | "SESSION_BUSY"
   | "INVALID_QUERY"
   | "RATE_LIMITED"
+  | "CAPACITY_REACHED"
   | "REASONING_ERROR"
   | "AGENT_ERROR"
 

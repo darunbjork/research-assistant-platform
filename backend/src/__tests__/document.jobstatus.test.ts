@@ -18,6 +18,13 @@ jest.mock("../cache/index", () => ({
   searchCache: { clearForUser: jest.fn() },
 }))
 
+// queue/index → ingestion.queue → global-budget → utils/redis; keep the
+// module load hermetic (no real Redis connection in unit tests).
+jest.mock("../utils/redis", () => ({
+  redis: {},
+  default: {},
+}))
+
 import type { Request, Response, NextFunction } from "express"
 import type Bull from "bull"
 import { getIngestionQueue } from "../queue/index"

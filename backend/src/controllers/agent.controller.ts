@@ -10,6 +10,7 @@ import { GenerationService } from "../services/generation.service"
 import { AgentService } from "../services/agent.service"
 import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
+import { consumeGlobalBudget } from "../utils/global-budget"
 import redis from "../utils/redis"
 
 // ── Service Initialisation ────────────────────────────────────────────────
@@ -35,6 +36,14 @@ export class AgentController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query' (non-empty string)")
+      }
+
+      // Global daily budget: an agent run costs 5 units.
+      if (!(await consumeGlobalBudget(5))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
       }
 
       const result = await agentService.run(query.trim(), req.user.userId)

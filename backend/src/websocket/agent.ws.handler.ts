@@ -8,6 +8,7 @@ import { StreamingAgentService } from "../services/streaming.agent.service"
 import { parseClientMessage, toJson, type ServerMessage } from "../types/websocket.types"
 import { logRagEvent, logError } from "../utils/logger"
 import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
+import { consumeGlobalBudget } from "../utils/global-budget"
 import redis from "../utils/redis"
 
 // ── Service Instances ─────────────────────────────────────────────────────
@@ -162,6 +163,17 @@ export class AgentWsHandler {
         sessionId,
         message: "Query cannot be empty.",
         code: "INVALID_QUERY",
+      })
+      return
+    }
+
+    // Global daily budget: an agent run costs 5 units. Fails closed.
+    if (!(await consumeGlobalBudget(5))) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: "Daily capacity reached, try again tomorrow",
+        code: "CAPACITY_REACHED",
       })
       return
     }

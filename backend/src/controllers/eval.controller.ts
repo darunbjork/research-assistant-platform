@@ -10,6 +10,7 @@ import type { Request, Response, NextFunction } from "express"
 import { EvaluatorService } from "../services/evaluator.service"
 import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
+import { consumeGlobalBudget } from "../utils/global-budget"
 import type { EvalRequest, BatchEvalRequest } from "../types/eval.types"
 
 const evaluatorService = new EvaluatorService(process.env.GEMINI_API_KEY ?? "")
@@ -30,6 +31,14 @@ export class EvalController {
 
       if (!body.answer || typeof body.answer !== "string" || body.answer.trim() === "") {
         throw new ValidationError("'answer' is required and must be a non-empty string")
+      }
+
+      // Global daily budget: an eval call costs 3 units.
+      if (!(await consumeGlobalBudget(3))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
       }
 
       const result = await evaluatorService.evaluate({
@@ -69,6 +78,14 @@ export class EvalController {
           )
         }
       })
+
+      // Global daily budget: an eval call costs 3 units.
+      if (!(await consumeGlobalBudget(3))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
+      }
 
       const result = await evaluatorService.evaluateBatch({
         pairs: body.pairs,

@@ -229,6 +229,14 @@ export const embeddingRequests = new Counter({
   registers: [register],
 })
 
+// ── Global Daily Budget Metrics ───────────────────────────────────────────
+
+export const globalBudgetUsed = new Gauge({
+  name: "rag_global_budget_used",
+  help: "LLM-calling units consumed from today's global daily budget",
+  registers: [register],
+})
+
 // ── Helper: update queue depth gauge ─────────────────────────────────────
 // Call this periodically to keep the gauge current.
 export async function updateQueueDepthGauge(depth: number): Promise<void> {
