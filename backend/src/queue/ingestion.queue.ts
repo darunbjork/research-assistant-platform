@@ -238,10 +238,15 @@ export interface JobStatus {
 
 export async function getJobStatus(
   queue: Bull.Queue<IngestionJobData>,
-  jobId: string
+  jobId: string,
+  userId: string
 ): Promise<JobStatus | null> {
   const job = await queue.getJob(jobId)
   if (!job) return null
+
+  // D7: a job that belongs to a different user must be indistinguishable from
+  // a missing job — the controller answers 404, not 403 (project convention).
+  if (job.data.userId !== userId) return null
 
   const state = await job.getState()
   const progress = typeof job.progress() === "number" ? (job.progress() as number) : 0

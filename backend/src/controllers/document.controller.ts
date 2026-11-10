@@ -75,7 +75,7 @@ export class DocumentController {
       }
 
       const queue = getIngestionQueue()
-      const status = await getJobStatus(queue, jobId)
+      const status = await getJobStatus(queue, jobId, req.user.userId)
 
       if (status === null) {
         res.status(404).json({
