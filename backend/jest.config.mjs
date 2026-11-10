@@ -10,7 +10,8 @@ export default {
   testPathIgnorePatterns: [
     "/node_modules/",
     "/dist/",
-    "/__tests__/helpers/"
+    "/__tests__/helpers/",
+    "/__integration__/"
   ],
 
   // Registered in jest.config.mjs via setupFilesAfterEnv.
@@ -34,7 +35,10 @@ export default {
     "!src/types/**",
     "!src/app.ts",
     "!src/**/*.d.ts",
-    "!src/scripts/**"
+    "!src/scripts/**",
+    // Integration tests run against a real DB under jest.integration.config.mjs
+    // and are not part of the unit coverage measurement.
+    "!src/__integration__/**"
   ],
 
   // TODO: raise to 80/70/80/80 after adding tests for
