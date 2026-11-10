@@ -8,6 +8,23 @@ import { logStartup, logRagEvent } from "../utils/logger"
 // If a client does not respond within 30 seconds, it is terminated.
 const HEARTBEAT_INTERVAL_MS = 30_000
 
+// Messages are small JSON — a 64 KiB cap stops a client from flooding us
+// with multi-megabyte frames and exhausting memory.
+const MAX_PAYLOAD_BYTES = 64 * 1024
+
+// Origins the browser client may connect from. CORS_ORIGINS (env schema,
+// task 3.1) overrides; until then the defaults mirror app.ts's cors() list.
+const DEFAULT_ORIGINS = ["http://localhost:5174", "http://localhost:3001", "http://localhost:5173"]
+
+function allowedOrigins(): string[] {
+  const raw = process.env.CORS_ORIGINS
+  if (raw === undefined || raw.trim() === "") return DEFAULT_ORIGINS
+  return raw
+    .split(",")
+    .map(origin => origin.trim())
+    .filter(origin => origin.length > 0)
+}
+
 // ── Extended WebSocket type with heartbeat tracking ───────────────────────
 interface WsWithHeartbeat extends WebSocket {
   isAlive: boolean
@@ -17,6 +34,7 @@ export function createWebSocketServer(httpServer: Server): WebSocketServer {
   const wss = new WebSocketServer({
     server: httpServer,
     path: "/ws/agent", // WebSocket endpoint: ws://localhost:3001/ws/agent
+    maxPayload: MAX_PAYLOAD_BYTES,
   })
 
   logStartup("WebSocket server ready", {
@@ -32,6 +50,23 @@ export function createWebSocketServer(httpServer: Server): WebSocketServer {
       service: "WsServer",
       clientIp: clientIp.replace("::ffff:", ""), // strip IPv4-in-IPv6 prefix
     })
+
+    // Origin check (D-defence): browsers always send Origin on a WS
+    // upgrade; anything not on the allowlist is closed with 1008
+    // (policy violation). Skipped under NODE_ENV=test so unit tests can
+    // connect without configuring origins.
+    if (process.env.NODE_ENV !== "test") {
+      const origin = req.headers.origin
+      if (origin === undefined || !allowedOrigins().includes(origin)) {
+        logRagEvent("agent_step", "WebSocket connection rejected: origin not allowed", {
+          service: "WsServer",
+          clientIp: clientIp.replace("::ffff:", ""),
+          origin: origin ?? "none",
+        })
+        ws.close(1008, "origin not allowed")
+        return
+      }
+    }
 
     // Mark as alive for heartbeat tracking
     ;(ws as WsWithHeartbeat).isAlive = true

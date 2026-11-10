@@ -11,6 +11,7 @@ import { AgentService } from "../services/agent.service"
 import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { consumeGlobalBudget } from "../utils/global-budget"
+import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
 
 // ── Service Initialisation ────────────────────────────────────────────────
@@ -36,6 +37,10 @@ export class AgentController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query' (non-empty string)")
+      }
+
+      if (query.length > MAX_QUERY_LENGTH) {
+        throw new ValidationError(`'query' must be at most ${MAX_QUERY_LENGTH} characters`)
       }
 
       // Global daily budget: an agent run costs 5 units.

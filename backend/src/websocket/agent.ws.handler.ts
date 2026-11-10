@@ -9,7 +9,15 @@ import { parseClientMessage, toJson, type ServerMessage } from "../types/websock
 import { logRagEvent, logError } from "../utils/logger"
 import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
 import { consumeGlobalBudget } from "../utils/global-budget"
+import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
+
+// ── Hardening constants (task 2.8) ────────────────────────────────────────
+// No successful auth within this window ⇒ close the connection.
+const AUTH_TIMEOUT_MS = 10_000
+// Application close codes (4000-4999 range is reserved for applications).
+const CLOSE_AUTH_TIMEOUT = 4001
+const CLOSE_TOKEN_EXPIRED = 4001
 
 // ── Service Instances ─────────────────────────────────────────────────────
 // Shared across all WebSocket connections — created once at module load.
@@ -23,8 +31,22 @@ const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? ""
 export class AgentWsHandler {
   private userId: string | null = null // null until authenticated
   private isRunning: boolean = false // true while agent is executing
+  /** `exp` (seconds since epoch) of the token accepted at auth time. */
+  private tokenExp: number | null = null
+  private authTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly ws: WebSocket) {
+    // Auth timeout: a connection that never authenticates is closed (4001)
+    // so an open socket can't sit around forever consuming resources.
+    this.authTimer = setTimeout(() => {
+      if (this.userId === null) {
+        logRagEvent("agent_step", "WebSocket auth timeout — closing connection", {
+          service: "AgentWsHandler",
+        })
+        this.ws.close(CLOSE_AUTH_TIMEOUT, "authentication timeout")
+      }
+    }, AUTH_TIMEOUT_MS)
+
     this.setup()
   }
 
@@ -45,6 +67,7 @@ export class AgentWsHandler {
 
     // Handle connection close
     this.ws.on("close", (_code: number, _reason: Buffer) => {
+      this.clearAuthTimer()
       logRagEvent("agent_step", "WebSocket connection closed", {
         service: "AgentWsHandler",
         userId: this.userId ?? "unauthenticated",
@@ -97,6 +120,8 @@ export class AgentWsHandler {
     try {
       const payload = verifyAccessToken(cleanToken)
       this.userId = payload.userId
+      this.tokenExp = payload.exp ?? null
+      this.clearAuthTimer()
 
       this.send({
         type: "auth_confirmed",
@@ -134,6 +159,19 @@ export class AgentWsHandler {
       return
     }
 
+    // The access token may expire while the connection stays open (15m in
+    // production). Frontend reconnects and re-authenticates (task 3.6).
+    if (this.tokenExp !== null && Date.now() / 1000 > this.tokenExp) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: "Access token expired. Please reconnect and re-authenticate.",
+        code: "TOKEN_EXPIRED",
+      })
+      this.ws.close(CLOSE_TOKEN_EXPIRED, "token expired")
+      return
+    }
+
     // AGENT_LIMIT applies to WebSocket starts exactly as it does to HTTP.
     const decision = await consumeRateLimit(this.userId, AGENT_LIMIT)
     if (!decision.allowed) {
@@ -162,6 +200,16 @@ export class AgentWsHandler {
         type: "error",
         sessionId,
         message: "Query cannot be empty.",
+        code: "INVALID_QUERY",
+      })
+      return
+    }
+
+    if (query.length > MAX_QUERY_LENGTH) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: `Query too long. Maximum ${MAX_QUERY_LENGTH} characters.`,
         code: "INVALID_QUERY",
       })
       return
@@ -219,6 +267,14 @@ export class AgentWsHandler {
       })
     } finally {
       this.isRunning = false
+    }
+  }
+
+  // ── Auth Timeout Helper ────────────────────────────────────────────────
+  private clearAuthTimer(): void {
+    if (this.authTimer !== null) {
+      clearTimeout(this.authTimer)
+      this.authTimer = null
     }
   }
 

@@ -3,6 +3,10 @@ import type { Request, Response, NextFunction } from "express"
 import { ValidationError } from "./error.middleware"
 import type { RegisterRequest, LoginRequest } from "../types"
 
+// Shared by the HTTP agent/RAG controllers and the WebSocket agent handler
+// (task 2.8): one query-length cap everywhere an LLM query can enter.
+export const MAX_QUERY_LENGTH = 2000
+
 export function validateRegister(req: Request, _res: Response, next: NextFunction): void {
   const body = req.body as Partial<RegisterRequest>
 

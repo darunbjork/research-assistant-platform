@@ -12,6 +12,7 @@ import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { RerankerService } from "../services/reranker.service"
 import { consumeGlobalBudget } from "../utils/global-budget"
+import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
 
 // ── Service Initialisation ────────────────────────────────────────────────
@@ -39,6 +40,10 @@ export class RagController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query' (non-empty string)")
+      }
+
+      if (query.length > MAX_QUERY_LENGTH) {
+        throw new ValidationError(`'query' must be at most ${MAX_QUERY_LENGTH} characters`)
       }
 
       // Global daily budget: a RAG query costs 1 unit.
@@ -74,6 +79,10 @@ export class RagController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query'")
+      }
+
+      if (query.length > MAX_QUERY_LENGTH) {
+        throw new ValidationError(`'query' must be at most ${MAX_QUERY_LENGTH} characters`)
       }
 
       // Global daily budget: a RAG query costs 1 unit.

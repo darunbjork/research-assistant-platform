@@ -108,6 +108,7 @@ export type AgentErrorCode =
   | "INVALID_QUERY"
   | "RATE_LIMITED"
   | "CAPACITY_REACHED"
+  | "TOKEN_EXPIRED"
   | "REASONING_ERROR"
   | "AGENT_ERROR"
 
