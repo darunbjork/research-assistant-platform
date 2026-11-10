@@ -64,6 +64,25 @@ export const EVAL_LIMIT: RateLimitConfig = {
   failMode: "closed",
 }
 
+// Auth endpoints (D20): keyed by IP, not userId — login and register happen
+// before we know who the user is, and per-user limits don't stop one person
+// hammering the endpoint from a single address.
+export const LOGIN_LIMIT: RateLimitConfig = {
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 10,
+  message: "Too many login attempts. Limit: 10 per 15 minutes.",
+  keyPrefix: "login",
+  failMode: "open",
+}
+
+export const REGISTER_LIMIT: RateLimitConfig = {
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 5,
+  message: "Too many registration attempts. Limit: 5 per hour.",
+  keyPrefix: "register",
+  failMode: "closed",
+}
+
 // ── consumeRateLimit (Express-independent core) ────────────────────────────
 
 export interface RateLimitDecision {
@@ -129,7 +148,27 @@ export async function consumeRateLimit(
   }
 }
 
-// ── Express middleware wrapper ─────────────────────────────────────────────
+// ── Express middleware wrappers ───────────────────────────────────────────
+
+function applyRateLimitHeaders(
+  res: Response,
+  config: RateLimitConfig,
+  decision: RateLimitDecision
+): void {
+  res.setHeader("X-RateLimit-Limit", config.max)
+  res.setHeader("X-RateLimit-Remaining", decision.remaining)
+  res.setHeader("X-RateLimit-Reset", Math.ceil(Date.now() / 1000) + decision.retryAfterSec)
+}
+
+function denyRateLimit(res: Response, config: RateLimitConfig, decision: RateLimitDecision): void {
+  res.setHeader("Retry-After", decision.retryAfterSec)
+  res.status(429).json({
+    ...fail(config.message),
+    retryAfter: decision.retryAfterSec,
+    limit: config.max,
+    windowMs: config.windowMs,
+  })
+}
 
 export function createRateLimiter(
   config: RateLimitConfig
@@ -143,25 +182,45 @@ export function createRateLimiter(
     const userId = req.user.userId
     const decision = await consumeRateLimit(userId, config)
 
-    res.setHeader("X-RateLimit-Limit", config.max)
-    res.setHeader("X-RateLimit-Remaining", decision.remaining)
-    res.setHeader("X-RateLimit-Reset", Math.ceil(Date.now() / 1000) + decision.retryAfterSec)
+    applyRateLimitHeaders(res, config, decision)
 
     if (!decision.allowed) {
-      res.setHeader("Retry-After", decision.retryAfterSec)
-
       logRagEvent("ingest", "Rate limit exceeded", {
         service: "RateLimiter",
         userId,
         keyPrefix: config.keyPrefix,
       })
 
-      res.status(429).json({
-        ...fail(config.message),
-        retryAfter: decision.retryAfterSec,
-        limit: config.max,
-        windowMs: config.windowMs,
+      denyRateLimit(res, config, decision)
+      return
+    }
+
+    next()
+  }
+}
+
+/**
+ * Per-IP variant of createRateLimiter for pre-auth endpoints: the subject is
+ * `ip:<req.ip>` (requires `app.set("trust proxy", 1)` behind Caddy so req.ip
+ * is the real client, not the proxy).
+ */
+export function createIpRateLimiter(
+  config: RateLimitConfig
+): (req: Request, res: Response, next: NextFunction) => Promise<void> {
+  return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
+    const subject = `ip:${req.ip}`
+    const decision = await consumeRateLimit(subject, config)
+
+    applyRateLimitHeaders(res, config, decision)
+
+    if (!decision.allowed) {
+      logRagEvent("ingest", "IP rate limit exceeded", {
+        service: "RateLimiter",
+        subject,
+        keyPrefix: config.keyPrefix,
       })
+
+      denyRateLimit(res, config, decision)
       return
     }
 

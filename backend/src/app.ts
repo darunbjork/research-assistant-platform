@@ -28,6 +28,11 @@ dotenv.config()
 const app = express()
 const PORT = process.env.PORT ?? "3001"
 
+// Caddy is the single reverse proxy in front (task 5.3), so trust exactly
+// one hop: req.ip then reflects the real client address instead of the
+// proxy's — required for the IP-based auth rate limits (D20).
+app.set("trust proxy", 1)
+
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(
   helmet({

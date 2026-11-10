@@ -240,3 +240,5 @@ describe("HTTP wiring: 503 when the budget is exhausted", () => {
     expect(body.data.overallScore).toBe(0.9)
   })
 })
+
+export {}

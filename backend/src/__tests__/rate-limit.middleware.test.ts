@@ -78,7 +78,7 @@ jest.mock("../utils/redis", () => ({
 }))
 
 // Now import the middleware (it will use our mocked Redis)
-const { createRateLimiter, consumeRateLimit } =
+const { createRateLimiter, createIpRateLimiter, consumeRateLimit, LOGIN_LIMIT, REGISTER_LIMIT } =
   require("../middleware/rate-limit.middleware") as typeof import("../middleware/rate-limit.middleware")
 
 // ── Test Helpers ──────────────────────────────────────────────────────────
@@ -413,5 +413,132 @@ describe("consumeRateLimit()", () => {
     const decision = await consumeRateLimit("user-4", { ...CORE_CONFIG, failMode: "open" })
     expect(decision.allowed).toBe(true)
     expect(decision.remaining).toBe(CORE_CONFIG.max)
+  })
+})
+
+// ── createIpRateLimiter() — per-IP limits for auth endpoints (D20) ────────
+describe("createIpRateLimiter()", () => {
+  const IP_CONFIG: RateLimitConfig = {
+    windowMs: 900_000, // 15 minutes
+    max: 3,
+    message: "Too many attempts",
+    keyPrefix: "ip-test",
+    failMode: "open",
+  }
+
+  function makeIpRequest(ip: string): Partial<Request> {
+    return { ip }
+  }
+
+  beforeEach(() => {
+    mockRedisStore.clear()
+    mockTtlStore.clear()
+    jest.clearAllMocks()
+  })
+
+  it("keys the counter by ip:<address>", async () => {
+    const limiter = createIpRateLimiter(IP_CONFIG)
+
+    await limiter(
+      makeIpRequest("203.0.113.7") as Request,
+      makeResponse() as unknown as Response,
+      makeNext()
+    )
+
+    expect(mockRedisStore.get("rl:ip-test:ip:203.0.113.7")).toBe(1)
+  })
+
+  it("allows up to the max per IP and denies the next with 429", async () => {
+    const limiter = createIpRateLimiter(IP_CONFIG)
+
+    for (let i = 0; i < IP_CONFIG.max; i++) {
+      const res = makeResponse()
+      const next = makeNext()
+      await limiter(makeIpRequest("198.51.100.9") as Request, res as unknown as Response, next)
+      expect(next).toHaveBeenCalledTimes(1)
+      expect(res.statusCode).toBe(200)
+    }
+
+    const res = makeResponse()
+    const next = makeNext()
+    await limiter(makeIpRequest("198.51.100.9") as Request, res as unknown as Response, next)
+
+    expect(res.statusCode).toBe(429)
+    expect(next).not.toHaveBeenCalled()
+    expect(res.headers["Retry-After"]).toBeDefined()
+    expect(res.headers["X-RateLimit-Remaining"]).toBe(0)
+    expect((res.body as { error?: string }).error).toBe(IP_CONFIG.message)
+  })
+
+  it("keeps different IPs independent", async () => {
+    const limiter = createIpRateLimiter(IP_CONFIG)
+
+    // IP A exhausts its window
+    for (let i = 0; i <= IP_CONFIG.max; i++) {
+      await limiter(
+        makeIpRequest("192.0.2.1") as Request,
+        makeResponse() as unknown as Response,
+        makeNext()
+      )
+    }
+
+    // IP B still has room
+    const res = makeResponse()
+    const next = makeNext()
+    await limiter(makeIpRequest("192.0.2.2") as Request, res as unknown as Response, next)
+
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(res.statusCode).toBe(200)
+  })
+
+  it("fails open when Redis is down", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const limiter = createIpRateLimiter(IP_CONFIG)
+    const next = makeNext()
+    await limiter(
+      makeIpRequest("203.0.113.8") as Request,
+      makeResponse() as unknown as Response,
+      next
+    )
+
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
+  it("fails closed when Redis is down and failMode is closed", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const limiter = createIpRateLimiter({ ...IP_CONFIG, failMode: "closed" })
+    const res = makeResponse()
+    const next = makeNext()
+    await limiter(makeIpRequest("203.0.113.9") as Request, res as unknown as Response, next)
+
+    expect(res.statusCode).toBe(429)
+    expect(next).not.toHaveBeenCalled()
+  })
+})
+
+// ── Auth IP limits pinned to the plan's numbers (task 2.5) ────────────────
+describe("auth IP limit configs", () => {
+  it("LOGIN_LIMIT is 10 per 15 minutes, fail open, keyed login", () => {
+    expect(LOGIN_LIMIT).toMatchObject({
+      windowMs: 15 * 60 * 1000,
+      max: 10,
+      failMode: "open",
+      keyPrefix: "login",
+    })
+  })
+
+  it("REGISTER_LIMIT is 5 per hour, fail closed, keyed register", () => {
+    expect(REGISTER_LIMIT).toMatchObject({
+      windowMs: 60 * 60 * 1000,
+      max: 5,
+      failMode: "closed",
+      keyPrefix: "register",
+    })
   })
 })
