@@ -223,6 +223,21 @@ describe("VectorSearchService", () => {
       const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
       expect(results[0]?.chunk.pageNumber).toBe(7)
     })
+
+    it("converts a string createdAt into a Date", async () => {
+      const fakeRows = [
+        makeFakeChunkRow({
+          createdAt: "2026-04-27T10:00:00.000Z" as unknown as Date,
+        }),
+      ]
+      mockPrisma = makeMockPrisma(fakeRows)
+      service = new VectorSearchService(mockPrisma as unknown as PrismaClient)
+
+      const results = await service.search(VALID_768_VECTOR, { userId: "user-123" })
+      const createdAt = results[0]?.chunk.createdAt
+      expect(createdAt).toBeInstanceOf(Date)
+      expect(createdAt?.toISOString()).toBe("2026-04-27T10:00:00.000Z")
+    })
   })
 
   // ── Search Options ─────────────────────────────────────────────────────
@@ -304,6 +319,85 @@ describe("VectorSearchService", () => {
 
       const stats = await service.getIndexStats()
       expect(stats.indexName).toBeNull()
+    })
+
+    it("returns totalChunks 0 when the count query returns no rows", async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([]).mockResolvedValueOnce([])
+
+      const stats = await service.getIndexStats()
+      expect(stats.totalChunks).toBe(0)
+    })
+  })
+
+  // ── searchSimilarToChunk() ─────────────────────────────────────────────
+  describe("searchSimilarToChunk()", () => {
+    const SELF_EMBEDDING = `[${VALID_768_VECTOR.join(",")}]`
+
+    it("returns similar chunks and excludes the source chunk itself", async () => {
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([{ embedding: SELF_EMBEDDING }])
+        .mockResolvedValueOnce([
+          makeFakeChunkRow({ id: "chunk-self" }),
+          makeFakeChunkRow({ id: "chunk-other", cosine_distance: 0.2 }),
+        ])
+
+      const results = await service.searchSimilarToChunk("chunk-self", { userId: "user-123" })
+
+      expect(results).toHaveLength(1)
+      expect(results[0]?.chunk.id).toBe("chunk-other")
+    })
+
+    it("throws when the chunk does not exist or belongs to another user", async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([])
+
+      await expect(
+        service.searchSimilarToChunk("chunk-missing", { userId: "user-123" })
+      ).rejects.toThrow("Chunk chunk-missing not found")
+      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1)
+    })
+
+    it("runs the follow-up search with the caller's userId scope", async () => {
+      mockPrisma.$queryRaw
+        .mockResolvedValueOnce([{ embedding: SELF_EMBEDDING }])
+        .mockResolvedValueOnce([makeFakeChunkRow({ id: "chunk-self" })])
+
+      await service.searchSimilarToChunk("chunk-self", { userId: "user-123", topK: 3 })
+
+      expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(2)
+      const [strings] = mockPrisma.$queryRaw.mock.calls[1] as unknown as [TemplateStringsArray]
+      expect(strings.join("?")).toContain('d."userId"')
+    })
+  })
+
+  // ── explainSimilarity() ────────────────────────────────────────────────
+  describe("explainSimilarity()", () => {
+    it("returns the similarity between a query vector and an owned chunk", async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([
+        { id: "chunk-1", content: "hello world", cosine_distance: 0.25 },
+      ])
+
+      const result = await service.explainSimilarity(VALID_768_VECTOR, "chunk-1", "user-123")
+
+      expect(result).toEqual({
+        chunkId: "chunk-1",
+        similarity: 0.75,
+        content: "hello world",
+      })
+    })
+
+    it("returns null when the chunk does not exist or is not owned", async () => {
+      mockPrisma.$queryRaw.mockResolvedValueOnce([])
+
+      const result = await service.explainSimilarity(VALID_768_VECTOR, "chunk-x", "user-123")
+
+      expect(result).toBeNull()
+    })
+
+    it("rejects an invalid query vector without touching the database", async () => {
+      await expect(service.explainSimilarity([], "chunk-1", "user-123")).rejects.toThrow(
+        "Query vector must be a non-empty array"
+      )
+      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled()
     })
   })
 

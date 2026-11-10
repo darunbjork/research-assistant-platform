@@ -72,6 +72,12 @@ describe("KeywordSearchService", () => {
       const results = await service.search("xylophone quantum", { userId: "user-123" })
       expect(results).toHaveLength(0)
     })
+
+    it("returns empty array when the query sanitises to empty (punctuation only)", async () => {
+      const results = await service.search("!!! ???", { userId: "user-123" })
+      expect(results).toHaveLength(0)
+      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled()
+    })
   })
 
   // ── Happy path ─────────────────────────────────────────────────────────
@@ -155,6 +161,18 @@ describe("KeywordSearchService", () => {
 
       const results = await service.search("machine", { userId: "user-123" })
       expect(results[0]?.chunk.pageNumber).toBe(5)
+    })
+
+    it("converts a string createdAt into a Date", async () => {
+      mockPrisma = makeMockPrisma([
+        makeFakeKeywordRow({ createdAt: "2026-04-27T10:00:00.000Z" as unknown as Date }),
+      ])
+      service = new KeywordSearchService(mockPrisma as unknown as PrismaClient)
+
+      const results = await service.search("machine", { userId: "user-123" })
+      const createdAt = results[0]?.chunk.createdAt
+      expect(createdAt).toBeInstanceOf(Date)
+      expect(createdAt?.toISOString()).toBe("2026-04-27T10:00:00.000Z")
     })
   })
 
