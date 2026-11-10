@@ -1,9 +1,31 @@
-import { Router, type Request, type Response } from "express"
+// backend/src/routes/metrics.routes.ts
+import { Router, type NextFunction, type Request, type Response } from "express"
 import { register } from "../utils/metrics"
 
 const router = Router()
 
-router.get("/metrics", async (_req: Request, res: Response) => {
+// Defence in depth for D19: Caddy won't route /metrics at all (task 5.3),
+// but when METRICS_TOKEN is set this guard makes the endpoint anonymous-
+// proof on the internal Docker network too. 404 (not 401) so we don't
+// advertise that the endpoint exists. Token checked per request so ops can
+// rotate it without a restart; task 3.1 adds min-24-char validation to the
+// Zod env schema.
+function requireMetricsToken(req: Request, res: Response, next: NextFunction): void {
+  const token = process.env.METRICS_TOKEN
+  if (!token) {
+    next() // not configured — open (development default)
+    return
+  }
+
+  if (req.headers.authorization === `Bearer ${token}`) {
+    next()
+    return
+  }
+
+  res.status(404).end()
+}
+
+router.get("/metrics", requireMetricsToken, async (_req: Request, res: Response) => {
   try {
     res.set("Content-Type", register.contentType)
     res.end(await register.metrics())
@@ -12,7 +34,7 @@ router.get("/metrics", async (_req: Request, res: Response) => {
   }
 })
 
-router.get("/metrics/json", async (_req: Request, res: Response) => {
+router.get("/metrics/json", requireMetricsToken, async (_req: Request, res: Response) => {
   try {
     const metrics = await register.getMetricsAsJSON()
     res.json({
