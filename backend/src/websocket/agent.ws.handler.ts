@@ -7,6 +7,7 @@ import { GenerationService } from "../services/generation.service"
 import { StreamingAgentService } from "../services/streaming.agent.service"
 import { parseClientMessage, toJson, type ServerMessage } from "../types/websocket.types"
 import { logRagEvent, logError } from "../utils/logger"
+import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
 import redis from "../utils/redis"
 
 // ── Service Instances ─────────────────────────────────────────────────────
@@ -128,6 +129,18 @@ export class AgentWsHandler {
         sessionId,
         message: "Authentication required before starting an agent session.",
         code: "NOT_AUTHENTICATED",
+      })
+      return
+    }
+
+    // AGENT_LIMIT applies to WebSocket starts exactly as it does to HTTP.
+    const decision = await consumeRateLimit(this.userId, AGENT_LIMIT)
+    if (!decision.allowed) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: AGENT_LIMIT.message,
+        code: "RATE_LIMITED",
       })
       return
     }

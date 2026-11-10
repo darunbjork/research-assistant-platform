@@ -1,6 +1,7 @@
 import { Router } from "express"
 import { AgentController } from "../controllers/agent.controller"
 import { authMiddleware } from "../middleware/auth.middleware"
+import { createRateLimiter, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
 
 const router = Router()
 const controller = new AgentController()
@@ -49,6 +50,6 @@ router.use(authMiddleware)
  *       401:
  *         $ref: '#/components/responses/Unauthorized'
  */
-router.post("/chat", controller.chat)
+router.post("/chat", createRateLimiter(AGENT_LIMIT), controller.chat)
 
 export default router
