@@ -231,11 +231,11 @@ Begin your answer now.`
     }
 
     for (let attempt = 1; attempt <= maxRetries; attempt++) {
-      const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
+      const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
       try {
         const response = await fetch(url, {
           method: "POST",
-          headers: { "Content-Type": "application/json" },
+          headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
           body: JSON.stringify(requestBody),
         })
 

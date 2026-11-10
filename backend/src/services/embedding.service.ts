@@ -175,7 +175,7 @@ export class EmbeddingService {
 
   // ── Private: Gemini API call (single batch, no splitting) ──────────────
   private async callGeminiApi(texts: string[], taskType: EmbeddingTaskType): Promise<number[][]> {
-    const url = `${GEMINI_BASE_URL}/models/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents?key=${this.apiKey}`
+    const url = `${GEMINI_BASE_URL}/models/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents`
 
     const requestBody: GeminiEmbedRequest = {
       requests: texts.map(text => ({
@@ -188,7 +188,7 @@ export class EmbeddingService {
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
     })
 

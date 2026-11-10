@@ -170,6 +170,19 @@ describe("GenerationService", () => {
       expect(callUrl).toContain("gemini-3.6-flash")
     })
 
+    it("sends the API key as x-goog-api-key header, never in the URL (D8)", async () => {
+      const chunks = [makeFakeChunkResult()]
+      await service.generate("What is ML?", chunks)
+
+      const [callUrl, callInit] = fetchSpy.mock.calls[0] as [
+        string,
+        { headers: Record<string, string> },
+      ]
+      expect(callUrl).not.toContain("key=")
+      expect(callUrl).not.toContain("fake-api-key-for-tests")
+      expect(callInit.headers["x-goog-api-key"]).toBe("fake-api-key-for-tests")
+    })
+
     it("uses temperature 0.1 in the request body", async () => {
       const chunks = [makeFakeChunkResult()]
       await service.generate("What is ML?", chunks)

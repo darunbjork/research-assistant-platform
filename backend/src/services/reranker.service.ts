@@ -333,11 +333,11 @@ Respond ONLY with valid JSON (chunk numbers in order of relevance, most relevant
 
   // ── Private: Call Gemini ──────────────────────────────────────────────
   private async callGemini(requestBody: GeminiRequest): Promise<GeminiResponse> {
-    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
+    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
     })
 
