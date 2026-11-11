@@ -359,7 +359,23 @@ describe("HybridSearchService", () => {
     it("calls embedText with RETRIEVAL_QUERY task type", async () => {
       await service.search("test query", { userId: "user-123" })
 
-      expect(mockEmbedding.embedText).toHaveBeenCalledWith("test query", "RETRIEVAL_QUERY")
+      expect(mockEmbedding.embedText).toHaveBeenCalledWith(
+        "test query",
+        "RETRIEVAL_QUERY",
+        undefined
+      )
+    })
+
+    it("forwards the AbortSignal to embedText", async () => {
+      const controller = new AbortController()
+
+      await service.search("test query", { userId: "user-123" }, controller.signal)
+
+      expect(mockEmbedding.embedText).toHaveBeenCalledWith(
+        "test query",
+        "RETRIEVAL_QUERY",
+        controller.signal
+      )
     })
 
     it("calls embedText exactly once per search", async () => {

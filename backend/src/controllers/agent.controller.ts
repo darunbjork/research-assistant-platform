@@ -12,6 +12,7 @@ import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { consumeGlobalBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
+import { isAbortError } from "../utils/abort"
 import redis from "../utils/redis"
 
 // ── Service Initialisation ────────────────────────────────────────────────
@@ -51,10 +52,33 @@ export class AgentController {
         return
       }
 
-      const result = await agentService.run(query.trim(), req.user.userId)
+      // Abort the run when the client disconnects before the response is
+      // finished. `res` "close" with `writableEnded === false` is the reliable
+      // disconnect signal on Node >= 16 — `req` "close" fires as soon as the
+      // request body has been read (verified empirically; see FOUND_DURING_FIX).
+      const controller = new AbortController()
+      const onClose = (): void => {
+        if (!res.writableEnded) controller.abort()
+      }
+      res.on("close", onClose)
+
+      let result: Awaited<ReturnType<typeof agentService.run>>
+      try {
+        result = await agentService.run(query.trim(), req.user.userId, controller.signal)
+      } finally {
+        res.off("close", onClose)
+      }
+
+      // Client is gone — nothing left to respond to.
+      if (controller.signal.aborted) return
 
       res.status(200).json(ok(result))
     } catch (error: unknown) {
+      // A cancellation is not a server error — do not forward to the error
+      // middleware (the connection is already closed).
+      if (isAbortError(error)) {
+        return
+      }
       next(error)
     }
   }

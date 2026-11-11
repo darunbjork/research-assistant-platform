@@ -19,6 +19,7 @@ export type AgentStatus =
   | "generating" // building the final answer
   | "evaluating" // self-assessing answer quality (Day 15)
   | "done"
+  | "aborted" // caller cancelled the run (client disconnect / WS close)
   | "error"
 
 export type TaskType = "rag_search" | "web_search" | "math" | "general"

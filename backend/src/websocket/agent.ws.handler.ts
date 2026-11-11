@@ -31,6 +31,8 @@ const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? ""
 export class AgentWsHandler {
   private userId: string | null = null // null until authenticated
   private isRunning: boolean = false // true while agent is executing
+  /** Aborts the in-flight agent run when the connection closes. */
+  private runController: AbortController | null = null
   /** `exp` (seconds since epoch) of the token accepted at auth time. */
   private tokenExp: number | null = null
   private authTimer: ReturnType<typeof setTimeout> | null = null
@@ -68,6 +70,8 @@ export class AgentWsHandler {
     // Handle connection close
     this.ws.on("close", (_code: number, _reason: Buffer) => {
       this.clearAuthTimer()
+      // Client went away — cancel any in-flight agent run (task 2.9).
+      this.runController?.abort()
       logRagEvent("agent_step", "WebSocket connection closed", {
         service: "AgentWsHandler",
         userId: this.userId ?? "unauthenticated",
@@ -227,6 +231,8 @@ export class AgentWsHandler {
     }
 
     this.isRunning = true
+    const runController = new AbortController()
+    this.runController = runController
 
     logRagEvent("agent_step", "Streaming agent session started via WebSocket", {
       service: "AgentWsHandler",
@@ -251,8 +257,18 @@ export class AgentWsHandler {
         }
       }
 
-      await streamingAgent.run(query.trim(), this.userId, sessionId, onEvent)
+      await streamingAgent.run(query.trim(), this.userId, sessionId, onEvent, runController.signal)
     } catch (error: unknown) {
+      // Aborted by a client disconnect: info-level only, no error message.
+      if (runController.signal.aborted) {
+        logRagEvent("agent_step", "Streaming agent run aborted (connection closed)", {
+          service: "AgentWsHandler",
+          sessionId,
+          userId: this.userId,
+        })
+        return
+      }
+
       logError("Streaming agent failed", error, {
         service: "AgentWsHandler",
         sessionId,
@@ -267,6 +283,7 @@ export class AgentWsHandler {
       })
     } finally {
       this.isRunning = false
+      this.runController = null
     }
   }
 

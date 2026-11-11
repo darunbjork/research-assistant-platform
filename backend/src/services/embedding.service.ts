@@ -14,6 +14,7 @@ import { embeddingRequests, embeddingLatency, tokenCost } from "../utils/metrics
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
@@ -44,7 +45,8 @@ export class EmbeddingService {
   // ── embedText ─────────────────────────────────────────────────────────
   async embedText(
     text: string,
-    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT"
+    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT",
+    signal?: AbortSignal
   ): Promise<number[]> {
     return withSpan(this.tracer, "embedding.embedText", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
@@ -72,7 +74,7 @@ export class EmbeddingService {
       const timer = embeddingLatency.startTimer()
       embeddingRequests.inc({ status: "success" })
 
-      const embedding = await this.callGeminiApi([text], taskType)
+      const embedding = await this.callGeminiApi([text], taskType, signal)
       const vector = embedding[0]
       if (vector === undefined) {
         throw new Error("Gemini returned no embedding vector")
@@ -99,7 +101,8 @@ export class EmbeddingService {
   // ── embedBatch ────────────────────────────────────────────────────────
   async embedBatch(
     texts: string[],
-    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT"
+    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT",
+    signal?: AbortSignal
   ): Promise<number[][]> {
     return withSpan(this.tracer, "embedding.embedBatch", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
@@ -142,7 +145,8 @@ export class EmbeddingService {
 
           const embeddings = await this.callGeminiApi(
             batch.map(item => item.text),
-            taskType
+            taskType,
+            signal
           )
 
           timer()
@@ -174,7 +178,11 @@ export class EmbeddingService {
   }
 
   // ── Private: Gemini API call (single batch, no splitting) ──────────────
-  private async callGeminiApi(texts: string[], taskType: EmbeddingTaskType): Promise<number[][]> {
+  private async callGeminiApi(
+    texts: string[],
+    taskType: EmbeddingTaskType,
+    signal?: AbortSignal
+  ): Promise<number[][]> {
     const url = `${GEMINI_BASE_URL}/models/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents`
 
     const requestBody: GeminiEmbedRequest = {
@@ -190,6 +198,7 @@ export class EmbeddingService {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
+      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
     })
 
     if (!response.ok) {

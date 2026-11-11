@@ -35,6 +35,7 @@ import type {
 import type { GeminiRequest, GeminiResponse } from "../types/llm.types"
 import { logRagEvent, logError } from "../utils/logger"
 import { retrievalLatency } from "../utils/metrics"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_MODEL = "gemini-3.6-flash"
@@ -59,7 +60,8 @@ export class RerankerService {
   async rerank(
     query: string,
     chunks: HybridSearchResult[],
-    options: Partial<RerankerOptions> = {}
+    options: Partial<RerankerOptions> = {},
+    signal?: AbortSignal
   ): Promise<RerankedResult[]> {
     if (chunks.length === 0) return []
     if (chunks.length === 1) {
@@ -75,7 +77,7 @@ export class RerankerService {
 
     try {
       // Use pointwise scoring by default — more reliable than listwise
-      scores = await this.scorePointwise(query, chunks)
+      scores = await this.scorePointwise(query, chunks, signal)
     } catch (error: unknown) {
       logError("Reranking failed — returning original order", error, {
         service: "RerankerService",
@@ -111,9 +113,10 @@ export class RerankerService {
   async rerankHybrid(
     query: string,
     results: HybridSearchResult[],
-    topK: number = DEFAULT_OPTIONS.topK
+    topK: number = DEFAULT_OPTIONS.topK,
+    signal?: AbortSignal
   ): Promise<RerankedResult[]> {
-    return this.rerank(query, results, { topK })
+    return this.rerank(query, results, { topK }, signal)
   }
 
   // ── compare ───────────────────────────────────────────────────────────
@@ -153,7 +156,11 @@ export class RerankerService {
   // Sends all chunks in one Gemini call.
   // Asks the LLM to score each (query, chunk) pair from 0-10.
   // Returns normalised scores in the same order as the input chunks.
-  private async scorePointwise(query: string, chunks: HybridSearchResult[]): Promise<number[]> {
+  private async scorePointwise(
+    query: string,
+    chunks: HybridSearchResult[],
+    signal?: AbortSignal
+  ): Promise<number[]> {
     // Build the prompt with all chunks numbered
     const chunksText = chunks
       .map(
@@ -205,7 +212,7 @@ Respond ONLY with valid JSON (no markdown, no explanation):
       },
     }
 
-    const response = await this.callGemini(requestBody)
+    const response = await this.callGemini(requestBody, signal)
     const rawText = response.candidates[0]?.content.parts[0]?.text ?? ""
 
     return this.parsePointwiseScores(rawText, chunks.length)
@@ -215,7 +222,11 @@ Respond ONLY with valid JSON (no markdown, no explanation):
   // Alternative to pointwise — asks LLM to rank ALL chunks simultaneously.
   // More accurate when chunks are similar to each other.
   // Not used by default (less reliable JSON parsing).
-  async scoreListwise(query: string, chunks: HybridSearchResult[]): Promise<number[]> {
+  async scoreListwise(
+    query: string,
+    chunks: HybridSearchResult[],
+    signal?: AbortSignal
+  ): Promise<number[]> {
     const chunksText = chunks
       .map((result, i) => `[Chunk ${i + 1}]:\n${result.chunk.content.slice(0, 250)}`)
       .join("\n\n")
@@ -239,7 +250,7 @@ Respond ONLY with valid JSON (chunk numbers in order of relevance, most relevant
       },
     }
 
-    const response = await this.callGemini(requestBody)
+    const response = await this.callGemini(requestBody, signal)
     const rawText = response.candidates[0]?.content.parts[0]?.text ?? ""
 
     return this.parseListwiseRanking(rawText, chunks.length)
@@ -332,13 +343,17 @@ Respond ONLY with valid JSON (chunk numbers in order of relevance, most relevant
   }
 
   // ── Private: Call Gemini ──────────────────────────────────────────────
-  private async callGemini(requestBody: GeminiRequest): Promise<GeminiResponse> {
+  private async callGemini(
+    requestBody: GeminiRequest,
+    signal?: AbortSignal
+  ): Promise<GeminiResponse> {
     const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
 
     const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
+      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
     })
 
     if (!response.ok) {

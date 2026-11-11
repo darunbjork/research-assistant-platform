@@ -36,7 +36,11 @@ export class HybridSearchService {
     this.keywordSearchService = new KeywordSearchService(prisma)
   }
 
-  async search(query: string, options: HybridSearchOptions): Promise<HybridSearchResult[]> {
+  async search(
+    query: string,
+    options: HybridSearchOptions,
+    signal?: AbortSignal
+  ): Promise<HybridSearchResult[]> {
     return withSpan(this.tracer, "retrieval.hybridSearch", async span => {
       span.setAttribute(RAG_ATTRS.QUERY, query.slice(0, 200))
       span.setAttribute(RAG_ATTRS.STRATEGY, "hybrid")
@@ -64,7 +68,7 @@ export class HybridSearchService {
       retrievalRequests.inc({ strategy: "hybrid" })
 
       // ── Embed the query ─────────────────────────────────────────────
-      const queryVector = await this.embeddingService.embedText(query, "RETRIEVAL_QUERY")
+      const queryVector = await this.embeddingService.embedText(query, "RETRIEVAL_QUERY", signal)
 
       // ── Run both searches in parallel ───────────────────────────────
       const searchOptions = { topK: topK * 2, documentIds, userId }

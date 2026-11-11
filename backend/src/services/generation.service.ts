@@ -8,6 +8,7 @@ import { generationRequests, generationLatency, tokenCost } from "../utils/metri
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
 
 // ── Constants ─────────────────────────────────────────────────────────────
 const GEMINI_MODEL = "gemini-3.6-flash"
@@ -59,7 +60,8 @@ export class GenerationService {
   async generate(
     query: string,
     context: HybridSearchResult[],
-    options: Partial<GenerationConfig> = {}
+    options: Partial<GenerationConfig> = {},
+    signal?: AbortSignal
   ): Promise<GenerationResult> {
     return withSpan(this.tracer, "generation.generate", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
@@ -71,7 +73,7 @@ export class GenerationService {
 
       const start = Date.now()
 
-      const result = await this.callGeminiGenerate(query, context, options)
+      const result = await this.callGeminiGenerate(query, context, options, signal)
 
       span.setAttribute(LLM_ATTRS.TOTAL_TOKENS, result.tokensUsed)
       span.setAttribute(LLM_ATTRS.OUTPUT_TOKENS, Math.floor(result.tokensUsed * 0.3))
@@ -86,7 +88,8 @@ export class GenerationService {
   private async callGeminiGenerate(
     query: string,
     context: HybridSearchResult[],
-    options: Partial<GenerationConfig>
+    options: Partial<GenerationConfig>,
+    signal?: AbortSignal
   ): Promise<GenerationResult> {
     const start = Date.now()
 
@@ -97,7 +100,7 @@ export class GenerationService {
     const contextBlock = this.buildContextBlock(context.slice(0, effectiveConfig.maxContextChunks))
     const systemPrompt = this.buildSystemPrompt(contextBlock)
 
-    const response = await this.callGemini(systemPrompt, query)
+    const response = await this.callGemini(systemPrompt, query, signal)
 
     timer()
     tokenCost.inc({ operation: "generation" }, response.usageMetadata?.totalTokenCount ?? 0)
@@ -209,7 +212,11 @@ Begin your answer now.`
   }
 
   // ── callGemini ────────────────────────────────────────────────────────
-  private async callGemini(systemPrompt: string, userQuery: string): Promise<GeminiResponse> {
+  private async callGemini(
+    systemPrompt: string,
+    userQuery: string,
+    signal?: AbortSignal
+  ): Promise<GeminiResponse> {
     const maxRetries = 3
     let delay = 1000
 
@@ -237,6 +244,7 @@ Begin your answer now.`
           method: "POST",
           headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
           body: JSON.stringify(requestBody),
+          signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
         })
 
         if (response.status === 429) {

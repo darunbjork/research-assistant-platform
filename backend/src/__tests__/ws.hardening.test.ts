@@ -250,4 +250,37 @@ describe("WebSocket handler hardening (2.8)", () => {
       expect(parsed(ws).filter(m => m.type === "error")).toHaveLength(0)
     })
   })
+
+  // ── Connection close cancels the run (2.9 item 4) ─────────────────────
+  describe("connection close cancels the run", () => {
+    it("aborts the run's signal and reports no error message", async () => {
+      let seenSignal: AbortSignal | undefined
+      mockStreamingRun.mockImplementation(
+        (_q: unknown, _u: unknown, _s: unknown, _e: unknown, signal?: AbortSignal) => {
+          seenSignal = signal
+          return new Promise<void>((_resolve, reject) => {
+            signal?.addEventListener("abort", () => reject(new Error("aborted")), { once: true })
+          })
+        }
+      )
+
+      const ws = makeAuthenticatedHandler()
+      await flush()
+      ws.emit("message", JSON.stringify({ type: "start", query: "hello", sessionId: "s1" }))
+      await flush()
+
+      expect(mockStreamingRun).toHaveBeenCalledTimes(1)
+      expect(seenSignal).toBeDefined()
+      expect(seenSignal?.aborted).toBe(false)
+
+      ws.emit("close", 1000, Buffer.from(""))
+      await flush()
+
+      expect(seenSignal?.aborted).toBe(true)
+      // Abort is not a failure: no error message reaches the client.
+      expect(parsed(ws).filter(m => m.type === "error")).toHaveLength(0)
+
+      mockStreamingRun.mockResolvedValue(undefined)
+    })
+  })
 })

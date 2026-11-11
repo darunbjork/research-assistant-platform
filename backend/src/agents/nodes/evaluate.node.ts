@@ -1,4 +1,3 @@
-/* eslint-disable @typescript-eslint/no-unused-vars */
 // backend/src/agents/nodes/evaluate.node.ts
 // The self-evaluation component of the ReAct agent.
 //
@@ -23,6 +22,7 @@ import type { ToolCall } from "../../types/agent.types"
 import type { GeminiRequest, GeminiResponse } from "../../types/llm.types"
 import { logRagEvent } from "../../utils/logger"
 import { ragTriadScores } from "../../utils/metrics"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../../utils/abort"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -65,7 +65,7 @@ export class EvaluatorNode {
   // ── evaluate ──────────────────────────────────────────────────────────
   // Main entry point.
   // Uses hybrid evaluation: heuristic first, LLM for borderline cases.
-  async evaluate(context: EvaluationContext): Promise<EvaluationResult> {
+  async evaluate(context: EvaluationContext, signal?: AbortSignal): Promise<EvaluationResult> {
     const start = Date.now()
 
     // ── Step 1: Heuristic evaluation (fast, free) ─────────────────────
@@ -93,7 +93,7 @@ export class EvaluatorNode {
     // ── Step 3: Borderline — use LLM for deeper evaluation ────────────
     if (this.apiKey && this.apiKey.trim() !== "") {
       try {
-        const llmResult = await this.evaluateWithLLM(context)
+        const llmResult = await this.evaluateWithLLM(context, signal)
 
         // Blend heuristic (40%) and LLM (60%) scores for robustness
         const blended: EvaluationResult = {
@@ -124,8 +124,12 @@ export class EvaluatorNode {
 
         this.recordMetrics(blended)
         return blended
-        // eslint-disable-next-line no-unused-vars
       } catch (error: unknown) {
+        // Caller cancelled — propagate so the run stops as "aborted"
+        // instead of silently degrading to the heuristic result.
+        if (signal?.aborted) {
+          throw error
+        }
         // LLM evaluation failed — fall back to heuristic
         logRagEvent("agent_step", "LLM evaluation failed, using heuristic", {
           service: "EvaluatorNode",
@@ -288,7 +292,10 @@ export class EvaluatorNode {
   // ── evaluateWithLLM ───────────────────────────────────────────────────
   // Asks Gemini to evaluate answer quality — more accurate than heuristics
   // but costs tokens. Only called for borderline scores.
-  private async evaluateWithLLM(context: EvaluationContext): Promise<EvaluationResult> {
+  private async evaluateWithLLM(
+    context: EvaluationContext,
+    signal?: AbortSignal
+  ): Promise<EvaluationResult> {
     const { userQuery, toolCallHistory, draftAnswer } = context
 
     // Build evidence summary for the evaluator
@@ -363,6 +370,7 @@ Respond ONLY with valid JSON (no markdown fences):
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
+      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
     })
 
     if (!response.ok) {
