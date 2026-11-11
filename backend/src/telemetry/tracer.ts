@@ -1,4 +1,3 @@
-/* eslint-disable no-console */
 // backend/src/telemetry/tracer.ts
 
 import { IncomingMessage } from "http"
@@ -15,12 +14,13 @@ import { trace, type Tracer } from "@opentelemetry/api"
 const SERVICE_NAME = process.env.OTEL_SERVICE_NAME ?? "research-assistant-backend"
 const SERVICE_VERSION = process.env.SERVICE_VERSION ?? "1.0.0"
 
-function buildSpanProcessor() {
-  const endpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT
+const OTLP_ENDPOINT = process.env.OTEL_EXPORTER_OTLP_ENDPOINT
+const NODE_ENV = process.env.NODE_ENV
 
-  if (endpoint) {
+function buildSpanProcessor() {
+  if (OTLP_ENDPOINT) {
     const exporter = new OTLPTraceExporter({
-      url: `${endpoint}/v1/traces`,
+      url: `${OTLP_ENDPOINT}/v1/traces`,
       headers: {},
     })
     return new BatchSpanProcessor(exporter, {
@@ -33,6 +33,15 @@ function buildSpanProcessor() {
 
   return new SimpleSpanProcessor(new ConsoleSpanExporter())
 }
+
+// When does the SDK start at all? (D8/D22)
+// - development: never — today's behaviour, spans are no-ops there.
+// - production without an OTLP endpoint: never — console spans in
+//   production are noise nobody can ingest.
+// - otherwise: yes. An endpoint always exports OTLP; without one, only
+//   test keeps today's console exporter.
+const shouldStartSdk =
+  NODE_ENV !== "development" && (Boolean(OTLP_ENDPOINT) || NODE_ENV !== "production")
 
 const sdk = new NodeSDK({
   spanProcessor: buildSpanProcessor(),
@@ -52,20 +61,18 @@ const sdk = new NodeSDK({
   ],
 })
 
-if (process.env.NODE_ENV !== "development") {
+if (shouldStartSdk) {
   sdk.start()
 }
 
-process.on("SIGTERM", () => {
-  sdk
-    .shutdown()
-    .then(() => console.log("✅ OTel SDK shutdown complete"))
-    .catch((err: Error | unknown) => console.error("❌ OTel SDK shutdown error:", err))
-})
-
-process.on("SIGINT", () => {
-  sdk.shutdown().catch((err: Error | unknown) => console.error("❌ OTel SDK shutdown error:", err))
-})
+/**
+ * Flush and stop the SDK. The app's graceful-shutdown path calls this
+ * (task 5.5) instead of this module owning SIGTERM/SIGINT handlers.
+ * Resolves immediately when the SDK was never started.
+ */
+export function shutdownTracing(): Promise<void> {
+  return shouldStartSdk ? sdk.shutdown() : Promise.resolve()
+}
 
 export function getTracer(name: string): Tracer {
   return trace.getTracer(`${SERVICE_NAME}/${name}`, SERVICE_VERSION)
