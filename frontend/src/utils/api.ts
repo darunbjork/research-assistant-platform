@@ -22,9 +22,11 @@ interface RetryableRequest extends InternalAxiosRequestConfig {
 const BASE_URL = import.meta.env.VITE_API_URL ?? ""
 
 // ── Axios Instance ─────────────────────────────────────────────────────────
+// No default Content-Type here: axios sets application/json for plain-object
+// bodies and multipart/form-data (with boundary) for FormData — an instance
+// default of application/json would break multipart uploads (task 4.2).
 const api = axios.create({
-  baseURL: `${BASE_URL}/api/v1`,
-  headers: { "Content-Type": "application/json" }
+  baseURL: `${BASE_URL}/api/v1`
 })
 
 // ── Request Interceptor: Inject Auth Token ─────────────────────────────────
