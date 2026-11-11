@@ -1,5 +1,6 @@
 // TODO: Global error handler — the safety net for the entire application.
 import type { Request, Response, NextFunction } from "express"
+import multer from "multer"
 import { logError } from "../utils/logger"
 import { fail } from "../types"
 import { env } from "../config/env"
@@ -65,6 +66,21 @@ export function errorMiddleware(
       method: req.method,
     })
     res.status(error.statusCode).json(fail(error.message))
+    return
+  }
+
+  // Task 4.1: multer rejects oversized files while streaming the body.
+  if (error instanceof multer.MulterError) {
+    const message =
+      error.code === "LIMIT_FILE_SIZE" ? "File exceeds the 10 MB upload limit" : error.message
+    const statusCode = error.code === "LIMIT_FILE_SIZE" ? 413 : 400
+    logError("Upload error", error, {
+      service: "ErrorMiddleware",
+      code: error.code,
+      path: req.path,
+      method: req.method,
+    })
+    res.status(statusCode).json(fail(message))
     return
   }
 

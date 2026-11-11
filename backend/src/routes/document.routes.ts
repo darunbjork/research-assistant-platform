@@ -1,8 +1,11 @@
 import { Router } from "express"
+import type { Request, Response, NextFunction } from "express"
+import multer from "multer"
 import { DocumentController } from "../controllers/document.controller"
 import { authMiddleware } from "../middleware/auth.middleware"
 import { checkDocumentOwnership } from "../middleware/access-control.middleware"
 import { createRateLimiter, UPLOAD_LIMIT, LIGHT_LIMIT } from "../middleware/rate-limit.middleware"
+import { consumeGlobalBudget } from "../utils/global-budget"
 
 const router = Router()
 const controller = new DocumentController()
@@ -11,6 +14,30 @@ router.use(authMiddleware)
 
 const uploadRateLimiter = createRateLimiter(UPLOAD_LIMIT)
 const lightRateLimiter = createRateLimiter(LIGHT_LIMIT)
+
+// Task 4.1: multipart uploads are buffered in memory, hard-capped at 10 MB.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 10 * 1024 * 1024, files: 1 },
+})
+
+// Fail fast (before buffering the file) once the global daily LLM budget is
+// exhausted. The ingestion queue charges the real embedding cost later.
+const globalBudgetGate = async (
+  _req: Request,
+  res: Response,
+  next: NextFunction
+): Promise<void> => {
+  try {
+    if (!(await consumeGlobalBudget(1))) {
+      res.status(503).json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+      return
+    }
+    next()
+  } catch (error: unknown) {
+    next(error)
+  }
+}
 
 /**
  * @swagger
@@ -54,6 +81,62 @@ const lightRateLimiter = createRateLimiter(LIGHT_LIMIT)
  *         $ref: '#/components/responses/Unauthorized'
  */
 router.post("/ingest", uploadRateLimiter, controller.ingest)
+
+/**
+ * @swagger
+ * /documents/upload:
+ *   post:
+ *     summary: Upload a file (multipart) and queue it for ingestion
+ *     description: |
+ *       Accepts a PDF, TXT, MD or CSV file (max 10 MB) as multipart/form-data
+ *       under the `file` field. PDF text is extracted server-side (scanned PDFs
+ *       without an extractable text layer are rejected); files must contain
+ *       at most 500,000 characters of text. Returns 202 with a jobId —
+ *       poll GET /documents/jobs/{jobId} for progress.
+ *
+ *       **Rate limit**: 20 uploads per day per user.
+ *     tags: [Documents]
+ *     security:
+ *       - bearerAuth: []
+ *     requestBody:
+ *       required: true
+ *       content:
+ *         multipart/form-data:
+ *           schema:
+ *             type: object
+ *             required: [file]
+ *             properties:
+ *               file:
+ *                 type: string
+ *                 format: binary
+ *                 description: PDF, TXT, MD or CSV file (10 MB max)
+ *     responses:
+ *       202:
+ *         description: Document queued for background ingestion
+ *         content:
+ *           application/json:
+ *             schema:
+ *               type: object
+ *               properties:
+ *                 jobId:   { type: string }
+ *                 status:  { type: string, example: "queued" }
+ *                 message: { type: string }
+ *       400:
+ *         $ref: '#/components/responses/ValidationError'
+ *       401:
+ *         $ref: '#/components/responses/Unauthorized'
+ *       413:
+ *         description: File exceeds the 10 MB upload limit
+ *       503:
+ *         description: Global daily capacity reached
+ */
+router.post(
+  "/upload",
+  uploadRateLimiter,
+  globalBudgetGate,
+  upload.single("file"),
+  controller.upload
+)
 
 /**
  * @swagger
