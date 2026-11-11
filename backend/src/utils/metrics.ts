@@ -32,6 +32,12 @@ export const ragRequests = new Counter({
   registers: [register],
 })
 
+export const invalidCitations = new Counter({
+  name: "rag_invalid_citations_total",
+  help: "Citations removed from answers because [Source N] was outside the retrieved context",
+  registers: [register],
+})
+
 export const retrievalLatency = new Histogram({
   name: "retrieval_latency_seconds",
   help: "End-to-end retrieval pipeline latency in seconds",

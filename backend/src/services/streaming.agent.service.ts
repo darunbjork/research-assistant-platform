@@ -42,6 +42,7 @@ import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations } from "../utils/metrics"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const GEMINI_MODEL = "gemini-3.6-flash"
@@ -466,8 +467,9 @@ ${toolDescriptions}
 - DONE: When you have enough high-quality information.
 
 HISTORY (${state.iterationCount}/${MAX_ITERATIONS} steps):
-${historyText}
+${wrapInContext(historyText)}
 ${evalFeedback}
+${CONTEXT_DATA_RULE}
 
 RULES:
 1. If evaluation score >= 70% and query is fully addressed: DONE.
@@ -504,7 +506,8 @@ Respond ONLY with valid JSON:
     const prompt = `Draft a concise answer using ONLY the evidence below.
 QUERY: ${state.userQuery}
 EVIDENCE:
-${evidence}
+${wrapInContext(evidence)}
+${CONTEXT_DATA_RULE}
 Draft (2-4 sentences):`
 
     const requestBody: GeminiRequest = {
@@ -544,7 +547,8 @@ Draft (2-4 sentences):`
     const prompt = `Answer using ONLY the evidence below.
 QUESTION: ${state.userQuery}
 EVIDENCE:
-${evidence}
+${wrapInContext(evidence)}
+${CONTEXT_DATA_RULE}
 RULES:
 1. Only use information from the evidence.
 2. If insufficient: say "Based on the available documents, I could not find a complete answer."

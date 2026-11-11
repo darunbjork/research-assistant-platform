@@ -17,6 +17,7 @@ import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations, activeAgentSessions } from "../utils/metrics"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
@@ -356,7 +357,8 @@ Use ONLY information from the evidence. If insufficient, say so.
 QUERY: ${state.userQuery}
 
 EVIDENCE:
-${evidence}
+${wrapInContext(evidence)}
+${CONTEXT_DATA_RULE}
 
 Provide a brief, direct draft answer (2-4 sentences maximum):`
 
@@ -425,8 +427,9 @@ ${toolDescriptions}
 - DONE: Use when you have enough high-quality information to answer completely.
 
 HISTORY (${state.iterationCount}/${MAX_ITERATIONS} steps used):
-${historyText}
+${wrapInContext(historyText)}
 ${evalFeedback}
+${CONTEXT_DATA_RULE}
 
 DECISION RULES:
 1. If evaluation score >= 70% and answer covers the full query: use DONE.
@@ -482,7 +485,8 @@ Respond ONLY with valid JSON (no markdown):
 QUESTION: ${state.userQuery}
 
 EVIDENCE:
-${evidence}
+${wrapInContext(evidence)}
+${CONTEXT_DATA_RULE}
 
 RULES:
 1. ONLY use information from the evidence above.

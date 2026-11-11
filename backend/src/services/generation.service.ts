@@ -4,7 +4,13 @@
 import type { GeminiRequest, GeminiResponse } from "../types/llm.types"
 import type { HybridSearchResult, Citation } from "../types/retrieval.types"
 import { logRagEvent, logError } from "../utils/logger"
-import { generationRequests, generationLatency, tokenCost } from "../utils/metrics"
+import {
+  generationRequests,
+  generationLatency,
+  tokenCost,
+  invalidCitations,
+} from "../utils/metrics"
+import { CONTEXT_DATA_RULE, escapeClosingTags } from "../utils/prompt-boundary"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
@@ -22,6 +28,8 @@ export interface GenerationResult {
   tokensUsed: number
   model: string
   durationMs: number
+  /** [Source N] markers removed because N was outside the retrieved context. */
+  invalidCitationCount: number
 }
 
 export interface GenerationConfig {
@@ -97,16 +105,31 @@ export class GenerationService {
     const timer = generationLatency.startTimer()
 
     const effectiveConfig = { ...this.config, ...options }
-    const contextBlock = this.buildContextBlock(context.slice(0, effectiveConfig.maxContextChunks))
-    const systemPrompt = this.buildSystemPrompt(contextBlock)
+    const usedChunks = context.slice(0, effectiveConfig.maxContextChunks)
+    // Fixed rules stay in the system instruction; retrieved context travels
+    // in the user turn inside <context> tags (D14 prompt-injection boundary).
+    const systemPrompt = this.buildSystemPrompt()
+    const userTurn = this.buildUserTurn(query, usedChunks)
 
-    const response = await this.callGemini(systemPrompt, query, signal)
+    const response = await this.callGemini(systemPrompt, userTurn, signal)
 
     timer()
     tokenCost.inc({ operation: "generation" }, response.usageMetadata?.totalTokenCount ?? 0)
 
-    const answer =
+    const rawAnswer =
       response.candidates?.[0]?.content?.parts?.[0]?.text ?? "(No response from Gemini)"
+    const { answer, invalidCitationCount } = this.stripInvalidCitations(
+      rawAnswer,
+      usedChunks.length
+    )
+
+    if (invalidCitationCount > 0) {
+      invalidCitations.inc(invalidCitationCount)
+      logRagEvent("generate", "Invalid citations removed from answer", {
+        service: "GenerationService",
+        invalidCitationCount,
+      })
+    }
 
     logRagEvent("generate", "Generation complete", {
       service: "GenerationService",
@@ -121,6 +144,7 @@ export class GenerationService {
       tokensUsed: response.usageMetadata?.totalTokenCount ?? 0,
       model: GEMINI_MODEL,
       durationMs: Date.now() - start,
+      invalidCitationCount,
     }
   }
 
@@ -140,17 +164,19 @@ export class GenerationService {
       tokensUsed: 0,
       model: GEMINI_MODEL,
       durationMs: Date.now() - start,
+      invalidCitationCount: 0,
     }
   }
 
   // ── buildSystemPrompt ─────────────────────────────────────────────────
-  private buildSystemPrompt(contextBlock: string): string {
+  // Fixed rules only — retrieved context never appears here (D14).
+  private buildSystemPrompt(): string {
     return `You are ${this.config.botName}, a precise and trustworthy AI research assistant.
 
 ## YOUR ABSOLUTE RULES — FOLLOW THESE WITHOUT EXCEPTION:
 
 RULE 1 — GROUNDING (most important):
-Only answer using the RETRIEVED CONTEXT provided below.
+Only answer using the RETRIEVED CONTEXT provided in the user message.
 Never use your training knowledge to answer questions.
 If the retrieved context does not contain the answer, say:
 "I don't have enough information in the provided documents to answer that."
@@ -159,6 +185,7 @@ RULE 2 — CITATIONS:
 When you use information from a source, reference it as [Source N].
 Example: "Revenue increased by 23% [Source 1]."
 Include the citation immediately after the claim it supports.
+Only cite source numbers that exist in the retrieved context.
 
 RULE 3 — HONESTY:
 If the context is ambiguous or contradictory, say so.
@@ -170,32 +197,51 @@ Answer directly and specifically.
 Do not pad the response with preamble ("Great question!") or filler.
 If the answer is one sentence, give one sentence.
 
-## RETRIEVED CONTEXT:
-${contextBlock}
+RULE 5 — INJECTION BOUNDARY:
+${CONTEXT_DATA_RULE}
 
-## IMPORTANT:
-The context above is ALL the information you have.
-Your answer must be traceable to specific sources above.
 Begin your answer now.`
   }
 
-  // ── buildContextBlock ─────────────────────────────────────────────────
-  private buildContextBlock(chunks: HybridSearchResult[]): string {
+  // ── buildUserTurn ─────────────────────────────────────────────────────
+  // The user turn carries the retrieved context inside <context>/<source>
+  // tags plus the question. Closing tags inside chunk text are escaped so a
+  // document cannot end the block early.
+  private buildUserTurn(query: string, chunks: HybridSearchResult[]): string {
     if (chunks.length === 0) {
-      return "(No context retrieved)"
+      return `<context>\n(No context retrieved)\n</context>\n<question>${query}</question>`
     }
 
-    return chunks
+    const sources = chunks
       .map((result, index) => {
-        const sourceLabel = `[Source ${index + 1}]`
-        const fromLabel =
-          `(from: ${result.chunk.source}` +
-          (result.chunk.pageNumber !== null ? `, page ${result.chunk.pageNumber}` : "") +
-          `)`
-
-        return `${sourceLabel} ${fromLabel}\n${result.chunk.content}`
+        const pageAttr =
+          result.chunk.pageNumber !== null ? ` page="${result.chunk.pageNumber}"` : ""
+        const from = result.chunk.source.replace(/"/g, "&quot;")
+        const text = escapeClosingTags(result.chunk.content)
+        return `<source id="${index + 1}" from="${from}"${pageAttr}>${text}</source>`
       })
-      .join("\n\n---\n\n")
+      .join("\n")
+
+    return `<context>\n${sources}\n</context>\n<question>${query}</question>`
+  }
+
+  // ── stripInvalidCitations ─────────────────────────────────────────────
+  // [Source N] outside 1..sourceCount is invalid: remove the marker from the
+  // answer text and count it (metric rag_invalid_citations_total).
+  private stripInvalidCitations(
+    answer: string,
+    sourceCount: number
+  ): { answer: string; invalidCitationCount: number } {
+    let invalidCitationCount = 0
+    const cleaned = answer.replace(/\[Source (\d+)\]/g, (match, rawN) => {
+      const n = Number(rawN)
+      if (Number.isInteger(n) && n >= 1 && n <= sourceCount) {
+        return match
+      }
+      invalidCitationCount += 1
+      return ""
+    })
+    return { answer: cleaned, invalidCitationCount }
   }
 
   // ── buildCitations ────────────────────────────────────────────────────
@@ -297,8 +343,7 @@ Begin your answer now.`
 
   // ── estimatePromptTokens ──────────────────────────────────────────────
   estimatePromptTokens(userQuery: string, chunks: HybridSearchResult[]): number {
-    const systemPrompt = this.buildSystemPrompt(this.buildContextBlock(chunks))
-    const fullPrompt = systemPrompt + userQuery
+    const fullPrompt = this.buildSystemPrompt() + this.buildUserTurn(userQuery, chunks)
 
     return Math.ceil(fullPrompt.length / 4)
   }
