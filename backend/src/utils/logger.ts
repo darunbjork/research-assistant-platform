@@ -12,6 +12,7 @@
 
 import winston from "winston"
 import DailyRotateFile from "winston-daily-rotate-file"
+import { env } from "../config/env"
 
 // ── Typed Log Metadata ────────────────────────────────────────────────────
 // Every structured log entry in this project uses this shape.
@@ -57,12 +58,12 @@ const prodFormat = combine(timestamp(), json())
 // We always log to console. In production, also write to rotating files.
 const transports: winston.transport[] = [
   new winston.transports.Console({
-    format: process.env.NODE_ENV === "production" ? prodFormat : devFormat,
+    format: env.NODE_ENV === "production" ? prodFormat : devFormat,
   }),
 ]
 
 // Production file logging — rotates daily, keeps 14 days of errors, 7 days combined
-if (process.env.NODE_ENV === "production") {
+if (env.NODE_ENV === "production") {
   transports.push(
     // Error-only file — for alerting systems that watch for errors
     new DailyRotateFile({
@@ -88,7 +89,7 @@ if (process.env.NODE_ENV === "production") {
 export const logger = winston.createLogger({
   // LOG_LEVEL from .env controls verbosity.
   // "debug" in development, "info" in production.
-  level: process.env.LOG_LEVEL ?? "info",
+  level: env.LOG_LEVEL,
   transports,
 })
 

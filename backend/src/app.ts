@@ -1,5 +1,6 @@
 /* eslint-disable no-console */
 import "./preload-env"
+import { env } from "./config/env"
 import "./telemetry/tracer"
 import express, { type Request, type Response } from "express"
 import cors from "cors"
@@ -26,7 +27,7 @@ import rateLimitRouter from "./routes/rate-limit.routes"
 dotenv.config()
 
 const app = express()
-const PORT = process.env.PORT ?? "3001"
+const PORT = env.PORT
 
 // Caddy is the single reverse proxy in front (task 5.3), so trust exactly
 // one hop: req.ip then reflects the real client address instead of the
@@ -36,7 +37,7 @@ app.set("trust proxy", 1)
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(
   helmet({
-    contentSecurityPolicy: process.env.NODE_ENV === "production" ? undefined : false,
+    contentSecurityPolicy: env.NODE_ENV === "production" ? undefined : false,
   })
 )
 app.use(
@@ -49,7 +50,7 @@ app.use(express.json())
 app.use(requestLoggerMiddleware)
 
 // ── API Documentation ─────────────────────────────────────────────────────
-if (process.env.NODE_ENV !== "production") {
+if (env.NODE_ENV !== "production") {
   app.use(
     "/api/docs",
     swaggerUi.serve,
@@ -113,8 +114,8 @@ createWebSocketServer(httpServer) // attach WebSocket to same HTTP server
 httpServer.listen(PORT, () => {
   logStartup("Server started", {
     service: "App",
-    port: Number(PORT),
-    nodeEnv: process.env.NODE_ENV ?? "development",
+    port: PORT,
+    nodeEnv: env.NODE_ENV,
   })
   console.log(`✅ HTTP  server → http://localhost:${PORT}`)
   console.log(`🔌 WebSocket   → ws://localhost:${PORT}/ws/agent`)

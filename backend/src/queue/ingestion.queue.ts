@@ -10,6 +10,7 @@ import { logRagEvent, logError } from "../utils/logger"
 import { consumeGlobalBudget } from "../utils/global-budget"
 import { indexedDocuments } from "../utils/metrics"
 import type { ChunkToStore } from "../repositories/chunk.repository"
+import { env } from "../config/env"
 
 export interface IngestionJobData {
   name: string
@@ -49,7 +50,7 @@ function getPrisma(): PrismaClient {
 export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJobData> {
   redisInstance = redisClient
 
-  const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379"
+  const redisUrl = env.REDIS_URL
 
   const queue = new Bull<IngestionJobData>(QUEUE_NAME, {
     redis: redisUrl,
@@ -116,7 +117,7 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
   const prisma = getPrisma()
   const chunkingService = new ChunkingService()
   const embeddingService = new EmbeddingService(
-    process.env.GEMINI_API_KEY ?? "",
+    env.GEMINI_API_KEY,
     redisInstance! // Redis instance is set when queue is created
   )
   const documentRepository = new DocumentRepository(prisma)

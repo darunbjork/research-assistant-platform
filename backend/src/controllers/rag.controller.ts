@@ -14,12 +14,13 @@ import { RerankerService } from "../services/reranker.service"
 import { consumeGlobalBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
+import { env } from "../config/env"
 
 // ── Service Initialisation ────────────────────────────────────────────────
-const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
+const embeddingService = new EmbeddingService(env.GEMINI_API_KEY, redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
-const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")
-const rerankerService = new RerankerService(process.env.GEMINI_API_KEY ?? "")
+const generationService = new GenerationService(env.GEMINI_API_KEY)
+const rerankerService = new RerankerService(env.GEMINI_API_KEY)
 const ragService = new RagService(hybridSearchService, generationService)
 
 export class RagController {

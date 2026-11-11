@@ -6,8 +6,8 @@
 import { redis } from "./redis"
 import { logError } from "./logger"
 import { globalBudgetUsed } from "./metrics"
+import { env } from "../config/env"
 
-const DEFAULT_MAX = 2000
 // Keys live for 48h so yesterday's counter can still be inspected after
 // the UTC date rolls over.
 const KEY_TTL_SECONDS = 48 * 60 * 60
@@ -18,17 +18,12 @@ export function globalBudgetKey(now: Date = new Date()): string {
 }
 
 /**
- * Daily cap on LLM-calling operations across ALL users.
- *
- * Read from `GLOBAL_DAILY_LLM_CALLS_MAX`. Task 3.1 moves env validation into
- * a Zod schema; until then this reads process.env directly (see
- * FOUND_DURING_FIX.md F3). Missing/invalid values fall back to 2000.
+ * Daily cap on LLM-calling operations across ALL users, validated once by
+ * the Zod env schema (GLOBAL_DAILY_LLM_CALLS_MAX, default 2000 — see
+ * src/config/env.ts).
  */
 export function getGlobalDailyMax(): number {
-  const raw = process.env.GLOBAL_DAILY_LLM_CALLS_MAX
-  if (raw === undefined || raw.trim() === "") return DEFAULT_MAX
-  const parsed = Number.parseInt(raw, 10)
-  return Number.isFinite(parsed) && parsed > 0 ? parsed : DEFAULT_MAX
+  return env.GLOBAL_DAILY_LLM_CALLS_MAX
 }
 
 /**

@@ -30,12 +30,6 @@ describe("search integration (real Postgres + Redis)", () => {
   let userB: { id: string; email: string }
   let docA: { id: string }
 
-  beforeAll(() => {
-    if (!process.env.DATABASE_URL) {
-      throw new Error("DATABASE_URL must be set for integration tests")
-    }
-  })
-
   beforeEach(async () => {
     await expect(checkRedisHealth()).resolves.toBe("ok")
 

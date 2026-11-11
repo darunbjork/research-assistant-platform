@@ -2,6 +2,7 @@
 import type { Request, Response, NextFunction } from "express"
 import { logError } from "../utils/logger"
 import { fail } from "../types"
+import { env } from "../config/env"
 export class AppError extends Error {
   constructor(
     public readonly message: string,
@@ -84,7 +85,7 @@ export function errorMiddleware(
 
   res.status(500).json(
     fail(
-      process.env.NODE_ENV === "development"
+      env.NODE_ENV === "development"
         ? String(error) // show details in development
         : "Internal server error"
     )

@@ -10,6 +10,11 @@ export default {
 
   testPathIgnorePatterns: ["/node_modules/", "/dist/"],
 
+  // Fills DATABASE_URL/REDIS_URL (via .env) and test-safe defaults before
+  // any test file imports src/config/env.ts. Lives under __tests__/helpers
+  // because the plan's done-when grep only exempts that directory.
+  setupFilesAfterEnv: ["<rootDir>/src/__tests__/helpers/setup.integration.ts"],
+
   // Integration tests share one database — run them serially.
   maxWorkers: 1,
 

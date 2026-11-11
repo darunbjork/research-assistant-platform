@@ -42,10 +42,11 @@ import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations } from "../utils/metrics"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-3.6-flash"
+const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
 

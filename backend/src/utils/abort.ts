@@ -1,10 +1,12 @@
 // backend/src/utils/abort.ts
 // Cancellation + timeouts for outbound Gemini calls (task 2.9, D15).
 
+import { env } from "../config/env"
+
 // Per-call ceiling: a single Gemini request may never hang longer than this.
 // The value is a safety net for the whole call, not the agent run as a
 // whole — a run makes many calls, each individually bounded.
-export const GEMINI_TIMEOUT_MS = 30_000
+export const GEMINI_TIMEOUT_MS = env.GEMINI_TIMEOUT_MS
 
 /**
  * Combine an optional caller signal with a per-call timeout.

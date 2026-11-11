@@ -10,9 +10,10 @@
 
 import Redis from "ioredis"
 import { logStartup, logError } from "./logger"
+import { env } from "../config/env"
 
 // ── Create the Redis Client ───────────────────────────────────────────────
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379"
+const REDIS_URL = env.REDIS_URL
 
 export const redis = new Redis(REDIS_URL, {
   // Retry strategy: reconnect forever with capped backoff.

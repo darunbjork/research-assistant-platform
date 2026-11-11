@@ -1,30 +1,22 @@
 import jwt from "jsonwebtoken"
 import type { JwtPayload, AuthTokens } from "../types"
 import { UnauthorizedError } from "../middleware/error.middleware"
+import { env } from "../config/env"
 
 // ── Token Configuration ───────────────────────────────────────────────────
 // These durations control the security/convenience tradeoff.
 // In production: access=15m, refresh=7d
 // In development: access=1h (less annoying to work with)
-const ACCESS_TOKEN_EXPIRY = process.env.NODE_ENV === "production" ? "15m" : "1h"
+const ACCESS_TOKEN_EXPIRY = env.NODE_ENV === "production" ? "15m" : "1h"
 const REFRESH_TOKEN_EXPIRY = "7d"
 
 export function signTokens(payload: Omit<JwtPayload, "iat" | "exp">): AuthTokens {
-  const accessSecret = process.env.JWT_SECRET
-  const refreshSecret = process.env.JWT_REFRESH_SECRET
-
-  if (!accessSecret || !refreshSecret) {
-    throw new Error(
-      "JWT_SECRET and JWT_REFRESH_SECRET must be set in .env. " +
-        "Minimum 32 characters each. They must be different strings."
-    )
-  }
-
-  const accessToken = jwt.sign(payload, accessSecret, {
+  // env.ts guarantees both secrets exist (required, min 32 chars, different).
+  const accessToken = jwt.sign(payload, env.JWT_SECRET, {
     expiresIn: ACCESS_TOKEN_EXPIRY,
   })
 
-  const refreshToken = jwt.sign(payload, refreshSecret, {
+  const refreshToken = jwt.sign(payload, env.JWT_REFRESH_SECRET, {
     expiresIn: REFRESH_TOKEN_EXPIRY,
   })
 
@@ -32,14 +24,8 @@ export function signTokens(payload: Omit<JwtPayload, "iat" | "exp">): AuthTokens
 }
 
 export function verifyAccessToken(token: string): JwtPayload {
-  const secret = process.env.JWT_SECRET
-
-  if (!secret) {
-    throw new Error("JWT_SECRET not configured")
-  }
-
   try {
-    return jwt.verify(token, secret) as JwtPayload
+    return jwt.verify(token, env.JWT_SECRET) as JwtPayload
   } catch (error: unknown) {
     const err = error as jwt.JsonWebTokenError
     if (err.name === "TokenExpiredError") {
@@ -53,14 +39,8 @@ export function verifyAccessToken(token: string): JwtPayload {
 }
 
 export function verifyRefreshToken(token: string): JwtPayload {
-  const secret = process.env.JWT_REFRESH_SECRET
-
-  if (!secret) {
-    throw new Error("JWT_REFRESH_SECRET not configured")
-  }
-
   try {
-    return jwt.verify(token, secret) as JwtPayload
+    return jwt.verify(token, env.JWT_REFRESH_SECRET) as JwtPayload
   } catch (error: unknown) {
     const err = error as jwt.JsonWebTokenError
     if (err.name === "TokenExpiredError") {

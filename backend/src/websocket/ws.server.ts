@@ -2,6 +2,7 @@ import { WebSocketServer, type WebSocket } from "ws"
 import type { Server } from "http"
 import { AgentWsHandler } from "./agent.ws.handler"
 import { logStartup, logRagEvent } from "../utils/logger"
+import { env } from "../config/env"
 
 // Heartbeat configuration
 // Sends a ping every 30 seconds to detect dead connections.
@@ -12,17 +13,13 @@ const HEARTBEAT_INTERVAL_MS = 30_000
 // with multi-megabyte frames and exhausting memory.
 const MAX_PAYLOAD_BYTES = 64 * 1024
 
-// Origins the browser client may connect from. CORS_ORIGINS (env schema,
-// task 3.1) overrides; until then the defaults mirror app.ts's cors() list.
+// Origins the browser client may connect from: CORS_ORIGINS from the env
+// schema (task 3.1); when unset, the defaults mirror app.ts's cors() list.
 const DEFAULT_ORIGINS = ["http://localhost:5174", "http://localhost:3001", "http://localhost:5173"]
 
 function allowedOrigins(): string[] {
-  const raw = process.env.CORS_ORIGINS
-  if (raw === undefined || raw.trim() === "") return DEFAULT_ORIGINS
-  return raw
-    .split(",")
-    .map(origin => origin.trim())
-    .filter(origin => origin.length > 0)
+  if (env.CORS_ORIGINS.length > 0) return env.CORS_ORIGINS
+  return DEFAULT_ORIGINS
 }
 
 // ── Extended WebSocket type with heartbeat tracking ───────────────────────
@@ -55,7 +52,7 @@ export function createWebSocketServer(httpServer: Server): WebSocketServer {
     // upgrade; anything not on the allowlist is closed with 1008
     // (policy violation). Skipped under NODE_ENV=test so unit tests can
     // connect without configuring origins.
-    if (process.env.NODE_ENV !== "test") {
+    if (env.NODE_ENV !== "test") {
       const origin = req.headers.origin
       if (origin === undefined || !allowedOrigins().includes(origin)) {
         logRagEvent("agent_step", "WebSocket connection rejected: origin not allowed", {

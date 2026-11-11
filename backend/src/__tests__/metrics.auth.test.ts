@@ -4,10 +4,17 @@
 // `Authorization: Bearer <METRICS_TOKEN>` and answer 404 otherwise (404, not
 // 401, so the endpoint is not advertised). Without the token the routes stay
 // open — Caddy (task 5.3) is the outer layer that stops routing them.
+//
+// env is parsed once at import (task 3.1), so this file mocks config/env
+// with a mutable copy to flip METRICS_TOKEN between requests.
+
+jest.mock("../config/env", () => {
+  const actual = jest.requireActual("../config/env") as typeof import("../config/env")
+  return { ...actual, env: { ...actual.env } }
+})
 
 const metricsRoutes = require("../routes/metrics.routes").default as import("express").Router
-
-const ORIGINAL_ENV_TOKEN = process.env.METRICS_TOKEN
+const { env } = require("../config/env") as typeof import("../config/env")
 
 describe("/metrics token guard (D19)", () => {
   let server: import("http").Server
@@ -31,15 +38,10 @@ describe("/metrics token guard (D19)", () => {
   afterAll(async () => {
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
-    if (ORIGINAL_ENV_TOKEN === undefined) {
-      delete process.env.METRICS_TOKEN
-    } else {
-      process.env.METRICS_TOKEN = ORIGINAL_ENV_TOKEN
-    }
   })
 
   beforeEach(() => {
-    delete process.env.METRICS_TOKEN
+    env.METRICS_TOKEN = undefined
   })
 
   const get = async (path: string, authorization?: string): Promise<Response> =>
@@ -56,7 +58,7 @@ describe("/metrics token guard (D19)", () => {
   })
 
   it("accepts the correct Bearer token when METRICS_TOKEN is set", async () => {
-    process.env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
+    env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
 
     const res = await get("/metrics", "Bearer test-metrics-token-0123456789abcdef")
     expect(res.status).toBe(200)
@@ -66,7 +68,7 @@ describe("/metrics token guard (D19)", () => {
   })
 
   it("returns 404 (not 401) for a missing token", async () => {
-    process.env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
+    env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
 
     const res = await get("/metrics")
     expect(res.status).toBe(404)
@@ -76,14 +78,14 @@ describe("/metrics token guard (D19)", () => {
   })
 
   it("returns 404 for a wrong token", async () => {
-    process.env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
+    env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
 
     const res = await get("/metrics", "Bearer wrong-token")
     expect(res.status).toBe(404)
   })
 
   it("returns 404 for a non-Bearer Authorization scheme", async () => {
-    process.env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
+    env.METRICS_TOKEN = "test-metrics-token-0123456789abcdef"
 
     const res = await get("/metrics", "Basic dXNlcjpwYXNz")
     expect(res.status).toBe(404)

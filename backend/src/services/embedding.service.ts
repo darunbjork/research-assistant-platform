@@ -15,9 +15,10 @@ import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+const GEMINI_EMBEDDING_MODEL = env.GEMINI_EMBEDDING_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 // History: was 3072 (the model default). We request 768 explicitly because a
 // pgvector `vector` column cannot be indexed above 2,000 dimensions; see

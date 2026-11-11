@@ -55,14 +55,20 @@ const mockRedis = {
 
 jest.mock("../utils/redis", () => ({ redis: mockRedis, default: mockRedis }))
 
+// env is parsed once at import (task 3.1) — mock it with a mutable copy so
+// the ALLOW_REGISTRATION switch can be flipped per request in these tests.
+jest.mock("../config/env", () => {
+  const actual = jest.requireActual("../config/env") as typeof import("../config/env")
+  return { ...actual, env: { ...actual.env } }
+})
+
 // ── Modules under test (required AFTER the mocks are defined) ─────────────
 const authRoutes = require("../routes/auth.routes").default as import("express").Router
 const { errorMiddleware } =
   require("../middleware/error.middleware") as typeof import("../middleware/error.middleware")
 const { LOGIN_LIMIT, REGISTER_LIMIT } =
   require("../middleware/rate-limit.middleware") as typeof import("../middleware/rate-limit.middleware")
-
-const ORIGINAL_ENV_REGISTRATION = process.env.ALLOW_REGISTRATION
+const { env } = require("../config/env") as typeof import("../config/env")
 
 describe("auth IP rate limits and ALLOW_REGISTRATION (2.5)", () => {
   let server: import("http").Server
@@ -91,18 +97,13 @@ describe("auth IP rate limits and ALLOW_REGISTRATION (2.5)", () => {
   afterAll(async () => {
     server.closeAllConnections()
     await new Promise<void>(resolve => server.close(() => resolve()))
-    if (ORIGINAL_ENV_REGISTRATION === undefined) {
-      delete process.env.ALLOW_REGISTRATION
-    } else {
-      process.env.ALLOW_REGISTRATION = ORIGINAL_ENV_REGISTRATION
-    }
   })
 
   beforeEach(() => {
     mockRedisStore.clear()
     mockTtlStore.clear()
     jest.clearAllMocks()
-    delete process.env.ALLOW_REGISTRATION
+    env.ALLOW_REGISTRATION = true
   })
 
   const post = async (path: string, body: unknown, forwardedFor: string): Promise<Response> =>
@@ -118,7 +119,7 @@ describe("auth IP rate limits and ALLOW_REGISTRATION (2.5)", () => {
 
   describe("ALLOW_REGISTRATION switch", () => {
     it('returns 403 { error: "Registration is closed" } when set to false', async () => {
-      process.env.ALLOW_REGISTRATION = "false"
+      env.ALLOW_REGISTRATION = false
 
       const res = await post("/auth/register", INVALID_BODY, "203.0.113.10")
       expect(res.status).toBe(403)
@@ -126,7 +127,7 @@ describe("auth IP rate limits and ALLOW_REGISTRATION (2.5)", () => {
     })
 
     it("returns 403 for any body when closed (gate runs before validation)", async () => {
-      process.env.ALLOW_REGISTRATION = "false"
+      env.ALLOW_REGISTRATION = false
 
       const res = await post(
         "/auth/register",

@@ -1,5 +1,7 @@
 /* eslint-disable no-console */
 
+import "../preload-env"
+
 import { ChunkingService } from "../services/chunking.service"
 
 const service = new ChunkingService()

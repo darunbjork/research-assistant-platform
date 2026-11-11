@@ -1,8 +1,7 @@
 /* eslint-disable no-console */
 
+import "../preload-env"
 import "../telemetry/tracer"
-import dotenv from "dotenv"
-dotenv.config()
 
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"

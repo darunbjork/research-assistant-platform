@@ -72,6 +72,13 @@ const mockRedis = {
 
 jest.mock("../utils/redis", () => ({ redis: mockRedis, default: mockRedis }))
 
+// env is parsed once at import (task 3.1) — mock it with a mutable copy so
+// the global daily budget cap can be flipped per test.
+jest.mock("../config/env", () => {
+  const actual = jest.requireActual("../config/env") as typeof import("../config/env")
+  return { ...actual, env: { ...actual.env } }
+})
+
 // ── HTTP: fake auth + fake agent so only the limiter is under test ────────
 jest.mock("../middleware/auth.middleware", () => ({
   authMiddleware: (req: { user?: unknown }, _res: unknown, next: () => void): void => {
@@ -120,6 +127,7 @@ const { AGENT_LIMIT } =
 const agentRoutes = require("../routes/agent.routes").default as import("express").Router
 const { AgentWsHandler } =
   require("../websocket/agent.ws.handler") as typeof import("../websocket/agent.ws.handler")
+const { env } = require("../config/env") as typeof import("../config/env")
 
 // ── Helpers ───────────────────────────────────────────────────────────────
 
@@ -268,13 +276,13 @@ describe("AGENT_LIMIT enforcement (D6)", () => {
 
   describe("global daily capacity (2.4)", () => {
     afterEach(() => {
-      delete process.env.GLOBAL_DAILY_LLM_CALLS_MAX
+      env.GLOBAL_DAILY_LLM_CALLS_MAX = 2000
     })
 
     it("rejects a start with CAPACITY_REACHED when the global budget is exhausted", async () => {
       // A single unit of headroom: the first start costs 5 ⇒ over the max,
       // while the per-user AGENT_LIMIT (30/h) still has room.
-      process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "1"
+      env.GLOBAL_DAILY_LLM_CALLS_MAX = 1
 
       const fakeWs = new FakeWebSocket()
       new AgentWsHandler(fakeWs as unknown as WebSocket)

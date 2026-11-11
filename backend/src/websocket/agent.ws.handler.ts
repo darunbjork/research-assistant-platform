@@ -11,6 +11,7 @@ import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middlewa
 import { consumeGlobalBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
+import { env } from "../config/env"
 
 // ── Hardening constants (task 2.8) ────────────────────────────────────────
 // No successful auth within this window ⇒ close the connection.
@@ -22,9 +23,9 @@ const CLOSE_TOKEN_EXPIRED = 4001
 // ── Service Instances ─────────────────────────────────────────────────────
 // Shared across all WebSocket connections — created once at module load.
 // This is safe because the services are stateless (no per-connection state).
-const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
+const embeddingService = new EmbeddingService(env.GEMINI_API_KEY, redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
-const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")
+const generationService = new GenerationService(env.GEMINI_API_KEY)
 
 // ── Handler Class ─────────────────────────────────────────────────────────
 
@@ -243,7 +244,7 @@ export class AgentWsHandler {
     try {
       // Create the streaming agent with the send callback
       const streamingAgent = new StreamingAgentService(
-        process.env.GEMINI_API_KEY ?? "",
+        env.GEMINI_API_KEY,
         hybridSearchService,
         generationService
       )

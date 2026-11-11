@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
 
-import dotenv from "dotenv"
-dotenv.config()
+import "../preload-env"
 
 import { PrismaClient } from "@prisma/client"
 import { EmbeddingService } from "../services/embedding.service"

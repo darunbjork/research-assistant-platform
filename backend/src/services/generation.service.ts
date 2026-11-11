@@ -15,9 +15,10 @@ import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-3.6-flash"
+const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 // ── Result Types ──────────────────────────────────────────────────────────

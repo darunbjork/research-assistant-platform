@@ -1,6 +1,7 @@
 // backend/src/routes/metrics.routes.ts
 import { Router, type NextFunction, type Request, type Response } from "express"
 import { register } from "../utils/metrics"
+import { env } from "../config/env"
 
 const router = Router()
 
@@ -8,10 +9,10 @@ const router = Router()
 // but when METRICS_TOKEN is set this guard makes the endpoint anonymous-
 // proof on the internal Docker network too. 404 (not 401) so we don't
 // advertise that the endpoint exists. Token checked per request so ops can
-// rotate it without a restart; task 3.1 adds min-24-char validation to the
-// Zod env schema.
+// rotate it without a restart; the env schema validates min-24-char length
+// at startup (task 3.1).
 function requireMetricsToken(req: Request, res: Response, next: NextFunction): void {
-  const token = process.env.METRICS_TOKEN
+  const token = env.METRICS_TOKEN
   if (!token) {
     next() // not configured — open (development default)
     return

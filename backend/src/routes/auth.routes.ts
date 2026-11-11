@@ -8,16 +8,15 @@ import {
   LOGIN_LIMIT,
   REGISTER_LIMIT,
 } from "../middleware/rate-limit.middleware"
+import { env } from "../config/env"
 
 const router = Router()
 const controller = new AuthController()
 
-// ALLOW_REGISTRATION (default true): set to "false" to close signups with a
-// 403. Read per-request so ops can flip it without a restart; task 3.1 moves
-// env parsing into the Zod schema.
+// ALLOW_REGISTRATION (default true): false closes signups with a 403.
+// Parsed once by the Zod env schema (task 3.1).
 function requireRegistrationOpen(_req: Request, res: Response, next: NextFunction): void {
-  const raw = (process.env.ALLOW_REGISTRATION ?? "true").trim().toLowerCase()
-  if (raw === "false") {
+  if (!env.ALLOW_REGISTRATION) {
     res.status(403).json({ error: "Registration is closed" })
     return
   }

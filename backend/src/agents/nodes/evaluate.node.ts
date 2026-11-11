@@ -23,6 +23,7 @@ import type { GeminiRequest, GeminiResponse } from "../../types/llm.types"
 import { logRagEvent } from "../../utils/logger"
 import { ragTriadScores } from "../../utils/metrics"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../../utils/abort"
+import { env } from "../../config/env"
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
@@ -54,7 +55,7 @@ const QUALITY_THRESHOLD = 0.7
 const HEURISTIC_LOW_THRESHOLD = 0.3 // below this: definitely retry (no LLM needed)
 const HEURISTIC_HIGH_THRESHOLD = 0.85 // above this: definitely done (no LLM needed)
 
-const GEMINI_MODEL = "gemini-3.6-flash"
+const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 // ── Evaluator Class ───────────────────────────────────────────────────────

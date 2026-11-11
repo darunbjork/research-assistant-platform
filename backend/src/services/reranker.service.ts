@@ -36,9 +36,10 @@ import type { GeminiRequest, GeminiResponse } from "../types/llm.types"
 import { logRagEvent, logError } from "../utils/logger"
 import { retrievalLatency } from "../utils/metrics"
 import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-3.6-flash"
+const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 const DEFAULT_OPTIONS: RerankerOptions = {

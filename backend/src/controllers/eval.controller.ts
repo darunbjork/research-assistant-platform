@@ -12,8 +12,9 @@ import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { consumeGlobalBudget } from "../utils/global-budget"
 import type { EvalRequest, BatchEvalRequest } from "../types/eval.types"
+import { env } from "../config/env"
 
-const evaluatorService = new EvaluatorService(process.env.GEMINI_API_KEY ?? "")
+const evaluatorService = new EvaluatorService(env.GEMINI_API_KEY)
 
 export class EvalController {
   // ── POST /api/v1/eval/score ───────────────────────────────────────────

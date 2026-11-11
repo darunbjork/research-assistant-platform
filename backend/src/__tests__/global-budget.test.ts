@@ -54,6 +54,13 @@ const mockRedis = {
 
 jest.mock("../utils/redis", () => ({ redis: mockRedis, default: mockRedis }))
 
+// env is parsed once at import (task 3.1) — mock it with a mutable copy so
+// GLOBAL_DAILY_LLM_CALLS_MAX can be flipped per test.
+jest.mock("../config/env", () => {
+  const actual = jest.requireActual("../config/env") as typeof import("../config/env")
+  return { ...actual, env: { ...actual.env } }
+})
+
 // ── Eval service mocked so no Gemini call can happen ──────────────────────
 const mockEvaluate = jest.fn().mockResolvedValue({ overallScore: 0.9 })
 const mockEvaluateBatch = jest.fn().mockResolvedValue({ averageScore: 0.9 })
@@ -71,8 +78,7 @@ const { consumeGlobalBudget, getGlobalDailyMax, globalBudgetKey } =
 const { globalBudgetUsed } = require("../utils/metrics") as typeof import("../utils/metrics")
 const { EvalController } =
   require("../controllers/eval.controller") as typeof import("../controllers/eval.controller")
-
-const ORIGINAL_ENV_MAX = process.env.GLOBAL_DAILY_LLM_CALLS_MAX
+const { env } = require("../config/env") as typeof import("../config/env")
 
 describe("consumeGlobalBudget", () => {
   beforeEach(() => {
@@ -80,15 +86,7 @@ describe("consumeGlobalBudget", () => {
     mockTtlStore.clear()
     mockRedisDown = false
     jest.clearAllMocks()
-    delete process.env.GLOBAL_DAILY_LLM_CALLS_MAX
-  })
-
-  afterAll(() => {
-    if (ORIGINAL_ENV_MAX === undefined) {
-      delete process.env.GLOBAL_DAILY_LLM_CALLS_MAX
-    } else {
-      process.env.GLOBAL_DAILY_LLM_CALLS_MAX = ORIGINAL_ENV_MAX
-    }
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 2000
   })
 
   it("increments today's UTC budget key by the cost and allows when under the max", async () => {
@@ -102,7 +100,7 @@ describe("consumeGlobalBudget", () => {
   })
 
   it("returns false once the counter goes over the max", async () => {
-    process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "10"
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 10
 
     await expect(consumeGlobalBudget(10)).resolves.toBe(true) // exactly at the cap
     await expect(consumeGlobalBudget(1)).resolves.toBe(false) // 11 > 10
@@ -136,21 +134,17 @@ describe("consumeGlobalBudget", () => {
     expect(globalBudgetKey(date)).toBe("budget:llm:2026-03-06")
   })
 
-  it("reads the max from GLOBAL_DAILY_LLM_CALLS_MAX with a 2000 fallback", () => {
+  it("reads the max from the env schema (default 2000)", () => {
     expect(getGlobalDailyMax()).toBe(2000)
 
-    process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "500"
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 500
     expect(getGlobalDailyMax()).toBe(500)
-
-    process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "not-a-number"
-    expect(getGlobalDailyMax()).toBe(2000)
-
-    process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "-5"
-    expect(getGlobalDailyMax()).toBe(2000)
+    // Invalid values (non-numeric, negative) are rejected at startup by the
+    // schema instead of falling back here — see config.env.test.ts.
   })
 
   it("exposes consumed units on the rag_global_budget_used gauge", async () => {
-    process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "100"
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 100
     await consumeGlobalBudget(7)
 
     const metric = await globalBudgetUsed.get()
@@ -190,7 +184,7 @@ describe("HTTP wiring: 503 when the budget is exhausted", () => {
     mockRedisStore.clear()
     mockRedisDown = false
     jest.clearAllMocks()
-    delete process.env.GLOBAL_DAILY_LLM_CALLS_MAX
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 2000
   })
 
   const validBody = JSON.stringify({
@@ -219,7 +213,7 @@ describe("HTTP wiring: 503 when the budget is exhausted", () => {
   })
 
   it("returns 503 with the exact capacity message when the budget is over the max", async () => {
-    process.env.GLOBAL_DAILY_LLM_CALLS_MAX = "2"
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 2
 
     // First call: 3 units > 2 ⇒ refused.
     const res = await postScore()

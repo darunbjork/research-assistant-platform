@@ -25,15 +25,18 @@ jest.mock("../websocket/agent.ws.handler", () => ({
   },
 }))
 
+// env is parsed once at import (task 3.1) — mock it with a mutable copy so
+// NODE_ENV / CORS_ORIGINS can be flipped per connection in these tests.
+jest.mock("../config/env", () => {
+  const actual = jest.requireActual("../config/env") as typeof import("../config/env")
+  return { ...actual, env: { ...actual.env } }
+})
+
 // Required AFTER the mocks are defined (ts-jest hoists jest.mock above
 // consts, but the factory only runs when the module is first required).
 const { createWebSocketServer } =
   require("../websocket/ws.server") as typeof import("../websocket/ws.server")
-
-const ORIGINAL_ENV = {
-  NODE_ENV: process.env.NODE_ENV,
-  CORS_ORIGINS: process.env.CORS_ORIGINS,
-}
+const { env } = require("../config/env") as typeof import("../config/env")
 
 interface ConnectResult {
   closed: boolean
@@ -59,24 +62,14 @@ describe("WebSocket server hardening (2.8)", () => {
 
   afterAll(async () => {
     await new Promise<void>(resolve => httpServer.close(() => resolve()))
-    if (ORIGINAL_ENV.NODE_ENV === undefined) {
-      delete process.env.NODE_ENV
-    } else {
-      process.env.NODE_ENV = ORIGINAL_ENV.NODE_ENV
-    }
-    if (ORIGINAL_ENV.CORS_ORIGINS === undefined) {
-      delete process.env.CORS_ORIGINS
-    } else {
-      process.env.CORS_ORIGINS = ORIGINAL_ENV.CORS_ORIGINS
-    }
   })
 
   beforeEach(() => {
     mockHandlerConstruct.mockClear()
     // Origin checks are skipped under NODE_ENV=test; tests that exercise the
     // check switch it off explicitly.
-    process.env.NODE_ENV = "test"
-    delete process.env.CORS_ORIGINS
+    env.NODE_ENV = "test"
+    env.CORS_ORIGINS = []
   })
 
   // Resolves on the first server message (the gate tests: an accepted
@@ -135,7 +128,7 @@ describe("WebSocket server hardening (2.8)", () => {
 
   describe("origin check", () => {
     it("accepts an origin on the default allowlist and creates the handler", async () => {
-      process.env.NODE_ENV = "development"
+      env.NODE_ENV = "development"
 
       const result = await connect("http://localhost:5173")
 
@@ -145,7 +138,7 @@ describe("WebSocket server hardening (2.8)", () => {
     })
 
     it("closes a disallowed origin with 1008 before creating the handler", async () => {
-      process.env.NODE_ENV = "development"
+      env.NODE_ENV = "development"
 
       const result = await connect("http://evil.example.com")
 
@@ -156,7 +149,7 @@ describe("WebSocket server hardening (2.8)", () => {
     })
 
     it("closes a connection with no Origin header", async () => {
-      process.env.NODE_ENV = "development"
+      env.NODE_ENV = "development"
 
       const result = await connect(undefined)
 
@@ -166,8 +159,8 @@ describe("WebSocket server hardening (2.8)", () => {
     })
 
     it("honours CORS_ORIGINS as the allowlist", async () => {
-      process.env.NODE_ENV = "development"
-      process.env.CORS_ORIGINS = "https://research.example.com"
+      env.NODE_ENV = "development"
+      env.CORS_ORIGINS = ["https://research.example.com"]
 
       const allowed = await connect("https://research.example.com")
       expect(allowed.closed).toBe(false)

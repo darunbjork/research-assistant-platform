@@ -14,16 +14,13 @@ import { consumeGlobalBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import { isAbortError } from "../utils/abort"
 import redis from "../utils/redis"
+import { env } from "../config/env"
 
 // ── Service Initialisation ────────────────────────────────────────────────
-const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
+const embeddingService = new EmbeddingService(env.GEMINI_API_KEY, redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
-const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")
-const agentService = new AgentService(
-  process.env.GEMINI_API_KEY ?? "",
-  hybridSearchService,
-  generationService
-)
+const generationService = new GenerationService(env.GEMINI_API_KEY)
+const agentService = new AgentService(env.GEMINI_API_KEY, hybridSearchService, generationService)
 
 export class AgentController {
   // ── POST /api/v1/agent/chat ───────────────────────────────────────────
