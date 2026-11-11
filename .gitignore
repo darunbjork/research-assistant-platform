@@ -1,1 +1,5 @@
 .DS_Store
+
+# Production secrets — never commit (template: .env.production.example)
+.env.production
+
