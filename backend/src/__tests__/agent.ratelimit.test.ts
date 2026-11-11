@@ -112,7 +112,7 @@ const mockStreamingRun = jest.fn().mockResolvedValue(undefined)
 
 jest.mock("../services/streaming.agent.service", () => ({
   StreamingAgentService: class {
-    run = (...args: unknown[]): Promise<unknown> => mockStreamingRun(...args)
+    run = (...args: unknown[]): Promise<unknown> => mockStreamingRun(...args) as Promise<unknown>
   },
 }))
 
@@ -124,7 +124,8 @@ process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "test-key-not-a-real-
 
 const { AGENT_LIMIT } =
   require("../middleware/rate-limit.middleware") as typeof import("../middleware/rate-limit.middleware")
-const agentRoutes = require("../routes/agent.routes").default as import("express").Router
+const agentRoutes = (require("../routes/agent.routes") as { default: import("express").Router })
+  .default
 const { AgentWsHandler } =
   require("../websocket/agent.ws.handler") as typeof import("../websocket/agent.ws.handler")
 const { env } = require("../config/env") as typeof import("../config/env")

@@ -80,7 +80,7 @@ const mockStreamingRun = jest.fn().mockResolvedValue(undefined)
 
 jest.mock("../services/streaming.agent.service", () => ({
   StreamingAgentService: class {
-    run = (...args: unknown[]): Promise<unknown> => mockStreamingRun(...args)
+    run = (...args: unknown[]): Promise<unknown> => mockStreamingRun(...args) as Promise<unknown>
   },
 }))
 

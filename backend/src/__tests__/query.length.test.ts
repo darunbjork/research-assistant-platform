@@ -66,8 +66,9 @@ jest.mock("../middleware/auth.middleware", () => ({
 // ── Routes under test (required AFTER the mocks are defined) ──────────────
 process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "test-key-not-a-real-secret"
 
-const agentRoutes = require("../routes/agent.routes").default as import("express").Router
-const ragRoutes = require("../routes/rag.routes").default as import("express").Router
+const agentRoutes = (require("../routes/agent.routes") as { default: import("express").Router })
+  .default
+const ragRoutes = (require("../routes/rag.routes") as { default: import("express").Router }).default
 const { errorMiddleware } =
   require("../middleware/error.middleware") as typeof import("../middleware/error.middleware")
 

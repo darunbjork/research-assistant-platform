@@ -13,7 +13,8 @@ jest.mock("../config/env", () => {
   return { ...actual, env: { ...actual.env } }
 })
 
-const metricsRoutes = require("../routes/metrics.routes").default as import("express").Router
+const metricsRoutes = (require("../routes/metrics.routes") as { default: import("express").Router })
+  .default
 const { env } = require("../config/env") as typeof import("../config/env")
 
 describe("/metrics token guard (D19)", () => {

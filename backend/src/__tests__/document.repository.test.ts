@@ -26,8 +26,7 @@ const SAMPLE_DOCUMENT = {
 describe("DocumentRepository", () => {
   let repo: DocumentRepository
   let mockPrisma: ReturnType<typeof makeMockPrismaClient>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let p: any
+  let p: ReturnType<typeof makeMockPrismaClient>
 
   beforeEach(() => {
     mockPrisma = makeMockPrismaClient()
@@ -48,7 +47,7 @@ describe("DocumentRepository", () => {
             name: "test-report.txt",
             content: "This is the document content.",
             userId: "user-001",
-          }),
+          }) as Record<string, unknown>,
         })
       )
     })
@@ -96,7 +95,7 @@ describe("DocumentRepository", () => {
           where: expect.objectContaining({
             id: "doc-001",
             userId: "user-001",
-          }),
+          }) as Record<string, unknown>,
         })
       )
     })
@@ -129,7 +128,7 @@ describe("DocumentRepository", () => {
 
       expect(p.document.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ userId: "user-001" }),
+          where: expect.objectContaining({ userId: "user-001" }) as Record<string, unknown>,
         })
       )
     })

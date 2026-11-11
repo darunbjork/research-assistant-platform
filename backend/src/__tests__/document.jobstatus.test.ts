@@ -105,7 +105,10 @@ describe("GET /documents/jobs/:jobId — ownership (D7)", () => {
     expect(res.json).toHaveBeenCalledWith(
       expect.objectContaining({
         success: true,
-        data: expect.objectContaining({ jobId: JOB_ID, status: "completed" }),
+        data: expect.objectContaining({ jobId: JOB_ID, status: "completed" }) as Record<
+          string,
+          unknown
+        >,
       })
     )
     expect(next).not.toHaveBeenCalled()
@@ -126,8 +129,8 @@ describe("GET /documents/jobs/:jobId — ownership (D7)", () => {
     expect(missingRes.status).toHaveBeenCalledWith(404)
 
     // Same body shape: only the jobId in the message differs.
-    const attackerBody = attackerRes.json.mock.calls[0][0] as Record<string, unknown>
-    const missingBody = missingRes.json.mock.calls[0][0] as Record<string, unknown>
+    const attackerBody = (attackerRes.json.mock.calls[0] as unknown[])[0] as Record<string, unknown>
+    const missingBody = (missingRes.json.mock.calls[0] as unknown[])[0] as Record<string, unknown>
     expect(attackerBody.success).toBe(missingBody.success)
     expect(attackerBody.data).toBe(missingBody.data)
     expect(typeof attackerBody.error).toBe("string")
@@ -140,7 +143,7 @@ describe("GET /documents/jobs/:jobId — ownership (D7)", () => {
     const res = makeResponse()
     await controller.getJobStatus(makeRequest(ATTACKER), res, next)
 
-    const body = JSON.stringify(res.json.mock.calls[0][0])
+    const body = JSON.stringify((res.json.mock.calls[0] as unknown[])[0])
     expect(body).not.toContain("completed")
     expect(body).not.toContain("doc.txt")
   })

@@ -41,8 +41,7 @@ describe("ChunkRepository", () => {
 
       await repo.storeMany("doc-1", chunks)
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(mockPrisma.$transaction as any).toHaveBeenCalledTimes(1)
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
     })
 
     it("calls $executeRaw for each chunk", async () => {
@@ -55,8 +54,7 @@ describe("ChunkRepository", () => {
       await repo.storeMany("doc-1", chunks)
 
       // $transaction is called with an array of $executeRaw calls
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const transactionArg = (mockPrisma.$transaction as any).mock.calls[0]?.[0]
+      const transactionArg = mockPrisma.$transaction.mock.calls[0]?.[0] as unknown
       expect(Array.isArray(transactionArg)).toBe(true)
       expect((transactionArg as unknown[]).length).toBe(3)
     })
@@ -72,31 +70,27 @@ describe("ChunkRepository", () => {
       const chunks = [makeChunkToStore()]
       await repo.storeMany("doc-specific-001", chunks)
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(mockPrisma.$transaction as any).toHaveBeenCalledTimes(1)
+      expect(mockPrisma.$transaction).toHaveBeenCalledTimes(1)
     })
   })
 
   // ── countForDocument() ────────────────────────────────────────────────
   describe("countForDocument()", () => {
     it("returns the chunk count for a document", async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.count as any).mockResolvedValue(42)
+      mockPrisma.documentChunk.count.mockResolvedValue(42)
 
       const count = await repo.countForDocument("doc-1")
       expect(count).toBe(42)
     })
 
     it("queries with the documentId filter", async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.count as any).mockResolvedValue(0)
+      mockPrisma.documentChunk.count.mockResolvedValue(0)
 
       await repo.countForDocument("doc-abc")
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(mockPrisma.documentChunk.count as any).toHaveBeenCalledWith(
+      expect(mockPrisma.documentChunk.count).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ documentId: "doc-abc" }),
+          where: expect.objectContaining({ documentId: "doc-abc" }) as Record<string, unknown>,
         })
       )
     })
@@ -129,13 +123,11 @@ describe("ChunkRepository", () => {
           createdAt: new Date(),
         },
       ]
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.findMany as any).mockResolvedValue(mockChunks)
+      mockPrisma.documentChunk.findMany.mockResolvedValue(mockChunks)
 
       const results = await repo.listForDocument("doc-1")
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(mockPrisma.documentChunk.findMany as any).toHaveBeenCalledWith(
+      expect(mockPrisma.documentChunk.findMany).toHaveBeenCalledWith(
         expect.objectContaining({
           orderBy: { chunkIndex: "asc" },
         })
@@ -144,13 +136,13 @@ describe("ChunkRepository", () => {
     })
 
     it("does not select the embedding column (too large)", async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.findMany as any).mockResolvedValue([])
+      mockPrisma.documentChunk.findMany.mockResolvedValue([])
 
       await repo.listForDocument("doc-1")
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      const callArg = (mockPrisma.documentChunk.findMany as any).mock.calls[0]?.[0] as {
+      const callArg = (
+        mockPrisma.documentChunk.findMany.mock.calls[0] as unknown[] | undefined
+      )?.[0] as {
         select?: Record<string, unknown>
       }
 
@@ -164,31 +156,25 @@ describe("ChunkRepository", () => {
   // ── deleteForDocument() ───────────────────────────────────────────────
   describe("deleteForDocument()", () => {
     it("deletes all chunks for the specified document", async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.deleteMany as any).mockResolvedValue({ count: 5 })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.count as any).mockResolvedValue(0)
+      mockPrisma.documentChunk.deleteMany.mockResolvedValue({ count: 5 })
+      mockPrisma.documentChunk.count.mockResolvedValue(0)
 
       await repo.deleteForDocument("doc-1")
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(mockPrisma.documentChunk.deleteMany as any).toHaveBeenCalledWith(
+      expect(mockPrisma.documentChunk.deleteMany).toHaveBeenCalledWith(
         expect.objectContaining({
-          where: expect.objectContaining({ documentId: "doc-1" }),
+          where: expect.objectContaining({ documentId: "doc-1" }) as Record<string, unknown>,
         })
       )
     })
 
     it("updates the indexed chunk count after deletion", async () => {
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.deleteMany as any).mockResolvedValue({ count: 3 })
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      ;(mockPrisma.documentChunk.count as any).mockResolvedValue(7)
+      mockPrisma.documentChunk.deleteMany.mockResolvedValue({ count: 3 })
+      mockPrisma.documentChunk.count.mockResolvedValue(7)
 
       await repo.deleteForDocument("doc-1")
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      expect(mockPrisma.documentChunk.count as any).toHaveBeenCalled()
+      expect(mockPrisma.documentChunk.count).toHaveBeenCalled()
     })
   })
 })

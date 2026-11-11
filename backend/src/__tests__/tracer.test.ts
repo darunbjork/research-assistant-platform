@@ -310,11 +310,19 @@ const sdkInstance = (jest.requireMock("@opentelemetry/sdk-node") as { NodeSDK: j
   .mock.results[0]?.value as { start: jest.Mock; shutdown: jest.Mock }
 
 // ── Helpers: get the mock instances from the mocked module ────────────────
-function getMockSpan() {
+// The span instance built by the jest.mock factory above.
+type MockSpan = {
+  setAttribute: jest.Mock
+  setStatus: jest.Mock
+  recordException: jest.Mock
+  end: jest.Mock
+}
+
+function getMockSpan(): MockSpan {
   const { trace } = jest.requireMock("@opentelemetry/api") as {
     trace: { getActiveSpan: jest.Mock }
   }
-  return trace.getActiveSpan()
+  return trace.getActiveSpan() as MockSpan
 }
 
 function getMockTracer() {

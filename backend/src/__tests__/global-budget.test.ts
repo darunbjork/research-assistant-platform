@@ -67,8 +67,9 @@ const mockEvaluateBatch = jest.fn().mockResolvedValue({ averageScore: 0.9 })
 
 jest.mock("../services/evaluator.service", () => ({
   EvaluatorService: class {
-    evaluate = (...args: unknown[]): Promise<unknown> => mockEvaluate(...args)
-    evaluateBatch = (...args: unknown[]): Promise<unknown> => mockEvaluateBatch(...args)
+    evaluate = (...args: unknown[]): Promise<unknown> => mockEvaluate(...args) as Promise<unknown>
+    evaluateBatch = (...args: unknown[]): Promise<unknown> =>
+      mockEvaluateBatch(...args) as Promise<unknown>
   },
 }))
 

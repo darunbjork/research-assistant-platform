@@ -157,8 +157,24 @@ export function makeHybridSearchResult(
   }
 }
 
-// Creates a realistic PrismaClient mock
-export function makeMockPrismaClient(): jest.Mocked<PrismaClient> {
+// Creates a realistic PrismaClient mock.
+//
+// The return type is an intersection: jest.Mocked<PrismaClient> keeps the
+// mock assignable to PrismaClient (constructors under test), while
+// MockedDelegates re-declares every model delegate's methods as jest.Mocks
+// so tests can drive `p.document.create.mockResolvedValue(...)`. Both sides
+// must declare each method explicitly: TypeScript intersects explicit
+// properties across constituents but ignores index-signature members when
+// another constituent already declares the same key (task 3.7).
+type MockedDelegates = {
+  [K in keyof PrismaClient as K extends `$${string}` ? never : K]: {
+    [M in keyof PrismaClient[K]]: jest.Mock
+  }
+}
+
+export type MockPrisma = jest.Mocked<PrismaClient> & MockedDelegates
+
+export function makeMockPrismaClient(): MockPrisma {
   return {
     $queryRaw: jest.fn().mockResolvedValue([]),
     $executeRaw: jest.fn().mockResolvedValue(1),
@@ -203,7 +219,7 @@ export function makeMockPrismaClient(): jest.Mocked<PrismaClient> {
       create: jest.fn().mockResolvedValue({}),
       findUnique: jest.fn().mockResolvedValue(null),
     },
-  } as unknown as jest.Mocked<PrismaClient>
+  } as unknown as MockPrisma
 }
 
 // Creates a mock Redis client

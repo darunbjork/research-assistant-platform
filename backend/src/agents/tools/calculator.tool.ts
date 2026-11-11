@@ -42,7 +42,7 @@ function evaluateSafeMath(expression: string): string {
     // The allowlist above is what makes this safe: after it passes, the
     // expression can only be arithmetic — no names, no keywords, no syntax
     // that could reference anything outside this function.
-    const result = new Function(`"use strict"; return (${withPercentage})`)() as unknown
+    const result = (new Function(`"use strict"; return (${withPercentage})`) as () => unknown)()
 
     if (typeof result !== "number" || !Number.isFinite(result)) {
       return "Error: Expression did not produce a valid finite number."

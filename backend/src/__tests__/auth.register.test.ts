@@ -63,7 +63,8 @@ jest.mock("../config/env", () => {
 })
 
 // ── Modules under test (required AFTER the mocks are defined) ─────────────
-const authRoutes = require("../routes/auth.routes").default as import("express").Router
+const authRoutes = (require("../routes/auth.routes") as { default: import("express").Router })
+  .default
 const { errorMiddleware } =
   require("../middleware/error.middleware") as typeof import("../middleware/error.middleware")
 const { LOGIN_LIMIT, REGISTER_LIMIT } =

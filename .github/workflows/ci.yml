@@ -69,38 +69,27 @@ jobs:
       - name: Type check (strict)
         run: npm run type-check
 
-      # ── Step 5: Zero any types ────────────────────────────────────────
-      - name: Zero any types
-        run: |
-          FOUND=$(grep -rnE ':\s*any\b|\bas any\b' src --include='*.ts' | grep -vE '// eslint|\.test\.ts|mock|__tests__|node_modules|dist' || true)
-          if [ -n "$FOUND" ]; then
-            echo "❌ Found 'any' types:"
-            echo "$FOUND"
-            exit 1
-          fi
-          echo "✅ Zero any types"
-
-      # ── Step 6: ESLint ────────────────────────────────────────────────
+      # ── Step 5: ESLint (includes the no-any rules) ─────────────────────
       - name: Lint (ESLint)
         run: npm run lint
 
-      # ── Step 7: Prettier format check ────────────────────────────────
+      # ── Step 6: Prettier format check ────────────────────────────────
       - name: Format check (Prettier)
         run: npx prettier --check "src/**/*.ts"
 
-      # ── Step 8: Run Prisma migrations ────────────────────────────────
+      # ── Step 7: Run Prisma migrations ────────────────────────────────
       - name: Run database migrations
         run: npx prisma migrate deploy
 
-      # ── Step 9: Test with coverage ────────────────────────────────────
+      # ── Step 8: Test with coverage ────────────────────────────────────
       - name: Test with coverage (60% floor)
         run: npm run test:coverage
 
-      # ── Step 10: Build TypeScript ─────────────────────────────────────
+      # ── Step 9: Build TypeScript ─────────────────────────────────────
       - name: Build TypeScript
         run: npm run build
 
-      # ── Step 11: Verify build output ─────────────────────────────────
+      # ── Step 10: Verify build output ─────────────────────────────────
       - name: Verify build output
         run: |
           if [ ! -f dist/app.js ]; then
