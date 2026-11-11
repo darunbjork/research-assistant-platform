@@ -77,4 +77,45 @@ describe("CalculatorTool", () => {
     const result = await tool.execute({ expression: "10 / 2" })
     expect(result).toBe("5")
   })
+
+  // ── Bypass attempts (task 2.11) ───────────────────────────────────────
+  describe("bypass attempts are rejected", () => {
+    it.each([
+      ["constructor", "constructor"],
+      ["process", "process"],
+      ["array access", "[]"],
+      ["backticks", "1 + `2`"],
+      ["letters", "x + 1"],
+      ["arrow function", "(() => 1)()"],
+      ["fat arrow expression", "1 => 2"],
+      ["eval call", "eval('1')"],
+      ["window access", "window.location"],
+    ])("rejects %s", async (_label, expression) => {
+      const result = await tool.execute({ expression })
+      expect(result).toContain("Error")
+      expect(result).toContain("unsafe")
+    })
+  })
+
+  // ── Length cap (task 2.11) ─────────────────────────────────────────────
+  describe("expression length cap", () => {
+    it("rejects expressions longer than 200 characters", async () => {
+      const result = await tool.execute({ expression: "1".repeat(201) })
+      expect(result).toContain("Error")
+      expect(result).toContain("200 characters")
+    })
+
+    it("accepts an expression of exactly 200 characters", async () => {
+      const expression = "1+".repeat(99) + "11" // 99 ones + 11 → 200 chars
+      expect(expression).toHaveLength(200)
+
+      const result = await tool.execute({ expression })
+      expect(result).toBe("110")
+    })
+
+    it("still evaluates normal-length expressions", async () => {
+      const result = await tool.execute({ expression: "(1 + 2) * 3" })
+      expect(result).toBe("9")
+    })
+  })
 })
