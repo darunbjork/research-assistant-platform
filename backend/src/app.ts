@@ -42,11 +42,13 @@ app.use(
 )
 app.use(
   cors({
-    origin: ["http://localhost:5174", "http://localhost:3001", "http://localhost:5173"],
+    origin: env.CORS_ORIGINS,
     credentials: true,
   })
 )
-app.use(express.json())
+// 2 MB covers 500,000 characters of multibyte text plus the JSON envelope
+// (D9) while still bounding memory per request.
+app.use(express.json({ limit: "2mb" }))
 app.use(requestLoggerMiddleware)
 
 // ── API Documentation ─────────────────────────────────────────────────────
