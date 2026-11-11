@@ -22,6 +22,9 @@ RUN npx prisma generate && npm run build && npm prune --omit=dev
 
 FROM base AS runtime
 ENV NODE_ENV=production
+# The production logger rotates files under logs/ (relative to WORKDIR /app);
+# /app is root-owned and the process runs as USER node, so pre-create it.
+RUN mkdir -p /app/logs && chown node:node /app/logs
 COPY --from=build --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/dist ./dist
 COPY --from=build --chown=node:node /app/package.json ./package.json
