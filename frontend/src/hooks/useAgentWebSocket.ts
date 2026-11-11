@@ -52,8 +52,11 @@ export interface UseAgentWebSocketReturn {
 }
 
 // ── WebSocket URL ─────────────────────────────────────────────────────────
-const WS_URL = (import.meta.env.VITE_WS_URL as string | undefined)
-  ?? "ws://localhost:3002"
+// Same origin by default (Vite proxies /ws in dev, Caddy in production).
+// Set VITE_WS_URL only for unusual split-origin setups.
+const WS_URL =
+  import.meta.env.VITE_WS_URL ??
+  `${location.protocol === "https:" ? "wss" : "ws"}://${location.host}`
 
 function generateSessionId(): string {
   return `session-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`

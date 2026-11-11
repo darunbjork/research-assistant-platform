@@ -15,8 +15,10 @@ interface RetryableRequest extends InternalAxiosRequestConfig {
   _retry?: boolean
 }
 
-const BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3002"
+// Same origin by default: the Vite dev proxy forwards /api to the backend in
+// dev, Caddy serves it in production. Set VITE_API_URL only for unusual
+// split-origin setups.
+const BASE_URL = import.meta.env.VITE_API_URL ?? ""
 
 // ── Axios Instance ─────────────────────────────────────────────────────────
 const api = axios.create({
