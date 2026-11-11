@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, useCallback } from "react"
 import { getAccessToken }       from "../utils/auth"
+import { refreshAccessToken, logout } from "../utils/api"
 import type {
   AgentStatus,
   AgentStep,
@@ -76,6 +77,9 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
 
   const wsRef         = useRef<WebSocket | null>(null)
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  // One token refresh per expiry (task 3.6): set on a 4001 close, cleared
+  // again once the server confirms authentication with the new token.
+  const refreshAttemptedRef = useRef(false)
 
   // ── Reset state for a new query ────────────────────────────────────────
   const resetQueryState = useCallback((): void => {
@@ -108,6 +112,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
         case "auth_confirmed":
           setConnectionState("authenticated")
           setCurrentMessage("ResearchBot ready")
+          refreshAttemptedRef.current = false
           break
 
         case "status":
@@ -132,9 +137,17 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
           break
 
         case "error":
-          setError(message.message)
-          setAgentStatus("error")
-          setCurrentMessage("Something went wrong")
+          if (message.code === "TOKEN_EXPIRED") {
+            // The server closes with 4001 right after this message — onclose
+            // refreshes the token and reconnects (task 3.6).
+            setCurrentMessage("Session expired — reconnecting…")
+          } else {
+            // RATE_LIMITED / CAPACITY_REACHED and friends stay visible in
+            // the chat as readable messages.
+            setError(message.message)
+            setAgentStatus("error")
+            setCurrentMessage("Something went wrong")
+          }
           setIsRunning(false)
           break
 
@@ -179,7 +192,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
       setError("WebSocket connection failed. Falling back to HTTP mode.")
     }
 
-    ws.onclose = () => {
+    ws.onclose = (event) => {
       setConnectionState("disconnected")
       wsRef.current = null
 
@@ -188,10 +201,24 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
         pingIntervalRef.current = null
       }
 
+      // 4001 = token expired (or auth never completed). Refresh once, then
+      // reconnect with the new token; if the refresh fails, log out.
+      if (event.code === 4001 && !refreshAttemptedRef.current) {
+        refreshAttemptedRef.current = true
+        void refreshAccessToken().then(accessToken => {
+          if (accessToken) {
+            // eslint-disable-next-line react-hooks/immutability
+            connect()
+          } else {
+            logout()
+          }
+        })
+        return
+      }
+
       // Auto-reconnect after 3 seconds if not intentionally disconnected
       setTimeout(() => {
         if (wsRef.current === null) {
-          // eslint-disable-next-line react-hooks/immutability
           connect()
         }
       }, 3000)
