@@ -1,0 +1,30 @@
+{$DOMAIN} {
+    encode zstd gzip
+
+    # API, WebSocket and health go to the backend. Caddy proxies WebSocket upgrades automatically.
+    handle /api/* {
+        reverse_proxy backend:3001
+    }
+    handle /ws/* {
+        reverse_proxy backend:3001
+    }
+    handle /health {
+        reverse_proxy backend:3001
+    }
+    # /metrics is intentionally NOT routed: reachable only on the internal Docker network.
+
+    # SPA: static files, fall back to index.html for client-side routes.
+    handle {
+        root * /srv
+        try_files {path} /index.html
+        file_server
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+        X-Frame-Options "DENY"
+        Content-Security-Policy "default-src 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+    }
+}
