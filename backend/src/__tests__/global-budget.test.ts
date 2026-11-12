@@ -25,7 +25,9 @@ const mockRedis = {
     if (mockRedisDown) {
       throw new Error("Redis unavailable")
     }
-    let incCount = 0
+    // One entry per queued command, in order — mirrors real MULTI/EXEC
+    // results so consumeVoiceBudget can read both INCRBY values.
+    let execResults: Array<[null, number]> = []
     const pipeline: Pipeline = {
       incrby: jest.fn(),
       expire: jest.fn(),
@@ -34,20 +36,21 @@ const mockRedis = {
     pipeline.incrby.mockImplementation((key: string, by: number) => {
       const next = (mockRedisStore.get(key) ?? 0) + by
       mockRedisStore.set(key, next)
-      incCount = next
+      execResults.push([null, next])
       return pipeline
     })
     pipeline.expire.mockImplementation((key: string, seconds: number, nx?: string) => {
-      if (nx === "NX" && mockTtlStore.has(key)) {
-        return pipeline
+      if (!(nx === "NX" && mockTtlStore.has(key))) {
+        mockTtlStore.set(key, seconds)
       }
-      mockTtlStore.set(key, seconds)
+      execResults.push([null, 1])
       return pipeline
     })
-    pipeline.exec.mockImplementation(async () => [
-      [null, incCount],
-      [null, 1],
-    ])
+    pipeline.exec.mockImplementation(async () => {
+      const results = execResults
+      execResults = []
+      return results
+    })
     return pipeline
   }),
 }
@@ -74,8 +77,15 @@ jest.mock("../services/evaluator.service", () => ({
 }))
 
 // ── Modules under test (required AFTER the mocks are defined) ─────────────
-const { consumeGlobalBudget, getGlobalDailyMax, globalBudgetKey } =
-  require("../utils/global-budget") as typeof import("../utils/global-budget")
+const {
+  consumeGlobalBudget,
+  consumeVoiceBudget,
+  getGlobalDailyMax,
+  getVoiceDailyMax,
+  globalBudgetKey,
+  voiceBudgetKey,
+  VOICE_BUDGET_SHARE,
+} = require("../utils/global-budget") as typeof import("../utils/global-budget")
 const { globalBudgetUsed } = require("../utils/metrics") as typeof import("../utils/metrics")
 const { EvalController } =
   require("../controllers/eval.controller") as typeof import("../controllers/eval.controller")
@@ -148,6 +158,91 @@ describe("consumeGlobalBudget", () => {
     env.GLOBAL_DAILY_LLM_CALLS_MAX = 100
     await consumeGlobalBudget(7)
 
+    const metric = await globalBudgetUsed.get()
+    expect(metric.values[0]?.value).toBe(7)
+  })
+})
+
+describe("consumeVoiceBudget (Day 2 — 40% voice sub-cap)", () => {
+  beforeEach(() => {
+    mockRedisStore.clear()
+    mockTtlStore.clear()
+    mockRedisDown = false
+    jest.clearAllMocks()
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 2000
+  })
+
+  it("sub-cap is 40% of the global max (default 2000 → 800)", () => {
+    expect(VOICE_BUDGET_SHARE).toBe(0.4)
+    expect(getVoiceDailyMax()).toBe(800)
+
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 10
+    expect(getVoiceDailyMax()).toBe(4) // floor(4)
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 7
+    expect(getVoiceDailyMax()).toBe(2) // floor(2.8)
+  })
+
+  it("increments both the voice and the global budget keys with 48h TTLs", async () => {
+    await expect(consumeVoiceBudget(3)).resolves.toBe(true)
+
+    expect(mockRedisStore.get(globalBudgetKey())).toBe(3)
+    expect(mockRedisStore.get(voiceBudgetKey())).toBe(3)
+    expect(mockTtlStore.get(voiceBudgetKey())).toBe(48 * 60 * 60)
+  })
+
+  it("refuses once the voice sub-cap is exceeded even with global room", async () => {
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 100 // voice cap = 40
+
+    await expect(consumeVoiceBudget(40)).resolves.toBe(true) // exactly at sub-cap
+    await expect(consumeVoiceBudget(1)).resolves.toBe(false) // voice 41 > 40
+    // The global counter still had room (41 ≤ 100) — only the sub-cap refused.
+    expect(mockRedisStore.get(globalBudgetKey())).toBe(41)
+  })
+
+  it("keeps text working after voice is locked out (the point of the sub-cap)", async () => {
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 100
+
+    await expect(consumeVoiceBudget(41)).resolves.toBe(false) // voice over cap
+    await expect(consumeGlobalBudget(58)).resolves.toBe(true) // text: 99 ≤ 100
+    await expect(consumeVoiceBudget(1)).resolves.toBe(false) // voice still locked
+  })
+
+  it("refuses when the global max is exceeded even if the sub-cap has room", async () => {
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 10 // voice cap = 4
+
+    await consumeGlobalBudget(7) // text took 7 of 10
+    await expect(consumeVoiceBudget(4)).resolves.toBe(false) // global 11 > 10
+  })
+
+  it("fails closed when Redis is unavailable", async () => {
+    mockRedisDown = true
+    await expect(consumeVoiceBudget(1)).resolves.toBe(false)
+  })
+
+  it("fails closed when the transaction returns no result", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      const chain: Pipeline = {
+        incrby: jest.fn(),
+        expire: jest.fn(),
+        exec: jest.fn(),
+      }
+      chain.incrby.mockReturnValue(chain)
+      chain.expire.mockReturnValue(chain)
+      chain.exec.mockResolvedValue(null)
+      return chain
+    })
+
+    await expect(consumeVoiceBudget(1)).resolves.toBe(false)
+  })
+
+  it("uses the UTC date for the voice key (not the local date)", () => {
+    const date = new Date("2026-03-05T23:30:00-05:00")
+    expect(voiceBudgetKey(date)).toBe("budget:voice:2026-03-06")
+  })
+
+  it("updates the rag_global_budget_used gauge with the global total", async () => {
+    env.GLOBAL_DAILY_LLM_CALLS_MAX = 100
+    await consumeVoiceBudget(7)
     const metric = await globalBudgetUsed.get()
     expect(metric.values[0]?.value).toBe(7)
   })

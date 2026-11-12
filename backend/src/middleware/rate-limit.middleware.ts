@@ -64,6 +64,28 @@ export const EVAL_LIMIT: RateLimitConfig = {
   failMode: "closed",
 }
 
+// ── Voice layer limits (Day 2) — keyed by userId, WS core path ─────────────
+// consumeRateLimit() is Express-independent, so the Day-3 WS handler calls
+// these directly (voice_start → session, each finished turn → turn). Both
+// fail CLOSED: voice spends money, so losing a voice session is better than
+// an unbounded Deepgram/ElevenLabs bill.
+
+export const VOICE_TURN_LIMIT: RateLimitConfig = {
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 20,
+  message: "Voice turn limit reached. Limit: 20 voice turns per hour.",
+  keyPrefix: "voice_turn",
+  failMode: "closed",
+}
+
+export const VOICE_SESSION_LIMIT: RateLimitConfig = {
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10,
+  message: "Voice session limit reached. Limit: 10 voice sessions per hour.",
+  keyPrefix: "voice_session",
+  failMode: "closed",
+}
+
 // Auth endpoints (D20): keyed by IP, not userId — login and register happen
 // before we know who the user is, and per-user limits don't stop one person
 // hammering the endpoint from a single address.

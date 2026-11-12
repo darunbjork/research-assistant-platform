@@ -26,51 +26,100 @@ Notes:
 - ElevenLabs counts ~1,000 characters ≈ 1 minute of speech → Flash v2.5 ≈ **$0.04 per minute the agent speaks**; user speech and silence cost nothing.
 - Defaults pinned in `backend/src/config/env.ts`: `DEEPGRAM_MODEL=nova-3`, `ELEVENLABS_MODEL_ID=eleven_flash_v2_5` (~100 ms median latency, 40k-char request limit).
 
-## 2. Proposed budget units (Darun confirms before Day 2 implements)
+## 2. Budget units — CONFIRMED by Darun (Day 1 review) + voice sub-cap
 
 Voice charges ride the **existing global budget** (`budget:llm:<UTC>`,
-fail-closed, default 2,000 units/day). Proposed additions **per agent turn**:
+fail-closed, default 2,000 units/day). **Confirmed** additions **per agent turn**:
 
 | Unit | Quantity per turn | Basis |
 | --- | --- | --- |
 | Agent turn (already exists) | 5 | charged today at `agent.ws.handler.ts` |
 | Spoken summary | 1 | one LLM call, 2–3 sentences (Day 6) |
 | STT | `ceil(utterance_seconds / 30)` | 8 s → 1 unit, 45 s → 2 |
-| TTS | `ceil(summary_chars / 500)` | 450 chars → 1 unit |
+| TTS | `ceil(summary_chars / 500)` | 250 chars → 1 unit (500 → 1, 501 → 2) |
 
 - Typical turn = 5 + 1 + 1 + 1 = **8 units**.
 - Worst legal turn (60 s utterance, 1,000-char summary) = 5 + 1 + 2 + 2 = **10 units**.
 - Day-7 progress lines reuse the TTS unit rate, capped at 2 lines/turn (≤ +2 units).
-- A 5-minute session ≈ 6 turns ≈ **48 units = 2.4 % of the 2,000/day default**.
+
+**Voice sub-cap (confirmed): voice may consume at most 40 % of
+`GLOBAL_DAILY_LLM_CALLS_MAX` per UTC day** — default 2,000 ⇒ **800 voice
+units/day**. Implemented as `consumeVoiceBudget()` on `budget:voice:<date>`
+(Day 2): it increments both the voice and the global counter in one
+transaction and refuses when *either* cap is exceeded (fail-closed). Because
+voice can never take more than 40 %, a voice burst cannot trigger
+"Daily capacity reached" for text users — at least 60 % of the daily budget
+is always reserved for them.
 
 Voice limiter and budget both fail **closed**: a refused action never reaches a provider.
 
-## 3. Dollars — typical turn, 1,000 turns, 5-minute session
+## 3. Dollars — stated assumptions, gated audio vs always-open mic
 
-Worked example (typical turn: 8 s utterance, 450-char spoken summary):
+**Stated assumptions (every number below derives from these):**
+
+| Assumption | Value |
+| --- | --- |
+| Characters of spoken summary per turn | **250** |
+| Utterance length per turn (audio streamed) | 8 s |
+| Turns per 5-minute session | 6 |
+| TTS rate | $0.04 / 1,000 chars (Flash v2.5) |
+| STT rate | $0.0077 / audio-minute (nova-3 streaming) |
+
+**Per turn (gated audio):**
 
 | Component | Math | Cost |
 | --- | --- | --- |
 | STT — nova-3 streaming | 8 s × $0.0077 / 60 | $0.00103 |
-| TTS — Flash v2.5 | 450 chars × $0.04 / 1,000 | $0.00180 |
+| TTS — Flash v2.5 | 250 × $0.04 / 1,000 | $0.01000 |
 | Spoken summary — Gemini flash | ~200 in + ~100 out tokens | ≈ $0.00034 |
-| **Voice marginal total** | | **≈ $0.0032** |
-| Existing agent RAG turn | unchanged by voice | ≈ $0.001–0.01 (see AI Studio) |
+| **Voice marginal total** | | **≈ $0.0114** |
 
-- **Per 1,000 voice turns ≈ $3.20** voice marginal + existing Gemini agent cost.
-- **5-minute voice session ≈ 6 turns ≈ $0.02** voice marginal (+ agent cost).
-- With `VOICE_MOCK=true` (default): **$0.00** — no network call, no billing.
+**Per 1,000 turns:**
+
+| Mode | STT | TTS | Summary | Total |
+| --- | --- | --- | --- | --- |
+| **Gated** (audio only while speaking) | 133 min × $0.0077 = $1.03 | 250,000 × $0.04/1k = $10.00 | $0.34 | **≈ $11.4** |
+| **Always-open mic** (mic streams 50 s/turn) | 833 min × $0.0077 = $6.42 | $10.00 | $0.34 | **≈ $16.8** |
+
+**Per 5-minute session (6 turns):**
+
+| Mode | STT | TTS | Summary | Total |
+| --- | --- | --- | --- | --- |
+| **Gated** | 48 s ⇒ $0.006 | 1,500 chars ⇒ $0.060 | $0.002 | **≈ $0.068** |
+| **Always-open mic** | 5 min ⇒ $0.039 (**6.2×** the gated STT) | $0.060 | $0.002 | **≈ $0.10** |
+
+> Correction: the Day 1 report's "$0.011 TTS per session" and "$3.20 per
+> 1,000 turns" were wrong — they mixed a per-turn TTS figure into session and
+> 1,000-turn totals. The numbers above supersede them.
+
+**EXPLICIT DAY 4 RULE — Deepgram bills audio *streamed*, not speech
+detected.** The client must **stop sending audio during silence and
+immediately after `voice_end`** (mic/VAD gate + explicit stop). A mic left
+open for a 5-minute session costs ~6× the gated STT estimate. This is a
+requirement, not an optimisation.
+
+With `VOICE_MOCK=true` (default): **$0.00** — no network call, no billing.
 
 ## 4. Provider spend caps — HUMAN TASK, required before VOICE_MOCK=false
+
+**Hard cap vs alert — what each dashboard *offers* (verified against vendor
+docs 2026-11-11):**
+
+| Provider | Hard cap available? | Mechanism | Alerts | This account has (human records) |
+| --- | --- | --- | --- | --- |
+| Deepgram | **Yes** | Monthly budget in Console → over-limit calls fail **402**. Caveats: usage tracking can lag minutes–hours, audio already being processed may still be billed, budget is org-wide across keys | Email/webhook threshold alerts | [ ] cap `$____` set on `____` (date) |
+| ElevenLabs | **Yes** | Per-API-key monthly **`character_limit`** — official API: "requests that incur charges will fail after reaching this monthly limit"; account plan quota as backstop | Plan usage notifications | [ ] cap `____ chars` set on key `____` (date) |
+| Gemini | Yes (per plan §H.1) | AI Studio budget/quota controls | Email alerts | [ ] confirmed `____` (date) |
 
 Checkboxes stay unchecked until the human completes them; every daily report
 re-flags this.
 
-- [ ] **Deepgram**: PAYG project created, spend cap or usage alert set in the console — cap recorded: `$____` (date: `____`)
-- [ ] **ElevenLabs**: monthly character/USD limit or prepaid-funds cap set for the API key — cap recorded: `$____ / ____ chars` (date: `____`)
-- [ ] **Gemini**: existing plan §H.1 budget alerts + key restrictions confirmed (date: `____`)
-- [ ] Keys live only in server env (never browser); key restrictions (IP where supported) applied (date: `____`)
-- [ ] §1 rates re-verified on the vendor pricing pages (date: `____`)
+- [ ] **Deepgram**: hard budget + alert threshold set in console — record cap/date above.
+- [ ] **ElevenLabs**: per-key `character_limit` set (service-account key, backend use) — record above.
+- [ ] **Gemini**: plan §H.1 budget alerts + key restrictions confirmed (date: `____`).
+- [ ] **ElevenLabs effective per-character rate confirmed on OUR plan**: official FAQ states API usage is billed in dollars at the same $/char on every plan (plan allowance vs prepaid top-up), but verify on the dashboard and record the rate + plan: `$____/1k on plan ____` (date: `____`).
+- [ ] Keys live only in server env (never browser); key restrictions (IP where supported) applied (date: `____`).
+- [ ] §1 rates re-verified on the vendor pricing pages (date: `____`).
 
 ## 5. Mitigations (in place / scheduled)
 
