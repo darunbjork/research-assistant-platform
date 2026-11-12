@@ -4,6 +4,7 @@ import multer from "multer"
 import { logError } from "../utils/logger"
 import { fail } from "../types"
 import { env } from "../config/env"
+import { JSON_BODY_LIMIT_LABEL } from "../config/limits"
 export class AppError extends Error {
   constructor(
     public readonly message: string,
@@ -148,11 +149,11 @@ function isBodyParserError(error: unknown): error is BodyParserError {
   return "status" in error || "statusCode" in error
 }
 
-/** Client-facing messages for body-parser failures (sizes match app.ts limits). */
+/** Client-facing messages for body-parser failures (size from config/limits.ts). */
 function bodyParserErrorMessage(type: string): string {
   switch (type) {
     case "entity.too.large":
-      return "Request body exceeds the 2 MB limit"
+      return `Request body exceeds the ${JSON_BODY_LIMIT_LABEL} limit`
     case "entity.parse.failed":
       return "Invalid JSON in request body"
     case "request.aborted":

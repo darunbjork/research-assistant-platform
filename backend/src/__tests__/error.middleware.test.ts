@@ -5,6 +5,7 @@ import type { Request, Response, NextFunction } from "express"
 import express from "express"
 import { createServer, type Server } from "http"
 import type { AddressInfo } from "net"
+import { JSON_BODY_LIMIT_BYTES } from "../config/limits"
 import {
   errorMiddleware,
   AppError,
@@ -279,7 +280,9 @@ describe("errorMiddleware() — real express.json() (F7 regression)", () => {
 
   beforeAll(async () => {
     const app = express()
-    app.use(express.json({ limit: "2mb" })) // same limit as app.ts
+    // Same constant as app.ts — the parser limit and the F7 message both
+    // derive from config/limits.ts (Day 0.5).
+    app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }))
     app.use((_req: Request, res: Response) => {
       res.status(200).json({ ok: true })
     })
