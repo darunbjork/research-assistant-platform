@@ -47,6 +47,10 @@ jobs:
       JWT_SECRET: test-secret-32-characters-minimum-abc
       JWT_REFRESH_SECRET: test-refresh-32-characters-minimum-xyz
       NODE_ENV: test
+      # artillery (loadtests) pulls @playwright/browser-chromium; its
+      # postinstall downloads a browser that ubuntu-26.04 runners do not
+      # support, failing npm ci. Backend CI never launches a browser.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
     steps:
       # ── Step 1: Checkout ─────────────────────────────────────────────
@@ -143,6 +147,7 @@ jobs:
       JWT_SECRET: test-secret-32-characters-minimum-abc
       JWT_REFRESH_SECRET: test-refresh-32-characters-minimum-xyz
       NODE_ENV: test
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
     steps:
       - name: Checkout repository
