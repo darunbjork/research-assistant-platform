@@ -43,7 +43,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://testuser:testpass@localhost:5432/rag_test
       REDIS_URL: redis://localhost:6379
-      GEMINI_API_KEY: test-key-not-real
+      GEMINI_API_KEY: test-key-not-a-real-secret
       JWT_SECRET: test-secret-32-characters-minimum-abc
       JWT_REFRESH_SECRET: test-refresh-32-characters-minimum-xyz
       NODE_ENV: test
@@ -143,7 +143,7 @@ jobs:
     env:
       DATABASE_URL: postgresql://testuser:testpass@localhost:5432/rag_test
       REDIS_URL: redis://localhost:6379
-      GEMINI_API_KEY: test-key-not-real
+      GEMINI_API_KEY: test-key-not-a-real-secret
       JWT_SECRET: test-secret-32-characters-minimum-abc
       JWT_REFRESH_SECRET: test-refresh-32-characters-minimum-xyz
       NODE_ENV: test
