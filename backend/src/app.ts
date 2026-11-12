@@ -9,7 +9,7 @@ import dotenv from "dotenv"
 import { createServer } from "http"
 import swaggerUi from "swagger-ui-express"
 import { prisma } from "./utils/prisma"
-import { ok } from "./types"
+import { ok, fail } from "./types"
 import { logStartup, logError } from "./utils/logger"
 import { requestLoggerMiddleware } from "./middleware/request-logger.middleware"
 import { errorMiddleware } from "./middleware/error.middleware"
@@ -19,8 +19,12 @@ import documentRouter from "./routes/document.routes"
 import ragRouter from "./routes/rag.routes"
 import agentRouter from "./routes/agent.routes"
 import { swaggerSpec } from "./utils/swagger"
-import { checkRedisHealth } from "./utils/redis"
-import { createWebSocketServer } from "./websocket/ws.server"
+import { checkRedisHealth, redis } from "./utils/redis"
+import { createWebSocketServer, closeAllWsClients } from "./websocket/ws.server"
+import { abortRunningAgents } from "./websocket/agent.ws.handler"
+import { createShutdown, registerShutdown, isShuttingDown } from "./lifecycle/shutdown"
+import { getIngestionQueue } from "./queue/index"
+import { shutdownTracing } from "./telemetry/tracer"
 import evalRouter from "./routes/eval.routes"
 import rateLimitRouter from "./routes/rate-limit.routes"
 
@@ -78,6 +82,12 @@ app.use("/api/v1/rate-limits", rateLimitRouter)
 
 // ── Health Check ──────────────────────────────────────────────────────────
 app.get("/health", async (_req: Request, res: Response) => {
+  // Task 5.5: during shutdown serve 503 so the proxy drains traffic.
+  if (isShuttingDown()) {
+    res.status(503).json(fail("Shutting down"))
+    return
+  }
+
   const [dbStatus, redisStatus] = await Promise.all([
     prisma.$queryRaw`SELECT 1`
       .then((): "ok" => "ok")
@@ -112,6 +122,24 @@ app.use(errorMiddleware)
 // This lets us attach the WebSocket server to the same port.
 const httpServer = createServer(app)
 createWebSocketServer(httpServer) // attach WebSocket to same HTTP server
+
+// ── Graceful shutdown (task 5.5 / D13) ────────────────────────────────────
+const shutdown = createShutdown({
+  httpServer,
+  abortRunningAgents,
+  closeAllWsClients,
+  closeQueue: async (): Promise<void> => {
+    await getIngestionQueue().close()
+  },
+  disconnectDatabase: async (): Promise<void> => {
+    await prisma.$disconnect()
+  },
+  quitRedis: async (): Promise<void> => {
+    await redis.quit()
+  },
+  shutdownTracing,
+})
+registerShutdown(shutdown)
 
 httpServer.listen(PORT, () => {
   logStartup("Server started", {

@@ -17,6 +17,22 @@ const MAX_PAYLOAD_BYTES = 64 * 1024
 // schema (task 3.1); when unset, the defaults mirror app.ts's cors() list.
 const DEFAULT_ORIGINS = ["http://localhost:5174", "http://localhost:3001", "http://localhost:5173"]
 
+// ── Shutdown support (task 5.5) ───────────────────────────────────────────
+// 1001 = "going away" (RFC 6455) — the frontend reconnects to the new
+// container after a deploy.
+const CLOSE_GOING_AWAY = 1001
+let activeWss: WebSocketServer | null = null
+
+/** Close every connected WS client with 1001. Called once during shutdown. */
+export function closeAllWsClients(): void {
+  if (activeWss === null) {
+    return
+  }
+  activeWss.clients.forEach((client: WebSocket) => {
+    client.close(CLOSE_GOING_AWAY, "going away")
+  })
+}
+
 function allowedOrigins(): string[] {
   if (env.CORS_ORIGINS.length > 0) return env.CORS_ORIGINS
   return DEFAULT_ORIGINS
@@ -33,6 +49,7 @@ export function createWebSocketServer(httpServer: Server): WebSocketServer {
     path: "/ws/agent", // WebSocket endpoint: ws://localhost:3001/ws/agent
     maxPayload: MAX_PAYLOAD_BYTES,
   })
+  activeWss = wss
 
   logStartup("WebSocket server ready", {
     service: "WsServer",

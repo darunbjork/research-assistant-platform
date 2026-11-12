@@ -27,6 +27,21 @@ const embeddingService = new EmbeddingService(env.GEMINI_API_KEY, redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
 const generationService = new GenerationService(env.GEMINI_API_KEY)
 
+// ── Running-agent registry (task 5.5) ─────────────────────────────────────
+// Every in-flight run's AbortController, across all live connections, so
+// graceful shutdown can abort them before closing the sockets.
+const activeRunControllers = new Set<AbortController>()
+
+/** Abort every in-flight agent run. Called once during shutdown (step 3). */
+export function abortRunningAgents(): void {
+  for (const controller of activeRunControllers) {
+    if (!controller.signal.aborted) {
+      controller.abort()
+    }
+  }
+  activeRunControllers.clear()
+}
+
 // ── Handler Class ─────────────────────────────────────────────────────────
 
 export class AgentWsHandler {
@@ -234,6 +249,7 @@ export class AgentWsHandler {
     this.isRunning = true
     const runController = new AbortController()
     this.runController = runController
+    activeRunControllers.add(runController)
 
     logRagEvent("agent_step", "Streaming agent session started via WebSocket", {
       service: "AgentWsHandler",
@@ -285,6 +301,7 @@ export class AgentWsHandler {
     } finally {
       this.isRunning = false
       this.runController = null
+      activeRunControllers.delete(runController)
     }
   }
 
