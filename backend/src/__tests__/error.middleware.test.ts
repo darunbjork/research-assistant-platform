@@ -2,6 +2,10 @@
 // Tests for the global error middleware and custom error classes.
 
 import type { Request, Response, NextFunction } from "express"
+import express from "express"
+import { createServer, type Server } from "http"
+import type { AddressInfo } from "net"
+import { JSON_BODY_LIMIT_BYTES } from "../config/limits"
 import {
   errorMiddleware,
   AppError,
@@ -199,5 +203,127 @@ describe("errorMiddleware()", () => {
     expect(body.error).toContain("Detailed dev message")
 
     env.NODE_ENV = savedEnv
+  })
+})
+
+// ── F7: body-parser errors ─────────────────────────────────────────────────
+// Until F7 was fixed these fell through to the generic 500 branch.
+describe("errorMiddleware() — body-parser errors (F7)", () => {
+  /** The shape body-parser + http-errors emit: Error with `type` + `status`. */
+  function makeBodyParserError(type: string, status: number): Error {
+    const err = new Error(`[${type}] body rejected`)
+    Object.assign(err, { type, status, statusCode: status })
+    return err
+  }
+
+  it("maps entity.too.large to 413 with the size message", () => {
+    const res = makeRes()
+
+    errorMiddleware(
+      makeBodyParserError("entity.too.large", 413),
+      makeReq() as Request,
+      res as unknown as Response,
+      makeNext()
+    )
+
+    expect(res.statusCode).toBe(413)
+    const body = res.body as { success: boolean; error: string }
+    expect(body.success).toBe(false)
+    expect(body.error).toContain("2 MB")
+  })
+
+  it("maps entity.parse.failed to 400 with an invalid-JSON message", () => {
+    const res = makeRes()
+
+    errorMiddleware(
+      makeBodyParserError("entity.parse.failed", 400),
+      makeReq() as Request,
+      res as unknown as Response,
+      makeNext()
+    )
+
+    expect(res.statusCode).toBe(400)
+    const body = res.body as { error: string }
+    expect(body.error).toContain("Invalid JSON")
+  })
+
+  it("uses the parser's own status for other body errors (e.g. 415 charset)", () => {
+    const res = makeRes()
+
+    errorMiddleware(
+      makeBodyParserError("entity.supported-charset", 415),
+      makeReq() as Request,
+      res as unknown as Response,
+      makeNext()
+    )
+
+    expect(res.statusCode).toBe(415)
+    const body = res.body as { error: string }
+    expect(body.error).toBe("Invalid request body")
+  })
+
+  it("does not mistake a plain Error for a body-parser error", () => {
+    const res = makeRes()
+
+    errorMiddleware(new Error("boom"), makeReq() as Request, res as unknown as Response, makeNext())
+
+    expect(res.statusCode).toBe(500)
+  })
+})
+
+// ── F7 regression against REAL express.json() ──────────────────────────────
+// Unit tests above hand-craft the error shape; these prove Express 5
+// actually produces it and that the middleware answers 413/400 end to end.
+describe("errorMiddleware() — real express.json() (F7 regression)", () => {
+  let server: Server
+  let baseUrl: string
+
+  beforeAll(async () => {
+    const app = express()
+    // Same constant as app.ts — the parser limit and the F7 message both
+    // derive from config/limits.ts (Day 0.5).
+    app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }))
+    app.use((_req: Request, res: Response) => {
+      res.status(200).json({ ok: true })
+    })
+    app.use(errorMiddleware)
+    server = createServer(app)
+    await new Promise<void>(resolve => {
+      server.listen(0, "127.0.0.1", () => resolve())
+    })
+    const address = server.address() as AddressInfo
+    baseUrl = `http://127.0.0.1:${address.port}`
+  })
+
+  afterAll(async () => {
+    server.closeAllConnections()
+    await new Promise<void>(resolve => {
+      server.close(() => resolve())
+    })
+  })
+
+  it("returns 413 for a JSON body over the 2 MB limit", async () => {
+    const response = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ pad: "x".repeat(3_000_000) }),
+    })
+
+    expect(response.status).toBe(413)
+    const body = (await response.json()) as { success: boolean; error: string }
+    expect(body.success).toBe(false)
+    expect(body.error).toContain("2 MB")
+  })
+
+  it("returns 400 for a malformed JSON body", async () => {
+    const response = await fetch(baseUrl, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: '{"broken":',
+    })
+
+    expect(response.status).toBe(400)
+    const body = (await response.json()) as { error: string }
+    expect(body.error).toContain("Invalid JSON")
   })
 })

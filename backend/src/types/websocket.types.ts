@@ -15,12 +15,33 @@
 //   SERVER → CLIENT: { type: "status", status: "generating" }
 //   SERVER → CLIENT: { type: "complete", result: { ... } }
 //   SERVER → CLIENT: { type: "error", message: "..." }   (on failure)
+//
+// VOICE EXTENSION (Day 1 types — additive, no existing message changed):
+//   CLIENT → SERVER: { type: "voice_start", sessionId }
+//   CLIENT → SERVER: { type: "barge_in", sessionId }   (stop speaking)
+//   CLIENT → SERVER: { type: "voice_end", sessionId }   (utterance over)
+//   CLIENT → SERVER: binary audio_chunk (PCM16 LE, 16 kHz mono, ≤4096 B)
+//   SERVER → CLIENT: { type: "transcript_interim", sessionId, text }
+//   SERVER → CLIENT: { type: "transcript_final", sessionId, text, latencyMs }
+//   SERVER → CLIENT: { type: "voice_summary", sessionId, text }
+//   SERVER → CLIENT: binary tts_chunk (4-byte BE uint32 sequence + audio)
+//   SERVER → CLIENT: { type: "tts_done", sessionId }
+//   SERVER → CLIENT: { type: "voice_error", sessionId, code, message }
+// Binary frames are routed on the `isBinary` flag BEFORE this JSON parser
+// (Day 3), so they never reach parseClientMessage.
 
 import type { AgentStatus, AgentStep, AgentResult } from "./agent.types"
+import type { VoiceErrorCode } from "./voice.types"
 
 // ── Messages the CLIENT sends to the SERVER ───────────────────────────────
 
-export type ClientMessage = StartAgentMessage | PingMessage | AuthMessage
+export type ClientMessage =
+  | StartAgentMessage
+  | PingMessage
+  | AuthMessage
+  | VoiceStartMessage
+  | BargeInMessage
+  | VoiceEndMessage
 
 export interface StartAgentMessage {
   type: "start"
@@ -37,6 +58,23 @@ export interface AuthMessage {
   token: string
 }
 
+// ── Voice layer: CLIENT → SERVER control messages (Day 1) ─────────────────
+
+export interface VoiceStartMessage {
+  type: "voice_start"
+  sessionId: string
+}
+
+export interface BargeInMessage {
+  type: "barge_in"
+  sessionId: string
+}
+
+export interface VoiceEndMessage {
+  type: "voice_end"
+  sessionId: string
+}
+
 // ── Messages the SERVER sends to the CLIENT ───────────────────────────────
 
 export type ServerMessage =
@@ -48,6 +86,11 @@ export type ServerMessage =
   | AgentCompleteMessage
   | AgentErrorMessage
   | PongMessage
+  | TranscriptInterimMessage
+  | TranscriptFinalMessage
+  | VoiceSummaryMessage
+  | TtsDoneMessage
+  | VoiceErrorMessage
 
 export interface ConnectedMessage {
   type: "connected"
@@ -116,6 +159,40 @@ export interface PongMessage {
   type: "pong"
 }
 
+// ── Voice layer: SERVER → CLIENT messages (Day 1) ─────────────────────────
+
+export interface TranscriptInterimMessage {
+  type: "transcript_interim"
+  sessionId: string
+  text: string
+}
+
+export interface TranscriptFinalMessage {
+  type: "transcript_final"
+  sessionId: string
+  text: string
+  /** voice_start → final transcript available (browser clock, ms). */
+  latencyMs: number
+}
+
+export interface VoiceSummaryMessage {
+  type: "voice_summary"
+  sessionId: string
+  text: string
+}
+
+export interface TtsDoneMessage {
+  type: "tts_done"
+  sessionId: string
+}
+
+export interface VoiceErrorMessage {
+  type: "voice_error"
+  sessionId: string
+  code: VoiceErrorCode
+  message: string
+}
+
 // ── Helper: type-safe message serialiser ─────────────────────────────────
 export function toJson(message: ServerMessage): string {
   return JSON.stringify(message)
@@ -132,6 +209,9 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       case "start":
       case "ping":
       case "auth":
+      case "voice_start":
+      case "barge_in":
+      case "voice_end":
         return parsed as ClientMessage
       default:
         return null

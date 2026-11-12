@@ -181,10 +181,11 @@ describe("WebSocket server hardening (2.8)", () => {
   })
 
   describe("payload cap", () => {
-    it("closes the connection when a frame exceeds 64 KiB", async () => {
+    it("closes the connection when a frame exceeds 4608 bytes", async () => {
       // NODE_ENV=test skips the origin check; the payload cap is protocol
       // level (maxPayload) and always active. 1009 = message too big.
-      const oversized = "x".repeat(64 * 1024 + 1)
+      // Cap = 4096 (voice frame) + 512 (JSON headroom) — see ws.server.ts.
+      const oversized = "x".repeat(4096 + 512 + 1)
 
       const result = await connectUntilClose("http://localhost:5173", oversized)
 

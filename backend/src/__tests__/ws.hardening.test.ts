@@ -75,6 +75,15 @@ jest.mock("../utils/jwt.utils", () => ({
   })),
 }))
 
+// ── Prisma: handleAuth re-checks the user still exists (Day 3a) ──────────
+jest.mock("../utils/prisma", () => ({
+  prisma: {
+    user: {
+      findUnique: jest.fn(async () => ({ id: "user-ws" })),
+    },
+  },
+}))
+
 // ── Streaming agent mocked so no Gemini call can happen ───────────────────
 const mockStreamingRun = jest.fn().mockResolvedValue(undefined)
 
@@ -166,12 +175,14 @@ describe("WebSocket handler hardening (2.8)", () => {
       expect(ws.close).toHaveBeenCalledWith(4001, "authentication timeout")
     })
 
-    it("does not close after a successful auth", () => {
+    it("does not close after a successful auth", async () => {
       const ws = new FakeWebSocket()
       new AgentWsHandler(ws as unknown as WebSocket)
 
       ws.emit("message", JSON.stringify({ type: "auth", token: "test-token" }))
-      jest.advanceTimersByTime(10_000)
+      // Async advance: auth now awaits the user-exists DB check (Day 3a)
+      // before clearing the timer.
+      await jest.advanceTimersByTimeAsync(10_000)
 
       expect(ws.close).not.toHaveBeenCalled()
       expect(parsed(ws).some(m => m.type === "auth_confirmed")).toBe(true)

@@ -6,6 +6,13 @@ import { HybridSearchService } from "../services/hybrid.search.service"
 import { GenerationService } from "../services/generation.service"
 import { StreamingAgentService } from "../services/streaming.agent.service"
 import { parseClientMessage, toJson, type ServerMessage } from "../types/websocket.types"
+import {
+  VOICE_SAMPLE_RATE,
+  VOICE_MAX_FRAME_BYTES,
+  VOICE_MAX_UTTERANCE_MS,
+  VOICE_MAX_SESSION_MS,
+  type VoiceErrorCode,
+} from "../types/voice.types"
 import { logRagEvent, logError } from "../utils/logger"
 import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
 import { consumeGlobalBudget } from "../utils/global-budget"
@@ -19,6 +26,27 @@ const AUTH_TIMEOUT_MS = 10_000
 // Application close codes (4000-4999 range is reserved for applications).
 const CLOSE_AUTH_TIMEOUT = 4001
 const CLOSE_TOKEN_EXPIRED = 4001
+
+// ── Voice layer constants (Day 3a) ────────────────────────────────────────
+// 16 kHz PCM16 mono is 32 bytes per millisecond (32 000 B/s).
+const PCM_BYTES_PER_MS = (VOICE_SAMPLE_RATE * 2) / 1000
+// 60 s of that audio = 60 000 ms × 32 B = 1 920 000 bytes — the server-side
+// utterance cap, enforced by counting bytes (no clock dependency).
+const MAX_UTTERANCE_BYTES = VOICE_MAX_UTTERANCE_MS * PCM_BYTES_PER_MS
+// Pacing grace: a sender may run 2 s of audio ahead of real time (network
+// jitter, bursty capture). Anything beyond that is dropped, not queued —
+// Deepgram bills audio *streamed*, so an always-open mic must not be able
+// to push 5 minutes of audio in 1 second (cost.md, Day 4 rule).
+const PACE_BURST_BYTES = PCM_BYTES_PER_MS * 2000
+
+/** Per-connection voice session state (one utterance at a time). */
+interface VoiceSession {
+  sessionId: string
+  startedAtMs: number
+  utteranceOpen: boolean
+  bytesReceived: number // this utterance only
+  droppedFrames: number // this utterance only
+}
 
 // ── Service Instances ─────────────────────────────────────────────────────
 // Shared across all WebSocket connections — created once at module load.
@@ -52,6 +80,8 @@ export class AgentWsHandler {
   /** `exp` (seconds since epoch) of the token accepted at auth time. */
   private tokenExp: number | null = null
   private authTimer: ReturnType<typeof setTimeout> | null = null
+  /** Active voice session (Day 3a); null until the first voice_start. */
+  private voiceSession: VoiceSession | null = null
 
   constructor(private readonly ws: WebSocket) {
     // Auth timeout: a connection that never authenticates is closed (4001)
@@ -78,8 +108,15 @@ export class AgentWsHandler {
       message: "Connected to ResearchBot. Please authenticate.",
     })
 
-    // Handle incoming messages from the client
-    this.ws.on("message", (raw: Buffer | string) => {
+    // Handle incoming messages from the client. Binary frames are AUDIO —
+    // routed to the voice path BEFORE any JSON parsing (Day 3a) and
+    // rejected outright until authentication has completed.
+    this.ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
+      if (isBinary) {
+        const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
+        this.handleAudioFrame(bytes)
+        return
+      }
       void this.handleMessage(raw.toString())
     })
 
@@ -129,6 +166,18 @@ export class AgentWsHandler {
       case "start":
         await this.handleStart(message.query, message.sessionId)
         break
+
+      case "voice_start":
+        await this.handleVoiceStart(message.sessionId)
+        break
+
+      case "voice_end":
+        this.handleVoiceEnd(message.sessionId)
+        break
+
+      case "barge_in":
+        this.handleBargeIn(message.sessionId)
+        break
     }
   }
 
@@ -139,6 +188,28 @@ export class AgentWsHandler {
 
     try {
       const payload = verifyAccessToken(cleanToken)
+
+      // The token is cryptographically valid — now prove the account still
+      // exists. Sockets live for hours and must not outlive deleted users
+      // (Day 3a); the DB check runs again at every voice_start.
+      const user = await prisma.user.findUnique({
+        where: { id: payload.userId },
+        select: { id: true },
+      })
+      if (user === null) {
+        this.send({
+          type: "error",
+          sessionId: "auth",
+          message: "Authentication failed. Please provide a valid access token.",
+          code: "AUTH_FAILED",
+        })
+        logRagEvent("agent_step", "WebSocket auth rejected: user no longer exists", {
+          service: "AgentWsHandler",
+          userId: payload.userId,
+        })
+        return
+      }
+
       this.userId = payload.userId
       this.tokenExp = payload.exp ?? null
       this.clearAuthTimer()
@@ -302,6 +373,221 @@ export class AgentWsHandler {
       this.isRunning = false
       this.runController = null
       activeRunControllers.delete(runController)
+    }
+  }
+
+  // ── Voice layer (Day 3a) ────────────────────────────────────────────────
+
+  /** Typed voice failure → voice_error on the wire. */
+  private sendVoiceError(code: VoiceErrorCode, message: string, sessionId?: string): void {
+    this.send({
+      type: "voice_error",
+      sessionId: sessionId ?? this.voiceSession?.sessionId ?? "unknown",
+      code,
+      message,
+    })
+  }
+
+  /**
+   * voice_start: open an utterance (and, the first time, the session).
+   * Re-checks auth state AND that the user still exists — sockets live for
+   * hours, so connect-time checks are not enough.
+   */
+  private async handleVoiceStart(sessionId: string): Promise<void> {
+    if (this.userId === null) {
+      this.sendVoiceError("NOT_AUTHENTICATED", "Authenticate before starting voice.", sessionId)
+      return
+    }
+
+    if (this.tokenExp !== null && Date.now() / 1000 > this.tokenExp) {
+      this.sendVoiceError(
+        "TOKEN_EXPIRED",
+        "Access token expired. Please reconnect and re-authenticate.",
+        sessionId
+      )
+      this.ws.close(CLOSE_TOKEN_EXPIRED, "token expired")
+      return
+    }
+
+    let user: { id: string } | null = null
+    try {
+      user = await prisma.user.findUnique({
+        where: { id: this.userId },
+        select: { id: true },
+      })
+    } catch (error: unknown) {
+      logError("Voice start user re-check failed", error, {
+        service: "AgentWsHandler",
+        userId: this.userId,
+      })
+      this.sendVoiceError("VOICE_INTERNAL", "Could not start voice session.", sessionId)
+      return
+    }
+    if (user === null) {
+      this.voiceSession = null
+      this.sendVoiceError("NOT_AUTHENTICATED", "Account no longer exists.", sessionId)
+      return
+    }
+
+    if (this.voiceSession !== null) {
+      const ageMs = Date.now() - this.voiceSession.startedAtMs
+      if (ageMs > VOICE_MAX_SESSION_MS) {
+        this.voiceSession = null
+        this.sendVoiceError(
+          "SESSION_LIMIT",
+          `Voice session exceeded ${VOICE_MAX_SESSION_MS / 60_000} minutes.`,
+          sessionId
+        )
+        return
+      }
+      if (this.voiceSession.sessionId === sessionId) {
+        // New utterance inside the same session: reset the per-utterance
+        // counters, keep the session clock so the 10-minute cap still holds.
+        this.voiceSession.utteranceOpen = true
+        this.voiceSession.bytesReceived = 0
+        this.voiceSession.droppedFrames = 0
+        return
+      }
+      // Different sessionId replaces the session entirely.
+    }
+
+    this.voiceSession = {
+      sessionId,
+      startedAtMs: Date.now(),
+      utteranceOpen: true,
+      bytesReceived: 0,
+      droppedFrames: 0,
+    }
+    logRagEvent("agent_step", "Voice session started", {
+      service: "AgentWsHandler",
+      sessionId,
+      userId: this.userId,
+    })
+  }
+
+  /** voice_end: close the utterance; the 10-minute session survives. */
+  private handleVoiceEnd(sessionId: string): void {
+    const session = this.voiceSession
+    if (session === null || session.sessionId !== sessionId || !session.utteranceOpen) {
+      this.sendVoiceError("NO_VOICE_SESSION", "voice_end without an open utterance.", sessionId)
+      return
+    }
+    session.utteranceOpen = false
+    logRagEvent("agent_step", "Voice utterance ended", {
+      service: "AgentWsHandler",
+      sessionId,
+      userId: this.userId ?? "unauthenticated",
+      bytesReceived: session.bytesReceived,
+    })
+  }
+
+  /**
+   * barge_in (Day 3a): accepted as a no-op while the session exists —
+   * there is no TTS to stop yet (Day 7). Unknown sessions are ignored so a
+   * stale barge_in after teardown cannot surface a spurious error.
+   */
+  private handleBargeIn(sessionId: string): void {
+    const session = this.voiceSession
+    if (session !== null && session.sessionId === sessionId) {
+      logRagEvent("agent_step", "Voice barge-in received", {
+        service: "AgentWsHandler",
+        sessionId,
+        userId: this.userId ?? "unauthenticated",
+      })
+    }
+  }
+
+  /**
+   * Binary audio frame. Order matters (Day 3a spec):
+   *   1. reject before auth completes   2. require an open utterance
+   *   3. frame ≤4096 B                  4. session ≤10 min
+   *   5. pacing — drop frames faster than real time   6. utterance ≤60 s of bytes
+   * The utterance cap counts BYTES (32 000 B/s), not wall time, so it holds
+   * regardless of how the client spaces frames.
+   */
+  private handleAudioFrame(bytes: Buffer): void {
+    if (this.userId === null) {
+      this.sendVoiceError("NOT_AUTHENTICATED", "Authenticate before sending audio.")
+      return
+    }
+
+    const session = this.voiceSession
+    if (session === null || !session.utteranceOpen) {
+      this.sendVoiceError("NO_VOICE_SESSION", "Send voice_start before audio frames.")
+      return
+    }
+
+    if (bytes.length > VOICE_MAX_FRAME_BYTES) {
+      this.sendVoiceError(
+        "FRAME_TOO_LARGE",
+        `Audio frames must be ${VOICE_MAX_FRAME_BYTES} bytes or smaller.`
+      )
+      return
+    }
+
+    const nowMs = Date.now()
+
+    if (nowMs - session.startedAtMs > VOICE_MAX_SESSION_MS) {
+      this.voiceSession = null
+      this.sendVoiceError(
+        "SESSION_LIMIT",
+        `Voice session exceeded ${VOICE_MAX_SESSION_MS / 60_000} minutes.`
+      )
+      return
+    }
+
+    // Pacing: allow a 2-second burst, then require ~real-time arrival.
+    const elapsedMs = nowMs - session.startedAtMs
+    const allowedBytes = elapsedMs * PCM_BYTES_PER_MS + PACE_BURST_BYTES
+    if (session.bytesReceived + bytes.length > allowedBytes) {
+      session.droppedFrames += 1
+      logRagEvent("agent_step", "Voice audio frame dropped (faster than real time)", {
+        service: "AgentWsHandler",
+        sessionId: session.sessionId,
+        userId: this.userId,
+        droppedFrames: session.droppedFrames,
+      })
+      return
+    }
+
+    if (session.bytesReceived + bytes.length > MAX_UTTERANCE_BYTES) {
+      // Utterance over: stop accepting audio until the next voice_start;
+      // the session itself survives (client may start a fresh utterance).
+      session.utteranceOpen = false
+      this.sendVoiceError(
+        "UTTERANCE_TOO_LONG",
+        `Utterance exceeds ${VOICE_MAX_UTTERANCE_MS / 1000} seconds of audio.`
+      )
+      return
+    }
+
+    session.bytesReceived += bytes.length
+  }
+
+  /** Voice counters for diagnostics and Day 11 metrics. */
+  getVoiceDiagnostics(): {
+    sessionId: string | null
+    utteranceOpen: boolean
+    startedAtMs: number
+    bytesReceived: number
+    droppedFrames: number
+  } {
+    const session = this.voiceSession
+    if (session === null) {
+      return {
+        sessionId: null,
+        utteranceOpen: false,
+        startedAtMs: 0,
+        bytesReceived: 0,
+        droppedFrames: 0,
+      }
+    }
+    return {
+      sessionId: session.sessionId,
+      utteranceOpen: session.utteranceOpen,
+      startedAtMs: session.startedAtMs,
+      bytesReceived: session.bytesReceived,
+      droppedFrames: session.droppedFrames,
     }
   }
 

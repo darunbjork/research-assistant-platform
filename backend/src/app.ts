@@ -1,6 +1,7 @@
 /* eslint-disable no-console */
 import "./preload-env"
 import { env } from "./config/env"
+import { JSON_BODY_LIMIT_BYTES } from "./config/limits"
 import "./telemetry/tracer"
 import express, { type Request, type Response } from "express"
 import cors from "cors"
@@ -50,9 +51,10 @@ app.use(
     credentials: true,
   })
 )
-// 2 MB covers 500,000 characters of multibyte text plus the JSON envelope
-// (D9) while still bounding memory per request.
-app.use(express.json({ limit: "2mb" }))
+// The limit (2 MB, config/limits.ts — shared with the F7 error message so
+// they can never drift) covers 500,000 characters of multibyte text plus
+// the JSON envelope (D9) while still bounding memory per request.
+app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }))
 app.use(requestLoggerMiddleware)
 
 // ── API Documentation ─────────────────────────────────────────────────────

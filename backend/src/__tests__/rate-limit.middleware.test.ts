@@ -78,7 +78,15 @@ jest.mock("../utils/redis", () => ({
 }))
 
 // Now import the middleware (it will use our mocked Redis)
-const { createRateLimiter, createIpRateLimiter, consumeRateLimit, LOGIN_LIMIT, REGISTER_LIMIT } =
+const {
+  createRateLimiter,
+  createIpRateLimiter,
+  consumeRateLimit,
+  LOGIN_LIMIT,
+  REGISTER_LIMIT,
+  VOICE_TURN_LIMIT,
+  VOICE_SESSION_LIMIT,
+} =
   require("../middleware/rate-limit.middleware") as typeof import("../middleware/rate-limit.middleware")
 
 // ── Test Helpers ──────────────────────────────────────────────────────────
@@ -540,5 +548,60 @@ describe("auth IP limit configs", () => {
       failMode: "closed",
       keyPrefix: "register",
     })
+  })
+})
+
+// ── Voice limits pinned to the plan's numbers (voice Day 2) ────────────────
+describe("voice limit configs (Day 2)", () => {
+  beforeEach(() => {
+    mockRedisStore.clear()
+    mockTtlStore.clear()
+    jest.clearAllMocks()
+  })
+
+  it("VOICE_TURN_LIMIT is 20 per hour, fail closed, keyed voice_turn", () => {
+    expect(VOICE_TURN_LIMIT).toMatchObject({
+      windowMs: 60 * 60 * 1000,
+      max: 20,
+      failMode: "closed",
+      keyPrefix: "voice_turn",
+    })
+  })
+
+  it("VOICE_SESSION_LIMIT is 10 per hour, fail closed, keyed voice_session", () => {
+    expect(VOICE_SESSION_LIMIT).toMatchObject({
+      windowMs: 60 * 60 * 1000,
+      max: 10,
+      failMode: "closed",
+      keyPrefix: "voice_session",
+    })
+  })
+
+  it("refuses the 21st voice turn for a user", async () => {
+    for (let i = 0; i < 20; i++) {
+      const decision = await consumeRateLimit("voice-user", VOICE_TURN_LIMIT)
+      expect(decision.allowed).toBe(true)
+    }
+
+    const denied = await consumeRateLimit("voice-user", VOICE_TURN_LIMIT)
+    expect(denied.allowed).toBe(false)
+    expect(denied.remaining).toBe(0)
+    expect(mockRedisStore.get("rl:voice_turn:voice-user")).toBe(21)
+  })
+
+  it("keeps session and turn counters independent", async () => {
+    const session = await consumeRateLimit("voice-user", VOICE_SESSION_LIMIT)
+    expect(session.allowed).toBe(true)
+    expect(mockRedisStore.get("rl:voice_session:voice-user")).toBe(1)
+    expect(mockRedisStore.get("rl:voice_turn:voice-user")).toBeUndefined()
+  })
+
+  it("fails closed when Redis is down (voice spends money)", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const decision = await consumeRateLimit("voice-user", VOICE_TURN_LIMIT)
+    expect(decision).toEqual({ allowed: false, remaining: 0, retryAfterSec: 60 })
   })
 })

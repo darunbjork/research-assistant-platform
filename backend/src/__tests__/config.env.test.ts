@@ -105,6 +105,75 @@ describe("env schema", () => {
   })
 })
 
+describe("voice env (Day 1)", () => {
+  it("defaults VOICE_MOCK to true so no provider can be called by accident", () => {
+    const result = envSchema.safeParse(VALID)
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.VOICE_MOCK).toBe(true)
+    expect(result.data.DEEPGRAM_API_KEY).toBeUndefined()
+    expect(result.data.ELEVENLABS_API_KEY).toBeUndefined()
+    expect(result.data.ELEVENLABS_VOICE_ID).toBeUndefined()
+    expect(result.data.DEEPGRAM_MODEL).toBe("nova-3")
+    expect(result.data.ELEVENLABS_MODEL_ID).toBe("eleven_flash_v2_5")
+  })
+
+  it("parses VOICE_MOCK case-insensitively with whitespace", () => {
+    // false mode demands credentials (superRefine), so supply them here —
+    // this test is about the string→boolean parse, not the credential rule.
+    const result = envSchema.safeParse({
+      ...VALID,
+      VOICE_MOCK: " FALSE ",
+      DEEPGRAM_API_KEY: "deepgram-test-key-0001",
+      ELEVENLABS_API_KEY: "elevenlabs-test-key-01",
+      ELEVENLABS_VOICE_ID: "voice-id-abc123",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.VOICE_MOCK).toBe(false)
+  })
+
+  it("rejects an invalid VOICE_MOCK value", () => {
+    const result = envSchema.safeParse({ ...VALID, VOICE_MOCK: "yes" })
+    expect(result.success).toBe(false)
+  })
+
+  it("requires all three voice credentials when VOICE_MOCK=false", () => {
+    const result = envSchema.safeParse({ ...VALID, VOICE_MOCK: "false" })
+    expect(result.success).toBe(false)
+    if (result.success) return
+    const paths = result.error.issues.map(issue => issue.path.join("."))
+    expect(paths).toContain("DEEPGRAM_API_KEY")
+    expect(paths).toContain("ELEVENLABS_API_KEY")
+    expect(paths).toContain("ELEVENLABS_VOICE_ID")
+  })
+
+  it("accepts VOICE_MOCK=false when all three voice credentials are present", () => {
+    const result = envSchema.safeParse({
+      ...VALID,
+      VOICE_MOCK: "false",
+      DEEPGRAM_API_KEY: "deepgram-test-key-0001",
+      ELEVENLABS_API_KEY: "elevenlabs-test-key-01",
+      ELEVENLABS_VOICE_ID: "voice-id-abc123",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.VOICE_MOCK).toBe(false)
+  })
+
+  it("treats empty voice credentials as unset (mock mode still passes)", () => {
+    const result = envSchema.safeParse({
+      ...VALID,
+      DEEPGRAM_API_KEY: "",
+      ELEVENLABS_API_KEY: "",
+      ELEVENLABS_VOICE_ID: "",
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.DEEPGRAM_API_KEY).toBeUndefined()
+    expect(result.data.ELEVENLABS_API_KEY).toBeUndefined()
+    expect(result.data.ELEVENLABS_VOICE_ID).toBeUndefined()
+  })
+})
+
 describe("loadEnv", () => {
   // Runs loadEnv against a source that must fail, captures what it printed,
   // and restores the process.exit / console.error spies.

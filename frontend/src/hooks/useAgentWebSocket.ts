@@ -201,6 +201,15 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
         pingIntervalRef.current = null
       }
 
+      // F5: the server aborts any in-flight run when this socket closes
+      // (agent.ws.handler.ts "close" listener), so no "complete"/"error"
+      // message is coming for it. Reset the run flags here — otherwise
+      // startQuery stays blocked with "A query is already running" until
+      // a full page reload. Done/error states are kept: they describe a
+      // finished run, not a running one.
+      setIsRunning(false)
+      setAgentStatus(prev => (prev === "done" || prev === "error" ? prev : "idle"))
+
       // 4001 = token expired (or auth never completed). Refresh once, then
       // reconnect with the new token; if the refresh fails, log out.
       if (event.code === 4001 && !refreshAttemptedRef.current) {

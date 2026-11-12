@@ -108,6 +108,15 @@ jest.mock("../utils/jwt.utils", () => ({
   })),
 }))
 
+// handleAuth re-checks the user still exists in the DB (Day 3a).
+jest.mock("../utils/prisma", () => ({
+  prisma: {
+    user: {
+      findUnique: jest.fn(async () => ({ id: "user-ws" })),
+    },
+  },
+}))
+
 const mockStreamingRun = jest.fn().mockResolvedValue(undefined)
 
 jest.mock("../services/streaming.agent.service", () => ({
