@@ -26,7 +26,7 @@ const mockRedis = {
       throw new Error("Redis unavailable")
     }
     // One entry per queued command, in order — mirrors real MULTI/EXEC
-    // results so consumeVoiceBudget can read both INCRBY values.
+    // results so callers can read INCRBY values positionally.
     let execResults: Array<[null, number]> = []
     const pipeline: Pipeline = {
       incrby: jest.fn(),
@@ -53,6 +53,36 @@ const mockRedis = {
     })
     return pipeline
   }),
+  // consumeVoiceBudget() EVALs the check-before-increment Lua script
+  // (Day 2.5): the mock mirrors its exact semantics — refusal writes NOTHING.
+  eval: jest.fn(
+    async (_script: string, numkeys: number, ...rest: Array<string | number>): Promise<unknown> => {
+      if (mockRedisDown) {
+        throw new Error("Redis unavailable")
+      }
+      const keys = rest.slice(0, numkeys).map(String)
+      const argv = rest.slice(numkeys).map(String)
+      const globalKey = keys[0] ?? ""
+      const voiceKey = keys[1] ?? ""
+      const cost = Number(argv[0])
+      const globalMax = Number(argv[1])
+      const voiceMax = Number(argv[2])
+      const ttl = Number(argv[3])
+
+      const globalUsed = mockRedisStore.get(globalKey) ?? 0
+      const voiceUsed = mockRedisStore.get(voiceKey) ?? 0
+      if (voiceUsed + cost > voiceMax || globalUsed + cost > globalMax) {
+        return [-1, -1] // refused — nothing incremented
+      }
+      const globalNew = globalUsed + cost
+      const voiceNew = voiceUsed + cost
+      mockRedisStore.set(globalKey, globalNew)
+      mockRedisStore.set(voiceKey, voiceNew)
+      if (!mockTtlStore.has(globalKey)) mockTtlStore.set(globalKey, ttl)
+      if (!mockTtlStore.has(voiceKey)) mockTtlStore.set(voiceKey, ttl)
+      return [globalNew, voiceNew]
+    }
+  ),
 }
 
 jest.mock("../utils/redis", () => ({ redis: mockRedis, default: mockRedis }))
@@ -190,28 +220,35 @@ describe("consumeVoiceBudget (Day 2 — 40% voice sub-cap)", () => {
     expect(mockTtlStore.get(voiceBudgetKey())).toBe(48 * 60 * 60)
   })
 
-  it("refuses once the voice sub-cap is exceeded even with global room", async () => {
+  it("refused by the voice sub-cap leaves the GLOBAL counter unchanged", async () => {
     env.GLOBAL_DAILY_LLM_CALLS_MAX = 100 // voice cap = 40
 
     await expect(consumeVoiceBudget(40)).resolves.toBe(true) // exactly at sub-cap
     await expect(consumeVoiceBudget(1)).resolves.toBe(false) // voice 41 > 40
-    // The global counter still had room (41 ≤ 100) — only the sub-cap refused.
-    expect(mockRedisStore.get(globalBudgetKey())).toBe(41)
+
+    // Check-before-increment: a refused voice call must not drain the
+    // shared budget — otherwise a refused flood defeats the sub-cap.
+    expect(mockRedisStore.get(globalBudgetKey())).toBe(40)
+    expect(mockRedisStore.get(voiceBudgetKey())).toBe(40)
   })
 
   it("keeps text working after voice is locked out (the point of the sub-cap)", async () => {
     env.GLOBAL_DAILY_LLM_CALLS_MAX = 100
 
-    await expect(consumeVoiceBudget(41)).resolves.toBe(false) // voice over cap
-    await expect(consumeGlobalBudget(58)).resolves.toBe(true) // text: 99 ≤ 100
-    await expect(consumeVoiceBudget(1)).resolves.toBe(false) // voice still locked
+    await expect(consumeVoiceBudget(40)).resolves.toBe(true) // voice at its cap
+    await expect(consumeVoiceBudget(1)).resolves.toBe(false) // refused, nothing changes
+    await expect(consumeGlobalBudget(59)).resolves.toBe(true) // text: 99 ≤ 100
+    await expect(consumeVoiceBudget(1)).resolves.toBe(false) // voice still at cap
   })
 
-  it("refuses when the global max is exceeded even if the sub-cap has room", async () => {
+  it("refused by the global cap also writes nothing", async () => {
     env.GLOBAL_DAILY_LLM_CALLS_MAX = 10 // voice cap = 4
 
     await consumeGlobalBudget(7) // text took 7 of 10
-    await expect(consumeVoiceBudget(4)).resolves.toBe(false) // global 11 > 10
+    await expect(consumeVoiceBudget(4)).resolves.toBe(false) // 7 + 4 = 11 > 10
+
+    expect(mockRedisStore.get(globalBudgetKey())).toBe(7) // unchanged
+    expect(mockRedisStore.get(voiceBudgetKey())).toBeUndefined() // never written
   })
 
   it("fails closed when Redis is unavailable", async () => {
@@ -219,18 +256,8 @@ describe("consumeVoiceBudget (Day 2 — 40% voice sub-cap)", () => {
     await expect(consumeVoiceBudget(1)).resolves.toBe(false)
   })
 
-  it("fails closed when the transaction returns no result", async () => {
-    mockRedis.multi.mockImplementationOnce(() => {
-      const chain: Pipeline = {
-        incrby: jest.fn(),
-        expire: jest.fn(),
-        exec: jest.fn(),
-      }
-      chain.incrby.mockReturnValue(chain)
-      chain.expire.mockReturnValue(chain)
-      chain.exec.mockResolvedValue(null)
-      return chain
-    })
+  it("fails closed when the script returns no result", async () => {
+    mockRedis.eval.mockImplementationOnce(async () => null)
 
     await expect(consumeVoiceBudget(1)).resolves.toBe(false)
   })

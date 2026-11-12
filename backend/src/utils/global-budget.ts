@@ -79,16 +79,39 @@ export async function consumeGlobalBudget(cost: number): Promise<boolean> {
 }
 
 /**
- * Consume `cost` units for a VOICE operation: increments BOTH
- * `budget:voice:<date>` and `budget:llm:<date>` in one transaction and
- * returns false when either the voice sub-cap (40 %) or the global max is
- * exceeded. Voice units therefore count toward the global budget too, and
- * the sub-cap bounds how much of it they may take. FAILS CLOSED on any
- * Redis error, exactly like consumeGlobalBudget.
+ * Voice budget script — CHECK-BEFORE-INCREMENT (Day 2.5).
  *
- * Note: like the global counter, a refused call has already incremented the
- * counters — the overshoot is bounded by a single call's cost and the next
- * call is refused.
+ * A voice refusal must leave the GLOBAL counter untouched: otherwise a voice
+ * flood that keeps hitting the 40 % sub-cap would still drain the shared
+ * daily budget and defeat the sub-cap entirely. Lua runs atomically inside
+ * Redis, so read-check-increment cannot race another caller. Returns
+ * [-1, -1] when either cap would be exceeded (nothing is written), else the
+ * post-increment totals [globalUsed, voiceUsed]. EXPIRE … NX keeps the
+ * 48-hour TTL semantics of the global counter (set once, never extended).
+ */
+const VOICE_BUDGET_SCRIPT = `
+local cost = tonumber(ARGV[1])
+local global_max = tonumber(ARGV[2])
+local voice_max = tonumber(ARGV[3])
+local ttl = tonumber(ARGV[4])
+local global_used = tonumber(redis.call('GET', KEYS[1]) or 0)
+local voice_used = tonumber(redis.call('GET', KEYS[2]) or 0)
+if (voice_used + cost > voice_max) or (global_used + cost > global_max) then
+  return {-1, -1}
+end
+local global_new = redis.call('INCRBY', KEYS[1], cost)
+local voice_new = redis.call('INCRBY', KEYS[2], cost)
+redis.call('EXPIRE', KEYS[1], ttl, 'NX')
+redis.call('EXPIRE', KEYS[2], ttl, 'NX')
+return {global_new, voice_new}
+`
+
+/**
+ * Consume `cost` units for a VOICE operation: checks BOTH caps first and
+ * only then increments BOTH `budget:llm:<date>` and `budget:voice:<date>`
+ * (one atomic Lua script). Refused calls change nothing — the shared global
+ * counter is never drained by a flood the sub-cap is already rejecting.
+ * FAILS CLOSED on any Redis error, exactly like consumeGlobalBudget.
  */
 export async function consumeVoiceBudget(cost: number): Promise<boolean> {
   const globalMax = getGlobalDailyMax()
@@ -98,28 +121,33 @@ export async function consumeVoiceBudget(cost: number): Promise<boolean> {
   const voiceKey = voiceBudgetKey(now)
 
   try {
-    const results = await redis
-      .multi()
-      .incrby(globalKey, cost)
-      .expire(globalKey, KEY_TTL_SECONDS, "NX")
-      .incrby(voiceKey, cost)
-      .expire(voiceKey, KEY_TTL_SECONDS, "NX")
-      .exec()
+    const result: unknown = await redis.eval(
+      VOICE_BUDGET_SCRIPT,
+      2,
+      globalKey,
+      voiceKey,
+      String(cost),
+      String(globalMax),
+      String(voiceMax),
+      String(KEY_TTL_SECONDS)
+    )
 
-    if (!results) {
-      throw new Error("Voice budget transaction aborted")
+    if (!Array.isArray(result)) {
+      throw new Error("Voice budget script returned no result")
     }
-
-    // MULTI/EXEC results follow command order: [incrby llm, expire llm,
-    // incrby voice, expire voice].
-    const globalUsed = Number(results[0]?.[1])
-    const voiceUsed = Number(results[2]?.[1])
+    const [globalUsedRaw, voiceUsedRaw] = result as [unknown, unknown]
+    const globalUsed = Number(globalUsedRaw)
+    const voiceUsed = Number(voiceUsedRaw)
     if (!Number.isFinite(globalUsed) || !Number.isFinite(voiceUsed)) {
       throw new Error("Unexpected voice budget response from Redis")
     }
+    if (globalUsed < 0 || voiceUsed < 0) {
+      // Refused by a cap — check-before-increment wrote nothing.
+      return false
+    }
 
     globalBudgetUsed.set(globalUsed)
-    return globalUsed <= globalMax && voiceUsed <= voiceMax
+    return true
   } catch (error: unknown) {
     logError("Voice budget check failed — failing closed", error, {
       service: "GlobalBudget",

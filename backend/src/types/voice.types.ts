@@ -51,6 +51,8 @@ export type VoiceErrorCode =
   | "STT_FAILED" // Deepgram error or bad payload
   | "TTS_FAILED" // ElevenLabs error or bad payload
   | "PROVIDER_UNAVAILABLE" // provider circuit breaker open (Day 2)
+  | "VOICE_BUDGET_REACHED" // provider quota/402 — cap spent, not an outage (Day 5)
+  | "NO_VOICE_SESSION" // audio or voice_end arrived without an active session
   | "VOICE_INTERNAL" // unexpected server fault (logged, generic on the wire)
 
 /**

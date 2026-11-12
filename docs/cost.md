@@ -127,7 +127,9 @@ re-flags this.
 - Startup validation: keys + voice-id required only when `VOICE_MOCK=false`; failures print names only (`env.ts` superRefine, Day 1).
 - `docker-compose.prod.yml` forwards the whole `.env.production` via `env_file` — **no compose change needed** for voice vars.
 - Voice limiter fail-closed (~20 turns/h, 10 sessions/h) + global budget charge per turn (Days 2/6).
+- Voice sub-cap 40 % with **check-before-increment** (atomic Lua): a refused voice call never drains the shared global counter (Day 2.5).
 - Per-provider circuit breaker: 5 consecutive failures → open, 5-minute retry (Day 2).
+- **Breaker error classification (locked for Day 5):** timeouts, 5xx and network errors count toward the threshold; other 4xx caller errors do **not**; a provider quota signal (Deepgram **402**, ElevenLabs `character_limit` refusal) **opens the breaker immediately** and surfaces `VOICE_BUDGET_REACHED` ("voice budget reached") instead of `PROVIDER_UNAVAILABLE` — retrying for 5 minutes cannot fix a spent cap.
 - Hard caps: 60 s utterance, 10 min session, 4 KB frames, 500-char transcripts (Day 1 types).
 - Raw audio never persisted; transcripts only, via new Prisma migration (Day 3).
 - Outage runbook `docs/runbooks/voice-provider-outage.md` (Day 12).

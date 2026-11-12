@@ -8,10 +8,11 @@
 // (CircuitOpenError → voice_error PROVIDER_UNAVAILABLE) instead of hammering
 // a dead provider and paying for timeouts.
 //
-// In-process by design: one backend instance, no Redis round-trip on the
-// hot path. Each replica trips its own breaker — acceptable because the
-// breaker is a latency/cost optimisation, not a correctness gate (the voice
-// limiter and budget still bound usage globally).
+// In-process by design: one backend instance (ADR 0002 — single VPS), no
+// Redis round-trip on the hot path. Each replica trips its own breaker —
+// acceptable because the breaker is a latency/cost optimisation, not a
+// correctness gate (the voice limiter and budget still bound usage
+// globally).
 
 export type CircuitState = "closed" | "open" | "half_open"
 
