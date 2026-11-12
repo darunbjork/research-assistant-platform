@@ -9,9 +9,13 @@ import { env } from "../config/env"
 // If a client does not respond within 30 seconds, it is terminated.
 const HEARTBEAT_INTERVAL_MS = 30_000
 
-// Messages are small JSON — a 64 KiB cap stops a client from flooding us
-// with multi-megabyte frames and exhausting memory.
-const MAX_PAYLOAD_BYTES = 64 * 1024
+// Voice audio frames are ≤4096 B (VOICE_MAX_FRAME_BYTES) — cap the whole
+// connection just above that so a client can't stream multi-megabyte frames
+// and exhaust memory (Day 3a). 512 B of headroom covers the legitimate JSON
+// control messages (auth token, ≤2000-char ASCII query ≈ 2.1 KB total).
+// Trade-off flagged at the Day 3a gate: a 2000-char query in 4-byte UTF-8
+// exceeds 4608 and closes with 1009.
+const MAX_PAYLOAD_BYTES = 4096 + 512
 
 // Origins the browser client may connect from: CORS_ORIGINS from the env
 // schema (task 3.1); when unset, the defaults mirror app.ts's cors() list.
