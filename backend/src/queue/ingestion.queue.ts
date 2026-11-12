@@ -65,9 +65,15 @@ export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJo
     },
   })
 
-  queue.process(CONCURRENCY, async (job: Bull.Job<IngestionJobData>) => {
-    return processIngestionJob(job)
-  })
+  queue
+    .process(CONCURRENCY, async (job: Bull.Job<IngestionJobData>) => {
+      return processIngestionJob(job)
+    })
+    .catch((error: unknown) => {
+      logError("Ingestion queue processor failed to start", error, {
+        service: "IngestionQueue",
+      })
+    })
 
   queue.on("completed", (_job: Bull.Job<IngestionJobData>, result: IngestionJobResult) => {
     logRagEvent("ingest", "Ingestion job completed", {
