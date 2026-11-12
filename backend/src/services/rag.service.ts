@@ -34,6 +34,7 @@ export interface RagResult {
   durationMs: number
   retrievalMs: number // time spent in hybrid search
   generationMs: number // time spent in Gemini generation
+  invalidCitationCount: number // hallucinated [n] citations stripped from the answer
 }
 
 export interface RagOptions {
@@ -108,6 +109,7 @@ export class RagService {
         durationMs: Date.now() - start,
         retrievalMs,
         generationMs: fallback.durationMs,
+        invalidCitationCount: 0,
       }
     }
 
@@ -146,6 +148,7 @@ export class RagService {
       durationMs,
       retrievalMs,
       generationMs,
+      invalidCitationCount: generationResult.invalidCitationCount,
     }
   }
 }
