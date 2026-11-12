@@ -38,7 +38,8 @@ export class HybridSearchService {
 
   async search(
     query: string,
-    options: Partial<HybridSearchOptions> = {}
+    options: HybridSearchOptions,
+    signal?: AbortSignal
   ): Promise<HybridSearchResult[]> {
     return withSpan(this.tracer, "retrieval.hybridSearch", async span => {
       span.setAttribute(RAG_ATTRS.QUERY, query.slice(0, 200))
@@ -67,7 +68,7 @@ export class HybridSearchService {
       retrievalRequests.inc({ strategy: "hybrid" })
 
       // ── Embed the query ─────────────────────────────────────────────
-      const queryVector = await this.embeddingService.embedText(query, "RETRIEVAL_QUERY")
+      const queryVector = await this.embeddingService.embedText(query, "RETRIEVAL_QUERY", signal)
 
       // ── Run both searches in parallel ───────────────────────────────
       const searchOptions = { topK: topK * 2, documentIds, userId }
@@ -168,7 +169,7 @@ export class HybridSearchService {
   // ── compareStrategies (unchanged) ─────────────────────────────────────
   async compareStrategies(
     query: string,
-    options: Partial<HybridSearchOptions> = {}
+    options: HybridSearchOptions
   ): Promise<{
     query: string
     vectorOnly: VectorSearchResult[]
@@ -208,7 +209,7 @@ export class HybridSearchService {
   async searchAndRerank(
     query: string,
     rerankerService: RerankerService,
-    options: Partial<HybridSearchOptions> = {}
+    options: HybridSearchOptions
   ): Promise<RerankedResult[]> {
     const topK = options.topK ?? 10
 

@@ -1,8 +1,6 @@
 import type { Request, Response, NextFunction } from "express"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { NotFoundError } from "./error.middleware"
-
-const prisma = new PrismaClient()
 
 export async function checkDocumentOwnership(
   req: Request,

@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
 
-import dotenv from "dotenv"
-dotenv.config()
+import "../preload-env"
 
 import { PrismaClient } from "@prisma/client"
 import { EmbeddingService } from "../services/embedding.service"
@@ -17,6 +16,12 @@ async function main(): Promise<void> {
   }
 
   const prisma = new PrismaClient()
+  const owner = await prisma.user.findFirst()
+  if (!owner) {
+    console.error("❌ No users in the database — register a user first.")
+    process.exit(1)
+  }
+  const userId = owner.id
   const embeddingService = new EmbeddingService(apiKey, redis)
   const searchService = new VectorSearchService(prisma)
 
@@ -60,6 +65,7 @@ async function main(): Promise<void> {
     const results = await searchService.search(queryVector, {
       topK: 3,
       minSimilarity: 0.5,
+      userId,
     })
     const searchMs = Date.now() - searchStart
 
@@ -87,11 +93,15 @@ async function main(): Promise<void> {
   const testQuery = "What is machine learning?"
   const queryVector = await embeddingService.embedText(testQuery, "RETRIEVAL_QUERY")
 
-  const firstChunks = await searchService.search(queryVector, { topK: 1 })
+  const firstChunks = await searchService.search(queryVector, { topK: 1, userId })
   const firstChunk = firstChunks[0]
 
   if (firstChunk !== undefined) {
-    const explanation = await searchService.explainSimilarity(queryVector, firstChunk.chunk.id)
+    const explanation = await searchService.explainSimilarity(
+      queryVector,
+      firstChunk.chunk.id,
+      userId
+    )
 
     if (explanation !== null) {
       console.log(`\n  Query:      "${testQuery}"`)

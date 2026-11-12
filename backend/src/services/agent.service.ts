@@ -16,10 +16,13 @@ import { EvaluatorNode } from "../agents/nodes/evaluate.node"
 import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations, activeAgentSessions } from "../utils/metrics"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
+import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
-const GEMINI_MODEL = "gemini-3.6-flash"
+const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
 interface TokenUsage {
@@ -41,25 +44,13 @@ export class AgentService {
     this.evaluator = new EvaluatorNode(apiKey)
   }
 
-  async run(userQuery: string, userId: string): Promise<AgentResult> {
+  async run(userQuery: string, userId: string, signal?: AbortSignal): Promise<AgentResult> {
     return withSpan(this.tracer, "agent.run", async span => {
       const sessionId = crypto.randomUUID()
       const startedAt = new Date()
       const steps: AgentStep[] = []
       const tokenUsage: TokenUsage = { total: 0 }
       let lastEval: EvaluationResult | null = null
-
-      activeAgentSessions.inc()
-
-      logRagEvent("agent_step", "Agent session started", {
-        service: "AgentService",
-        sessionId,
-        userId,
-      })
-
-      span.setAttribute(RAG_ATTRS.QUERY, userQuery.slice(0, 200))
-      span.setAttribute("agent.session_id", sessionId)
-      span.setAttribute("agent.user_id", userId)
 
       const state: AgentState = {
         sessionId,
@@ -77,203 +68,278 @@ export class AgentService {
         startedAt,
       }
 
-      const toolRegistry = createToolRegistry(this.hybridSearchService, userId)
-      while (!state.isComplete && state.iterationCount < MAX_ITERATIONS) {
-        state.iterationCount++
-        state.status = "thinking"
-
-        logRagEvent("agent_step", `ReAct iteration ${state.iterationCount}`, {
+      activeAgentSessions.inc()
+      try {
+        logRagEvent("agent_step", "Agent session started", {
           service: "AgentService",
           sessionId,
-          iterationCount: state.iterationCount,
+          userId,
         })
 
-        let decision: ToolDecision
+        span.setAttribute(RAG_ATTRS.QUERY, userQuery.slice(0, 200))
+        span.setAttribute("agent.session_id", sessionId)
+        span.setAttribute("agent.user_id", userId)
 
-        try {
-          decision = await withSpan(this.tracer, "agent.reason", async reasonSpan => {
-            reasonSpan.setAttribute(RAG_ATTRS.ITERATION, state.iterationCount)
-            return this.reasonNextAction(state, toolRegistry, tokenUsage, lastEval)
-          })
-        } catch (error: unknown) {
-          logError("Agent reasoning failed", error, { service: "AgentService", sessionId })
-          state.status = "error"
-          state.error = error instanceof Error ? error.message : "Reasoning failed"
-          break
-        }
-
-        if (decision.toolName === "DONE") {
-          steps.push({
-            stepNumber: state.iterationCount,
-            description: "Determined sufficient information gathered",
-            durationMs: 0,
-            timestamp: new Date(),
-          })
-          state.isComplete = true
-          break
-        }
-
-        const tool = toolRegistry[decision.toolName]
-
-        if (tool === undefined) {
-          logRagEvent("agent_step", `Unknown tool: ${decision.toolName}`, {
-            service: "AgentService",
-            sessionId,
-          })
-          continue
-        }
-
-        this.updateStatusForTool(state, decision.toolName)
-
-        const toolStart = Date.now()
-        let toolOutput = ""
-        let toolSuccess = true
-        let toolError: string | undefined
-
-        try {
-          toolOutput = await withSpan(
-            this.tracer,
-            `agent.tool.${decision.toolName}`,
-            async toolSpan => {
-              toolSpan.setAttribute(RAG_ATTRS.TOOL_NAME, decision.toolName)
-              toolSpan.setAttribute(RAG_ATTRS.ITERATION, state.iterationCount)
-              return tool.execute(decision.input)
-            }
-          )
-        } catch (error: unknown) {
-          toolSuccess = false
-          toolError = error instanceof Error ? error.message : "Tool execution failed"
-          toolOutput = `Tool error: ${toolError}`
-          logError(`Tool ${decision.toolName} failed`, error, {
-            service: "AgentService",
-            sessionId,
-          })
-        }
-
-        const toolDurationMs = Date.now() - toolStart
-
-        const toolCall: ToolCall = {
-          toolName: decision.toolName,
-          input: decision.input,
-          output: toolOutput,
-          durationMs: toolDurationMs,
-          timestamp: new Date(),
-          success: toolSuccess,
-          error: toolError,
-        }
-
-        state.toolCallHistory.push(toolCall)
-        agentIterations.inc({ tool: decision.toolName })
-
-        steps.push({
-          stepNumber: state.iterationCount,
-          description: this.describeStep(decision),
-          toolUsed: decision.toolName,
-          durationMs: toolDurationMs,
-          timestamp: new Date(),
-        })
-
-        logRagEvent("agent_step", "Tool executed", {
-          service: "AgentService",
-          sessionId,
-          toolName: decision.toolName,
-          durationMs: toolDurationMs,
-        })
-
-        if (toolSuccess && state.toolCallHistory.length > 0) {
-          state.status = "evaluating"
-
-          state.draftAnswer = await this.draftAnswer(state, tokenUsage)
-
-          const evalStart = Date.now()
-
-          lastEval = await this.evaluator.evaluate({
-            userQuery: state.userQuery,
-            toolCallHistory: state.toolCallHistory,
-            draftAnswer: state.draftAnswer,
-            iterationCount: state.iterationCount,
-            maxIterations: MAX_ITERATIONS,
-          })
-
-          state.qualityScore = lastEval.overallScore
-
-          const evalMs = Date.now() - evalStart
-
-          steps.push({
-            stepNumber: state.iterationCount,
-            description:
-              `Quality check: ${(lastEval.overallScore * 100).toFixed(0)}% ` +
-              (lastEval.shouldRetry ? `— retrying (${lastEval.retryReason})` : "— sufficient ✓"),
-            toolUsed: undefined,
-            durationMs: evalMs,
-            timestamp: new Date(),
-          })
-
-          logRagEvent("agent_step", "Self-evaluation complete", {
-            service: "AgentService",
-            sessionId,
-            similarity: lastEval.overallScore,
-            iterationCount: state.iterationCount,
-          })
-
-          if (!lastEval.shouldRetry) {
-            logRagEvent("agent_step", "Quality threshold met — stopping loop", {
+        const toolRegistry = createToolRegistry(this.hybridSearchService, userId)
+        while (!state.isComplete && state.iterationCount < MAX_ITERATIONS) {
+          if (signal?.aborted) {
+            state.status = "aborted"
+            logRagEvent("agent_step", "Agent run aborted", {
               service: "AgentService",
               sessionId,
-              similarity: lastEval.overallScore,
+            })
+            break
+          }
+          state.iterationCount++
+          state.status = "thinking"
+
+          logRagEvent("agent_step", `ReAct iteration ${state.iterationCount}`, {
+            service: "AgentService",
+            sessionId,
+            iterationCount: state.iterationCount,
+          })
+
+          let decision: ToolDecision
+
+          try {
+            decision = await withSpan(this.tracer, "agent.reason", async reasonSpan => {
+              reasonSpan.setAttribute(RAG_ATTRS.ITERATION, state.iterationCount)
+              return this.reasonNextAction(state, toolRegistry, tokenUsage, lastEval, signal)
+            })
+          } catch (error: unknown) {
+            if (signal?.aborted) {
+              state.status = "aborted"
+              logRagEvent("agent_step", "Agent run aborted during reasoning", {
+                service: "AgentService",
+                sessionId,
+              })
+              break
+            }
+            logError("Agent reasoning failed", error, { service: "AgentService", sessionId })
+            state.status = "error"
+            state.error = error instanceof Error ? error.message : "Reasoning failed"
+            break
+          }
+
+          if (decision.toolName === "DONE") {
+            steps.push({
+              stepNumber: state.iterationCount,
+              description: "Determined sufficient information gathered",
+              durationMs: 0,
+              timestamp: new Date(),
             })
             state.isComplete = true
             break
           }
 
-          logRagEvent("agent_step", "Quality below threshold — retrying", {
+          const tool = toolRegistry[decision.toolName]
+
+          if (tool === undefined) {
+            logRagEvent("agent_step", `Unknown tool: ${decision.toolName}`, {
+              service: "AgentService",
+              sessionId,
+            })
+            continue
+          }
+
+          this.updateStatusForTool(state, decision.toolName)
+
+          const toolStart = Date.now()
+          let toolOutput = ""
+          let toolSuccess = true
+          let toolError: string | undefined
+
+          try {
+            toolOutput = await withSpan(
+              this.tracer,
+              `agent.tool.${decision.toolName}`,
+              async toolSpan => {
+                toolSpan.setAttribute(RAG_ATTRS.TOOL_NAME, decision.toolName)
+                toolSpan.setAttribute(RAG_ATTRS.ITERATION, state.iterationCount)
+                return tool.execute(decision.input)
+              }
+            )
+          } catch (error: unknown) {
+            toolSuccess = false
+            toolError = error instanceof Error ? error.message : "Tool execution failed"
+            toolOutput = `Tool error: ${toolError}`
+            logError(`Tool ${decision.toolName} failed`, error, {
+              service: "AgentService",
+              sessionId,
+            })
+          }
+
+          const toolDurationMs = Date.now() - toolStart
+
+          const toolCall: ToolCall = {
+            toolName: decision.toolName,
+            input: decision.input,
+            output: toolOutput,
+            durationMs: toolDurationMs,
+            timestamp: new Date(),
+            success: toolSuccess,
+            error: toolError,
+          }
+
+          state.toolCallHistory.push(toolCall)
+          agentIterations.inc({ tool: decision.toolName })
+
+          steps.push({
+            stepNumber: state.iterationCount,
+            description: this.describeStep(decision),
+            toolUsed: decision.toolName,
+            durationMs: toolDurationMs,
+            timestamp: new Date(),
+          })
+
+          logRagEvent("agent_step", "Tool executed", {
             service: "AgentService",
             sessionId,
-            similarity: lastEval.overallScore,
+            toolName: decision.toolName,
+            durationMs: toolDurationMs,
+          })
+
+          if (toolSuccess && state.toolCallHistory.length > 0) {
+            state.status = "evaluating"
+
+            state.draftAnswer = await this.draftAnswer(state, tokenUsage, signal)
+
+            const evalStart = Date.now()
+
+            lastEval = await this.evaluator.evaluate(
+              {
+                userQuery: state.userQuery,
+                toolCallHistory: state.toolCallHistory,
+                draftAnswer: state.draftAnswer,
+                iterationCount: state.iterationCount,
+                maxIterations: MAX_ITERATIONS,
+              },
+              signal
+            )
+
+            state.qualityScore = lastEval.overallScore
+
+            const evalMs = Date.now() - evalStart
+
+            steps.push({
+              stepNumber: state.iterationCount,
+              description:
+                `Quality check: ${(lastEval.overallScore * 100).toFixed(0)}% ` +
+                (lastEval.shouldRetry ? `— retrying (${lastEval.retryReason})` : "— sufficient ✓"),
+              toolUsed: undefined,
+              durationMs: evalMs,
+              timestamp: new Date(),
+            })
+
+            logRagEvent("agent_step", "Self-evaluation complete", {
+              service: "AgentService",
+              sessionId,
+              similarity: lastEval.overallScore,
+              iterationCount: state.iterationCount,
+            })
+
+            if (!lastEval.shouldRetry) {
+              logRagEvent("agent_step", "Quality threshold met — stopping loop", {
+                service: "AgentService",
+                sessionId,
+                similarity: lastEval.overallScore,
+              })
+              state.isComplete = true
+              break
+            }
+
+            logRagEvent("agent_step", "Quality below threshold — retrying", {
+              service: "AgentService",
+              sessionId,
+              similarity: lastEval.overallScore,
+            })
+          }
+        }
+
+        if (signal?.aborted) {
+          state.status = "aborted"
+          state.isComplete = true
+          state.completedAt = new Date()
+        } else {
+          state.status = "generating"
+
+          const { answer, citations } = await this.synthesiseFinalAnswer(state, tokenUsage, signal)
+
+          state.finalAnswer = answer
+          state.citations = citations
+          state.status = "done"
+          state.isComplete = true
+          state.completedAt = new Date()
+        }
+
+        const totalDurationMs = Date.now() - startedAt.getTime()
+
+        span.setAttribute(RAG_ATTRS.QUALITY_SCORE, state.qualityScore)
+        span.setAttribute("agent.iterations", state.iterationCount)
+        span.setAttribute(LLM_ATTRS.TOTAL_TOKENS, tokenUsage.total)
+
+        if (state.status === "aborted") {
+          logRagEvent("agent_step", "Agent session aborted", {
+            service: "AgentService",
+            sessionId,
+            iterationCount: state.iterationCount,
+            durationMs: totalDurationMs,
+          })
+        } else {
+          logRagEvent("agent_step", "Agent session complete", {
+            service: "AgentService",
+            sessionId,
+            iterationCount: state.iterationCount,
+            similarity: state.qualityScore,
+            durationMs: totalDurationMs,
           })
         }
-      }
 
-      state.status = "generating"
-
-      const { answer, citations } = await this.synthesiseFinalAnswer(state, tokenUsage)
-
-      state.finalAnswer = answer
-      state.citations = citations
-      state.status = "done"
-      state.isComplete = true
-      state.completedAt = new Date()
-
-      activeAgentSessions.dec()
-
-      const totalDurationMs = Date.now() - startedAt.getTime()
-
-      span.setAttribute(RAG_ATTRS.QUALITY_SCORE, state.qualityScore)
-      span.setAttribute("agent.iterations", state.iterationCount)
-      span.setAttribute(LLM_ATTRS.TOTAL_TOKENS, tokenUsage.total)
-
-      logRagEvent("agent_step", "Agent session complete", {
-        service: "AgentService",
-        sessionId,
-        iterationCount: state.iterationCount,
-        similarity: state.qualityScore,
-        durationMs: totalDurationMs,
-      })
-
-      return {
-        sessionId,
-        finalAnswer: state.finalAnswer,
-        citations: state.citations,
-        steps,
-        iterationCount: state.iterationCount,
-        status: state.status,
-        tokensUsed: tokenUsage.total,
-        durationMs: totalDurationMs,
+        return {
+          sessionId,
+          finalAnswer: state.finalAnswer,
+          citations: state.citations,
+          steps,
+          iterationCount: state.iterationCount,
+          status: state.status,
+          tokensUsed: tokenUsage.total,
+          durationMs: totalDurationMs,
+        }
+      } catch (error: unknown) {
+        // Aborted mid-call (client disconnect / WS close): report "aborted",
+        // never as a failure — logged at info, no error status.
+        if (signal?.aborted) {
+          state.status = "aborted"
+          state.completedAt = new Date()
+          logRagEvent("agent_step", "Agent session aborted", {
+            service: "AgentService",
+            sessionId,
+            userId,
+            iterationCount: state.iterationCount,
+          })
+          return {
+            sessionId,
+            finalAnswer: state.finalAnswer,
+            citations: state.citations,
+            steps,
+            iterationCount: state.iterationCount,
+            status: state.status,
+            tokensUsed: tokenUsage.total,
+            durationMs: Date.now() - startedAt.getTime(),
+          }
+        }
+        throw error
+      } finally {
+        activeAgentSessions.dec()
       }
     })
   }
 
-  private async draftAnswer(state: AgentState, tokenUsage: TokenUsage): Promise<string> {
+  private async draftAnswer(
+    state: AgentState,
+    tokenUsage: TokenUsage,
+    signal?: AbortSignal
+  ): Promise<string> {
     if (state.toolCallHistory.length === 0) {
       return ""
     }
@@ -292,7 +358,8 @@ Use ONLY information from the evidence. If insufficient, say so.
 QUERY: ${state.userQuery}
 
 EVIDENCE:
-${evidence}
+${wrapInContext(evidence)}
+${CONTEXT_DATA_RULE}
 
 Provide a brief, direct draft answer (2-4 sentences maximum):`
 
@@ -311,10 +378,12 @@ Provide a brief, direct draft answer (2-4 sentences maximum):`
     }
 
     try {
-      const response = await this.callGemini(requestBody)
+      const response = await this.callGemini(requestBody, signal)
       tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
       return response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
-    } catch {
+    } catch (error: unknown) {
+      // Aborts must stop the run — do not swallow them into an empty draft.
+      if (signal?.aborted) throw error
       return ""
     }
   }
@@ -323,7 +392,8 @@ Provide a brief, direct draft answer (2-4 sentences maximum):`
     state: AgentState,
     toolRegistry: ReturnType<typeof createToolRegistry>,
     tokenUsage: TokenUsage,
-    lastEval: EvaluationResult | null
+    lastEval: EvaluationResult | null,
+    signal?: AbortSignal
   ): Promise<ToolDecision> {
     const toolDescriptions = formatToolDescriptions(toolRegistry)
 
@@ -358,8 +428,9 @@ ${toolDescriptions}
 - DONE: Use when you have enough high-quality information to answer completely.
 
 HISTORY (${state.iterationCount}/${MAX_ITERATIONS} steps used):
-${historyText}
+${wrapInContext(historyText)}
 ${evalFeedback}
+${CONTEXT_DATA_RULE}
 
 DECISION RULES:
 1. If evaluation score >= 70% and answer covers the full query: use DONE.
@@ -384,7 +455,7 @@ Respond ONLY with valid JSON (no markdown):
       },
     }
 
-    const response = await this.callGemini(requestBody)
+    const response = await this.callGemini(requestBody, signal)
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
     const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
@@ -393,7 +464,8 @@ Respond ONLY with valid JSON (no markdown):
 
   private async synthesiseFinalAnswer(
     state: AgentState,
-    tokenUsage: TokenUsage
+    tokenUsage: TokenUsage,
+    signal?: AbortSignal
   ): Promise<{ answer: string; citations: Citation[] }> {
     if (state.toolCallHistory.length === 0) {
       const result = await this.generationService.generateWithFallback(state.userQuery)
@@ -414,7 +486,8 @@ Respond ONLY with valid JSON (no markdown):
 QUESTION: ${state.userQuery}
 
 EVIDENCE:
-${evidence}
+${wrapInContext(evidence)}
+${CONTEXT_DATA_RULE}
 
 RULES:
 1. ONLY use information from the evidence above.
@@ -436,7 +509,7 @@ RULES:
       },
     }
 
-    const response = await this.callGemini(requestBody)
+    const response = await this.callGemini(requestBody, signal)
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
     const answer = response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
@@ -528,13 +601,17 @@ RULES:
     }
   }
 
-  private async callGemini(requestBody: GeminiRequest): Promise<GeminiResponse> {
-    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
+  private async callGemini(
+    requestBody: GeminiRequest,
+    signal?: AbortSignal
+  ): Promise<GeminiResponse> {
+    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
+      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
     })
 
     if (!response.ok) {

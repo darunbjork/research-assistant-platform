@@ -3,7 +3,7 @@
 // Parses the request → calls RagService → returns the answer with citations.
 
 import type { Request, Response, NextFunction } from "express"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { EmbeddingService } from "../services/embedding.service"
 import { HybridSearchService } from "../services/hybrid.search.service"
 import { GenerationService } from "../services/generation.service"
@@ -11,14 +11,16 @@ import { RagService } from "../services/rag.service"
 import { ValidationError } from "../middleware/error.middleware"
 import { ok } from "../types"
 import { RerankerService } from "../services/reranker.service"
+import { consumeGlobalBudget } from "../utils/global-budget"
+import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
+import { env } from "../config/env"
 
 // ── Service Initialisation ────────────────────────────────────────────────
-const prisma = new PrismaClient()
-const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
+const embeddingService = new EmbeddingService(env.GEMINI_API_KEY, redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
-const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")
-const rerankerService = new RerankerService(process.env.GEMINI_API_KEY ?? "")
+const generationService = new GenerationService(env.GEMINI_API_KEY)
+const rerankerService = new RerankerService(env.GEMINI_API_KEY)
 const ragService = new RagService(hybridSearchService, generationService)
 
 export class RagController {
@@ -39,6 +41,18 @@ export class RagController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query' (non-empty string)")
+      }
+
+      if (query.length > MAX_QUERY_LENGTH) {
+        throw new ValidationError(`'query' must be at most ${MAX_QUERY_LENGTH} characters`)
+      }
+
+      // Global daily budget: a RAG query costs 1 unit.
+      if (!(await consumeGlobalBudget(1))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
       }
 
       const result = await ragService.query(query.trim(), {
@@ -66,6 +80,18 @@ export class RagController {
 
       if (!query || typeof query !== "string" || query.trim() === "") {
         throw new ValidationError("Request body must include 'query'")
+      }
+
+      if (query.length > MAX_QUERY_LENGTH) {
+        throw new ValidationError(`'query' must be at most ${MAX_QUERY_LENGTH} characters`)
+      }
+
+      // Global daily budget: a RAG query costs 1 unit.
+      if (!(await consumeGlobalBudget(1))) {
+        res
+          .status(503)
+          .json({ success: false, error: "Daily capacity reached, try again tomorrow" })
+        return
       }
 
       const start = Date.now()

@@ -2,11 +2,41 @@ import { WebSocketServer, type WebSocket } from "ws"
 import type { Server } from "http"
 import { AgentWsHandler } from "./agent.ws.handler"
 import { logStartup, logRagEvent } from "../utils/logger"
+import { env } from "../config/env"
 
 // Heartbeat configuration
 // Sends a ping every 30 seconds to detect dead connections.
 // If a client does not respond within 30 seconds, it is terminated.
 const HEARTBEAT_INTERVAL_MS = 30_000
+
+// Messages are small JSON — a 64 KiB cap stops a client from flooding us
+// with multi-megabyte frames and exhausting memory.
+const MAX_PAYLOAD_BYTES = 64 * 1024
+
+// Origins the browser client may connect from: CORS_ORIGINS from the env
+// schema (task 3.1); when unset, the defaults mirror app.ts's cors() list.
+const DEFAULT_ORIGINS = ["http://localhost:5174", "http://localhost:3001", "http://localhost:5173"]
+
+// ── Shutdown support (task 5.5) ───────────────────────────────────────────
+// 1001 = "going away" (RFC 6455) — the frontend reconnects to the new
+// container after a deploy.
+const CLOSE_GOING_AWAY = 1001
+let activeWss: WebSocketServer | null = null
+
+/** Close every connected WS client with 1001. Called once during shutdown. */
+export function closeAllWsClients(): void {
+  if (activeWss === null) {
+    return
+  }
+  activeWss.clients.forEach((client: WebSocket) => {
+    client.close(CLOSE_GOING_AWAY, "going away")
+  })
+}
+
+function allowedOrigins(): string[] {
+  if (env.CORS_ORIGINS.length > 0) return env.CORS_ORIGINS
+  return DEFAULT_ORIGINS
+}
 
 // ── Extended WebSocket type with heartbeat tracking ───────────────────────
 interface WsWithHeartbeat extends WebSocket {
@@ -17,7 +47,9 @@ export function createWebSocketServer(httpServer: Server): WebSocketServer {
   const wss = new WebSocketServer({
     server: httpServer,
     path: "/ws/agent", // WebSocket endpoint: ws://localhost:3001/ws/agent
+    maxPayload: MAX_PAYLOAD_BYTES,
   })
+  activeWss = wss
 
   logStartup("WebSocket server ready", {
     service: "WsServer",
@@ -32,6 +64,23 @@ export function createWebSocketServer(httpServer: Server): WebSocketServer {
       service: "WsServer",
       clientIp: clientIp.replace("::ffff:", ""), // strip IPv4-in-IPv6 prefix
     })
+
+    // Origin check (D-defence): browsers always send Origin on a WS
+    // upgrade; anything not on the allowlist is closed with 1008
+    // (policy violation). Skipped under NODE_ENV=test so unit tests can
+    // connect without configuring origins.
+    if (env.NODE_ENV !== "test") {
+      const origin = req.headers.origin
+      if (origin === undefined || !allowedOrigins().includes(origin)) {
+        logRagEvent("agent_step", "WebSocket connection rejected: origin not allowed", {
+          service: "WsServer",
+          clientIp: clientIp.replace("::ffff:", ""),
+          origin: origin ?? "none",
+        })
+        ws.close(1008, "origin not allowed")
+        return
+      }
+    }
 
     // Mark as alive for heartbeat tracking
     ;(ws as WsWithHeartbeat).isAlive = true

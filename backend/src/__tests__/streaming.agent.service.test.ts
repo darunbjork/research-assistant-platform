@@ -310,4 +310,115 @@ describe("StreamingAgentService", () => {
       expect(emittedEvents.length).toBeGreaterThan(1)
     })
   })
+
+  // ── Cancellation (task 2.9) ───────────────────────────────────────────
+  describe("cancellation", () => {
+    function abortError(): DOMException {
+      return new DOMException("The operation was aborted.", "AbortError")
+    }
+
+    function makeRagSearchDecisionResponse(): Response {
+      return new Response(
+        JSON.stringify({
+          candidates: [
+            {
+              content: {
+                parts: [
+                  {
+                    text: '{"toolName":"rag_search","input":{"query":"test"},"reason":"Need info"}',
+                  },
+                ],
+                role: "model",
+              },
+              finishReason: "STOP",
+              safetyRatings: [],
+            },
+          ],
+          usageMetadata: { totalTokenCount: 50, promptTokenCount: 40, candidatesTokenCount: 10 },
+        }),
+        { status: 200 }
+      )
+    }
+
+    it("returns 'aborted' with a terminal status event and no fetch when already aborted", async () => {
+      const controller = new AbortController()
+      controller.abort()
+
+      const result = await service.run(
+        "What is ML?",
+        "user-1",
+        "session-1",
+        onEvent,
+        controller.signal
+      )
+
+      expect(result.status).toBe("aborted")
+      expect(fetchSpy).not.toHaveBeenCalled()
+
+      const last = emittedEvents[emittedEvents.length - 1]
+      expect(last?.type).toBe("status")
+      if (last?.type === "status") {
+        expect(last.status).toBe("aborted")
+      }
+      expect(emittedEvents.some(e => e.type === "complete")).toBe(false)
+    })
+
+    it("treats a reasoning abort as 'aborted' without emitting REASONING_ERROR", async () => {
+      const controller = new AbortController()
+
+      fetchSpy.mockImplementationOnce(() => {
+        controller.abort()
+        return Promise.reject(abortError())
+      })
+
+      const result = await service.run(
+        "What is ML?",
+        "user-1",
+        "session-1",
+        onEvent,
+        controller.signal
+      )
+
+      expect(result.status).toBe("aborted")
+      expect(fetchSpy).toHaveBeenCalledTimes(1)
+      expect(emittedEvents.some(e => e.type === "error")).toBe(false)
+      expect(emittedEvents.some(e => e.type === "complete")).toBe(false)
+    })
+
+    it("stops fetching after an abort during the tool call", async () => {
+      const controller = new AbortController()
+
+      mockHybrid.search.mockImplementation(async () => {
+        controller.abort()
+        return []
+      })
+
+      fetchSpy
+        .mockResolvedValueOnce(makeRagSearchDecisionResponse())
+        .mockImplementationOnce((_url: RequestInfo | URL, init?: RequestInit) => {
+          if (init?.signal?.aborted) {
+            return Promise.reject(abortError())
+          }
+          return Promise.resolve(makeSynthesisResponse("unreachable"))
+        })
+
+      const result = await service.run(
+        "What is ML?",
+        "user-1",
+        "session-1",
+        onEvent,
+        controller.signal
+      )
+
+      expect(result.status).toBe("aborted")
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+      expect(emittedEvents.some(e => e.type === "complete")).toBe(false)
+
+      const last = emittedEvents[emittedEvents.length - 1]
+      expect(last?.type).toBe("status")
+      if (last?.type === "status") {
+        expect(last.status).toBe("aborted")
+      }
+    })
+  })
 })

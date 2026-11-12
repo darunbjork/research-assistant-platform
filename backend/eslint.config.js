@@ -17,13 +17,20 @@ export default [
       prettier: prettierPlugin,
     },
     rules: {
-      '@typescript-eslint/no-explicit-any': 'warn',
+      // Task 3.7 (D21/D25): ESLint is now the single no-any check — it
+      // catches `any`, `as any` and `Array<any>` alike, which the old
+      // `grep ': any'` script (package.json `no-any`, CI step) missed.
+      '@typescript-eslint/no-explicit-any': 'error',
+      '@typescript-eslint/no-unsafe-assignment': 'error',
+      '@typescript-eslint/no-unsafe-member-access': 'error',
+      '@typescript-eslint/no-unsafe-call': 'error',
+      '@typescript-eslint/no-unsafe-return': 'error',
       '@typescript-eslint/no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       'no-unused-vars': ['warn', { argsIgnorePattern: '^_' }],
       'no-console': process.env.NODE_ENV === 'production' ? 'error' : 'warn',
       'no-debugger': process.env.NODE_ENV === 'production' ? 'error' : 'warn',
       'prettier/prettier': 'warn',
     },
-    ignores: ['node_modules', 'dist', 'prisma.config.ts'], 
+    ignores: ['node_modules', 'dist', 'prisma.config.ts'],
   },
 ];

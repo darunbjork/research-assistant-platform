@@ -22,7 +22,7 @@ describe("RagService", () => {
   // ── query() — happy path ───────────────────────────────────────────────
   describe("query() — happy path", () => {
     it("returns a RagResult with all required fields", async () => {
-      const result = await service.query("What is ML?")
+      const result = await service.query("What is ML?", { userId: "user-123" })
 
       expect(typeof result.answer).toBe("string")
       expect(Array.isArray(result.citations)).toBe(true)
@@ -45,7 +45,7 @@ describe("RagService", () => {
     })
 
     it("calls generation after retrieval", async () => {
-      await service.query("What is ML?")
+      await service.query("What is ML?", { userId: "user-123" })
 
       expect(mockGen.generate).toHaveBeenCalledTimes(1)
     })
@@ -55,7 +55,7 @@ describe("RagService", () => {
       mockHybrid = makeMockHybridSearchService([chunk])
       service = new RagService(mockHybrid, mockGen)
 
-      await service.query("test")
+      await service.query("test", { userId: "user-123" })
 
       const [, chunks] = mockGen.generate.mock.calls[0] as [string, unknown[]]
       expect(JSON.stringify(chunks)).toContain("UNIQUE_CONTENT_XYZ")
@@ -70,18 +70,18 @@ describe("RagService", () => {
       mockHybrid = makeMockHybridSearchService(threeChunks)
       service = new RagService(mockHybrid, mockGen)
 
-      const result = await service.query("test")
+      const result = await service.query("test", { userId: "user-123" })
       expect(result.chunksRetrieved).toBe(3)
     })
 
     it("passes topK option to hybrid search", async () => {
-      await service.query("test", { topK: 7 })
+      await service.query("test", { topK: 7, userId: "user-123" })
 
       expect(mockHybrid.search).toHaveBeenCalledWith("test", expect.objectContaining({ topK: 7 }))
     })
 
     it("durationMs is greater than zero", async () => {
-      const result = await service.query("test")
+      const result = await service.query("test", { userId: "user-123" })
       expect(result.durationMs).toBeGreaterThanOrEqual(0)
     })
   })
@@ -94,27 +94,27 @@ describe("RagService", () => {
     })
 
     it("calls generateWithFallback when no chunks found", async () => {
-      await service.query("obscure query")
+      await service.query("obscure query", { userId: "user-123" })
       expect(mockGen.generateWithFallback).toHaveBeenCalledTimes(1)
     })
 
     it("does NOT call generate() when no chunks found", async () => {
-      await service.query("obscure query")
+      await service.query("obscure query", { userId: "user-123" })
       expect(mockGen.generate).not.toHaveBeenCalled()
     })
 
     it("returns zero for chunksRetrieved when search finds nothing", async () => {
-      const result = await service.query("obscure query")
+      const result = await service.query("obscure query", { userId: "user-123" })
       expect(result.chunksRetrieved).toBe(0)
     })
 
     it("returns zero tokensUsed for fallback response", async () => {
-      const result = await service.query("obscure query")
+      const result = await service.query("obscure query", { userId: "user-123" })
       expect(result.tokensUsed).toBe(0)
     })
 
     it("returns empty citations for fallback response", async () => {
-      const result = await service.query("obscure query")
+      const result = await service.query("obscure query", { userId: "user-123" })
       expect(result.citations).toHaveLength(0)
     })
   })
@@ -124,13 +124,15 @@ describe("RagService", () => {
     it("propagates error when hybridSearch throws", async () => {
       mockHybrid.search.mockRejectedValueOnce(new Error("pgvector connection failed"))
 
-      await expect(service.query("test")).rejects.toThrow("pgvector connection failed")
+      await expect(service.query("test", { userId: "user-123" })).rejects.toThrow(
+        "pgvector connection failed"
+      )
     })
 
     it("does not call generation if retrieval throws", async () => {
       mockHybrid.search.mockRejectedValueOnce(new Error("DB error"))
 
-      await expect(service.query("test")).rejects.toThrow()
+      await expect(service.query("test", { userId: "user-123" })).rejects.toThrow()
       expect(mockGen.generate).not.toHaveBeenCalled()
     })
   })
@@ -140,14 +142,16 @@ describe("RagService", () => {
     it("propagates error when generation throws", async () => {
       mockGen.generate.mockRejectedValueOnce(new Error("Gemini API unavailable"))
 
-      await expect(service.query("test")).rejects.toThrow("Gemini API unavailable")
+      await expect(service.query("test", { userId: "user-123" })).rejects.toThrow(
+        "Gemini API unavailable"
+      )
     })
   })
 
   // ── query() — options ──────────────────────────────────────────────────
   describe("query() — options", () => {
     it("passes minSimilarity option to hybrid search", async () => {
-      await service.query("test", { minSimilarity: 0.7 })
+      await service.query("test", { minSimilarity: 0.7, userId: "user-123" })
 
       expect(mockHybrid.search).toHaveBeenCalledWith(
         "test",
@@ -157,7 +161,7 @@ describe("RagService", () => {
 
     it("passes documentIds option to hybrid search", async () => {
       const docIds = ["doc-1", "doc-2"]
-      await service.query("test", { documentIds: docIds })
+      await service.query("test", { documentIds: docIds, userId: "user-123" })
 
       expect(mockHybrid.search).toHaveBeenCalledWith(
         "test",
@@ -166,7 +170,7 @@ describe("RagService", () => {
     })
 
     it("uses default topK of 10 when not specified", async () => {
-      await service.query("test")
+      await service.query("test", { userId: "user-123" })
 
       expect(mockHybrid.search).toHaveBeenCalledWith("test", expect.objectContaining({ topK: 10 }))
     })

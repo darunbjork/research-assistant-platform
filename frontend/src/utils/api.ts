@@ -2,6 +2,7 @@
 
 import axios from "axios"
 import type { AxiosError, InternalAxiosRequestConfig } from "axios"
+import { clearTokens, getRefreshToken } from "./auth"
 import type {
   ApiResult,
   AuthResponse,
@@ -15,13 +16,17 @@ interface RetryableRequest extends InternalAxiosRequestConfig {
   _retry?: boolean
 }
 
-const BASE_URL =
-  (import.meta.env.VITE_API_URL as string | undefined) ?? "http://localhost:3002"
+// Same origin by default: the Vite dev proxy forwards /api to the backend in
+// dev, Caddy serves it in production. Set VITE_API_URL only for unusual
+// split-origin setups.
+const BASE_URL = import.meta.env.VITE_API_URL ?? ""
 
 // ── Axios Instance ─────────────────────────────────────────────────────────
+// No default Content-Type here: axios sets application/json for plain-object
+// bodies and multipart/form-data (with boundary) for FormData — an instance
+// default of application/json would break multipart uploads (task 4.2).
 const api = axios.create({
-  baseURL: `${BASE_URL}/api/v1`,
-  headers: { "Content-Type": "application/json" }
+  baseURL: `${BASE_URL}/api/v1`
 })
 
 // ── Request Interceptor: Inject Auth Token ─────────────────────────────────
@@ -58,41 +63,57 @@ api.interceptors.response.use(
     ) {
       originalRequest._retry = true
 
-      const refreshToken = localStorage.getItem("refreshToken")
-
-      if (refreshToken) {
-        try {
-          const response = await api.post<ApiResult<AuthResponse>>(
-            "/auth/refresh",
-            { refreshToken }
-          )
-
-          if (response.data.success && response.data.data) {
-            // AuthResponse has a nested `tokens` object
-            const { accessToken, refreshToken: newRefreshToken } =
-              response.data.data.tokens
-
-            localStorage.setItem("accessToken",  accessToken)
-            localStorage.setItem("refreshToken", newRefreshToken)
-
-            originalRequest.headers.Authorization = `Bearer ${accessToken}`
-            return api(originalRequest)
-          }
-        } catch {
-          // Refresh failed — fall through to logout below
-          // (catch block intentionally empty — no variable needed)
-        }
+      const accessToken = await refreshAccessToken()
+      if (accessToken) {
+        originalRequest.headers.Authorization = `Bearer ${accessToken}`
+        return api(originalRequest)
       }
 
       // No refresh token or refresh failed — clear auth and redirect
-      localStorage.removeItem("accessToken")
-      localStorage.removeItem("refreshToken")
-      window.location.href = "/login"
+      logout()
     }
 
     return Promise.reject(toApiError(error))
   }
 )
+
+// ── Session helpers ────────────────────────────────────────────────────────
+// Shared by the 401 interceptor above and the WebSocket hook (task 3.6).
+
+// Clears auth and sends the user to the login page.
+export function logout(): void {
+  clearTokens()
+  window.location.href = "/login"
+}
+
+// Exchanges the stored refresh token for a new token pair (and stores it).
+// Returns the new access token, or null when there is no refresh token or
+// the refresh failed — the caller decides whether to retry or log out.
+export async function refreshAccessToken(): Promise<string | null> {
+  const refreshToken = getRefreshToken()
+  if (!refreshToken) return null
+
+  try {
+    const response = await api.post<ApiResult<AuthResponse>>(
+      "/auth/refresh",
+      { refreshToken }
+    )
+
+    if (response.data.success && response.data.data) {
+      // AuthResponse has a nested `tokens` object
+      const { accessToken, refreshToken: newRefreshToken } =
+        response.data.data.tokens
+
+      localStorage.setItem("accessToken",  accessToken)
+      localStorage.setItem("refreshToken", newRefreshToken)
+      return accessToken
+    }
+    return null
+  } catch {
+    // Refresh failed — caller logs out (catch block intentionally empty)
+    return null
+  }
+}
 
 // ── Auth API ───────────────────────────────────────────────────────────────
 

@@ -8,39 +8,40 @@ interface Props {
 
 type UploadMode = "paste" | "file"
 
+const MAX_FILE_BYTES = 10 * 1024 * 1024 // matches the backend multer limit
+
 export default function DocumentUpload({ onSuccess }: Props) {
   const [mode,         setMode]         = useState<UploadMode>("paste")
   const [name,         setName]         = useState("")
   const [content,      setContent]      = useState("")
+  const [file,         setFile]         = useState<File | null>(null)
   const [isLoading,    setIsLoading]    = useState(false)
   const [error,        setError]        = useState<string | null>(null)
   const [lastResult,   setLastResult]   = useState<IngestionResult | null>(null)
-  const [progressMessage, setProgressMessage] = useState("")  
+  const [progressMessage, setProgressMessage] = useState("")
 
   const fileInputRef = useRef<HTMLInputElement>(null)
 
-  // ── File selection handler ─────────────────────────────────────────────
+  // ── File selection handler (task 4.2: no FileReader — the file is sent
+  //    as-is via multipart/form-data and the server extracts the text) ─────
   const handleFileChange = (e: ChangeEvent<HTMLInputElement>): void => {
-    const file = e.target.files?.[0]
-    if (!file) return
+    const selected = e.target.files?.[0]
+    if (!selected) {
+      setFile(null)
+      return
+    }
 
-    setName(file.name)
+    if (selected.size > MAX_FILE_BYTES) {
+      setFile(null)
+      setName("")
+      setError("File exceeds the 10 MB upload limit.")
+      e.target.value = ""
+      return
+    }
+
+    setFile(selected)
+    setName(selected.name)
     setError(null)
-
-    const reader = new FileReader()
-
-    reader.onload = event => {
-      const text = event.target?.result
-      if (typeof text === "string") {
-        setContent(text)
-      }
-    }
-
-    reader.onerror = () => {
-      setError("Failed to read the file. Please try again.")
-    }
-
-    reader.readAsText(file)
   }
 
   // ── Poll job status ────────────────────────────────────────────────────
@@ -91,25 +92,41 @@ export default function DocumentUpload({ onSuccess }: Props) {
     setError(null)
     setLastResult(null)
 
-    if (!name.trim()) { setError("Please provide a document name."); return }
-    if (!content.trim()) { setError("Document content cannot be empty."); return }
-    if (content.length > 500_000) {
+    if (mode === "paste" && !name.trim()) {
+      setError("Please provide a document name."); return
+    }
+    if (mode === "paste" && !content.trim()) {
+      setError("Document content cannot be empty."); return
+    }
+    if (mode === "paste" && content.length > 500_000) {
       setError(`Document is too large. Maximum is 500KB.`); return
+    }
+    if (mode === "file" && !file) {
+      setError("Please select a file."); return
     }
 
     setIsLoading(true)
 
     try {
       // Step 1: Queue the ingestion job (returns immediately)
+      let queueBody: FormData | { name: string; content: string; mimeType: string }
+      if (mode === "file") {
+        const formData = new FormData()
+        formData.append("file", file as File)
+        queueBody = formData
+      } else {
+        queueBody = {
+          name:     name.trim(),
+          content,
+          mimeType: "text/plain"
+        }
+      }
+
       const queueResponse = await api.post<{
         success: boolean
         data: { jobId: string; status: string; name: string } | null
         error: string | null
-      }>("/documents/ingest", {
-        name:     name.trim(),
-        content,
-        mimeType: "text/plain"
-      })
+      }>(mode === "file" ? "/documents/upload" : "/documents/ingest", queueBody)
 
       if (!queueResponse.data.success || !queueResponse.data.data) {
         throw new Error(queueResponse.data.error ?? "Failed to queue document")
@@ -126,6 +143,7 @@ export default function DocumentUpload({ onSuccess }: Props) {
 
       setName("")
       setContent("")
+      setFile(null)
       if (fileInputRef.current) fileInputRef.current.value = ""
 
     } catch (err: unknown) {
@@ -162,23 +180,25 @@ export default function DocumentUpload({ onSuccess }: Props) {
               : "bg-slate-100 text-slate-600 hover:bg-slate-200"
           }`}
         >
-          Upload .txt file
+          Upload file
         </button>
       </div>
 
-      {/* ── Document name ── */}
-      <div className="mb-3">
-        <label className="block mb-1 text-sm font-medium text-slate-700">
-          Document name
-        </label>
-        <input
-          type="text"
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="e.g. Q3-Report.txt"
-          className="w-full px-3 py-2 text-sm border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
-        />
-      </div>
+      {/* ── Document name (paste mode only — file mode uses the file name) ── */}
+      {mode === "paste" && (
+        <div className="mb-3">
+          <label className="block mb-1 text-sm font-medium text-slate-700">
+            Document name
+          </label>
+          <input
+            type="text"
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="e.g. Q3-Report.txt"
+            className="w-full px-3 py-2 text-sm border rounded-lg border-slate-300 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+          />
+        </div>
+      )}
 
       {/* ── Content input ── */}
       {mode === "paste" ? (
@@ -201,18 +221,22 @@ export default function DocumentUpload({ onSuccess }: Props) {
       ) : (
         <div className="mb-4">
           <label className="block mb-1 text-sm font-medium text-slate-700">
-            Select a .txt file
+            Select a file
           </label>
           <input
             ref={fileInputRef}
             type="file"
-            accept=".txt,.md,.csv"
+            accept=".pdf,.txt,.md,.csv"
             onChange={handleFileChange}
             className="w-full text-sm text-slate-500 file:mr-3 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
           />
-          {content && (
+          <p className="mt-1 text-xs text-slate-400">
+            PDF, TXT, MD or CSV — max 10 MB. PDF text is extracted on the server
+            (scanned PDFs without a text layer are rejected).
+          </p>
+          {file && (
             <p className="mt-1 text-xs text-green-600">
-              ✅ {content.length.toLocaleString()} characters loaded
+              ✅ {file.name} ({(file.size / 1024).toFixed(1)} KB) selected
             </p>
           )}
         </div>

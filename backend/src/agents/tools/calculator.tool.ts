@@ -3,9 +3,11 @@
 // The agent calls this when it needs to compute numbers
 // (percentages, totals, comparisons) found in retrieved documents.
 //
-// SECURITY: We do NOT use eval() — it can execute arbitrary code.
-// Instead, we use a whitelist approach: only allow digits and math operators.
-// If the expression contains anything else, reject it.
+// SECURITY: The allowlist regex is the control. Only digits and math
+// operators may reach the evaluator, so no identifiers (process, constructor,
+// …), no brackets, no quotes and no arrow functions can ever be parsed.
+// We do NOT use eval(); the Function constructor runs only on text that has
+// already passed the allowlist.
 
 import type { AgentTool } from "../../types/agent.types"
 
@@ -13,26 +15,34 @@ import type { AgentTool } from "../../types/agent.types"
 // Only: digits, decimal points, operators, parentheses, spaces, %
 const SAFE_MATH_PATTERN = /^[0-9+\-*/().% \t]+$/
 
+// Hard cap so a pathological expression can never be evaluated.
+const MAX_EXPRESSION_LENGTH = 200
+
 // Evaluate a math expression safely.
 // Returns the numeric result or an error message.
 function evaluateSafeMath(expression: string): string {
   const cleaned = expression.trim()
 
-  if (!SAFE_MATH_PATTERN.test(cleaned)) {
-    return `Error: Expression contains unsafe characters. Only use: numbers, +, -, *, /, (, ), ., %`
-  }
-
   if (cleaned.length === 0) {
     return "Error: Expression cannot be empty."
+  }
+
+  if (cleaned.length > MAX_EXPRESSION_LENGTH) {
+    return `Error: Expression exceeds ${MAX_EXPRESSION_LENGTH} characters.`
+  }
+
+  if (!SAFE_MATH_PATTERN.test(cleaned)) {
+    return `Error: Expression contains unsafe characters. Only use: numbers, +, -, *, /, (, ), ., %`
   }
 
   // Handle percentage: "21%" → "0.21"
   const withPercentage = cleaned.replace(/(\d+(?:\.\d+)?)%/g, "($1/100)")
 
   try {
-    // Function constructor is safer than eval() —
-    // it runs in strict mode and cannot access outer scope variables
-    const result = new Function(`"use strict"; return (${withPercentage})`)() as unknown
+    // The allowlist above is what makes this safe: after it passes, the
+    // expression can only be arithmetic — no names, no keywords, no syntax
+    // that could reference anything outside this function.
+    const result = (new Function(`"use strict"; return (${withPercentage})`) as () => unknown)()
 
     if (typeof result !== "number" || !Number.isFinite(result)) {
       return "Error: Expression did not produce a valid finite number."

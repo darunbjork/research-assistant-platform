@@ -25,10 +25,10 @@ class MockRedisClient {
 }
 
 // ── Mock Gemini API Response ──────────────────────────────────────────────
-// Returns N embeddings of 3072 dimensions (gemini-embedding-001).
+// Returns N embeddings of 768 dimensions (gemini-embedding-001).
 function makeMockGeminiResponse(count: number, fillValue: number = 0.1): Response {
   const embeddings = Array.from({ length: count }, () => ({
-    values: Array(3072).fill(fillValue) as number[],
+    values: Array(768).fill(fillValue) as number[],
   }))
   return new Response(JSON.stringify({ embeddings }), {
     status: 200,
@@ -76,10 +76,10 @@ describe("EmbeddingService", () => {
 
   // ── embedText ─────────────────────────────────────────────────────────
   describe("embedText()", () => {
-    it("returns an array of 3072 numbers", async () => {
+    it("returns an array of 768 numbers", async () => {
       const vector = await service.embedText("What is machine learning?")
       expect(Array.isArray(vector)).toBe(true)
-      expect(vector).toHaveLength(3072)
+      expect(vector).toHaveLength(768)
     })
 
     it("returns numbers (not strings or nulls)", async () => {
@@ -142,11 +142,11 @@ describe("EmbeddingService", () => {
       expect(vectors).toHaveLength(3)
     })
 
-    it("each vector has 3072 dimensions", async () => {
+    it("each vector has 768 dimensions", async () => {
       fetchSpy.mockResolvedValueOnce(makeMockGeminiResponse(2))
       const vectors = await service.embedBatch(["text a", "text b"])
       vectors.forEach(vector => {
-        expect(vector).toHaveLength(3072)
+        expect(vector).toHaveLength(768)
       })
     })
 
@@ -174,7 +174,7 @@ describe("EmbeddingService", () => {
         new Response(
           JSON.stringify({
             embeddings: responses.map(v => ({
-              values: Array(3072).fill(v) as number[],
+              values: Array(768).fill(v) as number[],
             })),
           }),
           { status: 200, headers: { "Content-Type": "application/json" } }
@@ -228,7 +228,7 @@ describe("EmbeddingService", () => {
       const serviceWithBrokenRedis = new EmbeddingService("fake-key", brokenRedis as never)
       fetchSpy.mockResolvedValueOnce(makeMockGeminiResponse(1))
       const vector = await serviceWithBrokenRedis.embedText("text with broken redis")
-      expect(vector).toHaveLength(3072)
+      expect(vector).toHaveLength(768)
       expect(fetchSpy).toHaveBeenCalledTimes(1)
     })
   })

@@ -92,8 +92,25 @@ export interface AgentErrorMessage {
   type: "error"
   sessionId: string
   message: string
-  code?: string
+  code?: AgentErrorCode
 }
+
+/**
+ * Machine-readable error codes sent with AgentErrorMessage.
+ * Adding a code here does not change the message shape — `code` stays an
+ * optional string field on the wire.
+ */
+export type AgentErrorCode =
+  | "INVALID_MESSAGE"
+  | "AUTH_FAILED"
+  | "NOT_AUTHENTICATED"
+  | "SESSION_BUSY"
+  | "INVALID_QUERY"
+  | "RATE_LIMITED"
+  | "CAPACITY_REACHED"
+  | "TOKEN_EXPIRED"
+  | "REASONING_ERROR"
+  | "AGENT_ERROR"
 
 export interface PongMessage {
   type: "pong"

@@ -1,32 +1,8 @@
-/*
-  Warnings:
+-- CreateExtension
+CREATE EXTENSION IF NOT EXISTS "vector";
 
-  - You are about to drop the `AgentSession` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `Document` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `DocumentChunk` table. If the table is not empty, all the data it contains will be lost.
-  - You are about to drop the `User` table. If the table is not empty, all the data it contains will be lost.
-
-*/
--- DropForeignKey
-ALTER TABLE "AgentSession" DROP CONSTRAINT "AgentSession_userId_fkey";
-
--- DropForeignKey
-ALTER TABLE "Document" DROP CONSTRAINT "Document_userId_fkey";
-
--- DropForeignKey
-ALTER TABLE "DocumentChunk" DROP CONSTRAINT "DocumentChunk_documentId_fkey";
-
--- DropTable
-DROP TABLE "AgentSession";
-
--- DropTable
-DROP TABLE "Document";
-
--- DropTable
-DROP TABLE "DocumentChunk";
-
--- DropTable
-DROP TABLE "User";
+-- CreateEnum
+CREATE TYPE "Role" AS ENUM ('GUEST', 'USER', 'ADMIN');
 
 -- CreateTable
 CREATE TABLE "users" (
@@ -60,7 +36,7 @@ CREATE TABLE "document_chunks" (
     "content" TEXT NOT NULL,
     "chunkIndex" INTEGER NOT NULL,
     "tokenCount" INTEGER NOT NULL,
-    "embedding" vector(3072),
+    "embedding" vector(768),
     "source" TEXT NOT NULL,
     "pageNumber" INTEGER,
     "chunkingStrategy" TEXT NOT NULL,
@@ -101,3 +77,17 @@ ALTER TABLE "document_chunks" ADD CONSTRAINT "document_chunks_documentId_fkey" F
 
 -- AddForeignKey
 ALTER TABLE "agent_sessions" ADD CONSTRAINT "agent_sessions_userId_fkey" FOREIGN KEY ("userId") REFERENCES "users"("id") ON DELETE CASCADE ON UPDATE CASCADE;
+
+-- ANN index for cosine search. HNSW: no training step, good recall, works on an empty table.
+CREATE INDEX "document_chunks_embedding_hnsw_idx"
+  ON "document_chunks" USING hnsw (embedding vector_cosine_ops);
+
+-- Full-text expression index. Must match the exact expression the keyword queries use:
+-- to_tsvector('english', content)
+CREATE INDEX "document_chunks_content_fts_idx"
+  ON "document_chunks" USING gin (to_tsvector('english', content));
+
+-- Iterative index scans (pgvector >= 0.8) make HNSW + WHERE userId filters still return topK rows.
+DO $$ BEGIN
+  EXECUTE format('ALTER DATABASE %I SET hnsw.iterative_scan = %L', current_database(), 'strict_order');
+END $$;

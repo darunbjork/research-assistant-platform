@@ -302,14 +302,27 @@ jest.mock("@opentelemetry/api", () => {
 
 // ── Now safe to import — OTel is fully mocked ─────────────────────────────
 import { withSpan, withSyncSpan, addSpanAttributes, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
-import { getTracer } from "../telemetry/tracer"
+import { getTracer, shutdownTracing } from "../telemetry/tracer"
+
+// The mocked NodeSDK instance created when tracer.ts evaluated (captured
+// before any clearAllMocks wipes the mock's results list).
+const sdkInstance = (jest.requireMock("@opentelemetry/sdk-node") as { NodeSDK: jest.Mock }).NodeSDK
+  .mock.results[0]?.value as { start: jest.Mock; shutdown: jest.Mock }
 
 // ── Helpers: get the mock instances from the mocked module ────────────────
-function getMockSpan() {
+// The span instance built by the jest.mock factory above.
+type MockSpan = {
+  setAttribute: jest.Mock
+  setStatus: jest.Mock
+  recordException: jest.Mock
+  end: jest.Mock
+}
+
+function getMockSpan(): MockSpan {
   const { trace } = jest.requireMock("@opentelemetry/api") as {
     trace: { getActiveSpan: jest.Mock }
   }
-  return trace.getActiveSpan()
+  return trace.getActiveSpan() as MockSpan
 }
 
 function getMockTracer() {
@@ -543,5 +556,18 @@ describe("LLM_ATTRS semantic constants", () => {
     expect(RAG_ATTRS.QUERY).toBe("rag.query")
     expect(RAG_ATTRS.CACHE_HIT).toBe("rag.cache.hit")
     expect(RAG_ATTRS.CHUNKS_RETRIEVED).toBe("rag.chunks.retrieved")
+  })
+})
+
+// ── shutdownTracing() (task 3.3) ──────────────────────────────────────────
+// The SDK starts under NODE_ENV=test, so shutdown must reach sdk.shutdown().
+// (Under development/production-without-endpoint it resolves immediately —
+// those paths need a re-import with a different env, covered by the plan's
+// manual verification instead.)
+describe("shutdownTracing()", () => {
+  it("shuts the SDK down when it was started", async () => {
+    await shutdownTracing()
+
+    expect(sdkInstance.shutdown).toHaveBeenCalled()
   })
 })

@@ -54,13 +54,13 @@ describe("KeywordSearchService", () => {
   // ── Empty / invalid queries ────────────────────────────────────────────
   describe("search() — empty / invalid queries", () => {
     it("returns empty array for empty string", async () => {
-      const results = await service.search("")
+      const results = await service.search("", { userId: "user-123" })
       expect(results).toHaveLength(0)
       expect(mockPrisma.$queryRaw).not.toHaveBeenCalled()
     })
 
     it("returns empty array for whitespace-only string", async () => {
-      const results = await service.search("   ")
+      const results = await service.search("   ", { userId: "user-123" })
       expect(results).toHaveLength(0)
       expect(mockPrisma.$queryRaw).not.toHaveBeenCalled()
     })
@@ -69,25 +69,31 @@ describe("KeywordSearchService", () => {
       mockPrisma = makeMockPrisma([])
       service = new KeywordSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search("xylophone quantum")
+      const results = await service.search("xylophone quantum", { userId: "user-123" })
       expect(results).toHaveLength(0)
+    })
+
+    it("returns empty array when the query sanitises to empty (punctuation only)", async () => {
+      const results = await service.search("!!! ???", { userId: "user-123" })
+      expect(results).toHaveLength(0)
+      expect(mockPrisma.$queryRaw).not.toHaveBeenCalled()
     })
   })
 
   // ── Happy path ─────────────────────────────────────────────────────────
   describe("search() — happy path", () => {
     it("returns results for a matching query", async () => {
-      const results = await service.search("machine learning")
+      const results = await service.search("machine learning", { userId: "user-123" })
       expect(results.length).toBeGreaterThan(0)
     })
 
     it("calls the database exactly once", async () => {
-      await service.search("machine learning")
+      await service.search("machine learning", { userId: "user-123" })
       expect(mockPrisma.$queryRaw).toHaveBeenCalledTimes(1)
     })
 
     it("each result has a chunk and a bm25Score", async () => {
-      const results = await service.search("machine learning")
+      const results = await service.search("machine learning", { userId: "user-123" })
 
       results.forEach(result => {
         expect(result.chunk).toBeDefined()
@@ -96,7 +102,7 @@ describe("KeywordSearchService", () => {
     })
 
     it("bm25Score is non-negative", async () => {
-      const results = await service.search("machine learning")
+      const results = await service.search("machine learning", { userId: "user-123" })
       results.forEach(result => {
         expect(result.bm25Score).toBeGreaterThanOrEqual(0)
       })
@@ -111,7 +117,7 @@ describe("KeywordSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new KeywordSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       expect(results[0]?.rank).toBe(0)
       expect(results[1]?.rank).toBe(1)
       expect(results[2]?.rank).toBe(2)
@@ -122,7 +128,7 @@ describe("KeywordSearchService", () => {
       mockPrisma = makeMockPrisma(fakeRows)
       service = new KeywordSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search("test")
+      const results = await service.search("test", { userId: "user-123" })
       expect(results).toHaveLength(5)
     })
   })
@@ -130,7 +136,7 @@ describe("KeywordSearchService", () => {
   // ── Result shape ───────────────────────────────────────────────────────
   describe("search() — result shape", () => {
     it("chunk has all required fields", async () => {
-      const results = await service.search("machine")
+      const results = await service.search("machine", { userId: "user-123" })
       const chunk = results[0]?.chunk
 
       if (chunk) {
@@ -145,7 +151,7 @@ describe("KeywordSearchService", () => {
     })
 
     it("handles null pageNumber correctly", async () => {
-      const results = await service.search("machine")
+      const results = await service.search("machine", { userId: "user-123" })
       expect(results[0]?.chunk.pageNumber).toBeNull()
     })
 
@@ -153,8 +159,20 @@ describe("KeywordSearchService", () => {
       mockPrisma = makeMockPrisma([makeFakeKeywordRow({ pageNumber: 5 })])
       service = new KeywordSearchService(mockPrisma as unknown as PrismaClient)
 
-      const results = await service.search("machine")
+      const results = await service.search("machine", { userId: "user-123" })
       expect(results[0]?.chunk.pageNumber).toBe(5)
+    })
+
+    it("converts a string createdAt into a Date", async () => {
+      mockPrisma = makeMockPrisma([
+        makeFakeKeywordRow({ createdAt: "2026-04-27T10:00:00.000Z" as unknown as Date }),
+      ])
+      service = new KeywordSearchService(mockPrisma as unknown as PrismaClient)
+
+      const results = await service.search("machine", { userId: "user-123" })
+      const createdAt = results[0]?.chunk.createdAt
+      expect(createdAt).toBeInstanceOf(Date)
+      expect(createdAt?.toISOString()).toBe("2026-04-27T10:00:00.000Z")
     })
   })
 
@@ -162,7 +180,7 @@ describe("KeywordSearchService", () => {
   describe("search() — options", () => {
     it("accepts documentIds option without error", async () => {
       await expect(
-        service.search("machine", { documentIds: ["doc-1", "doc-2"] })
+        service.search("machine", { documentIds: ["doc-1", "doc-2"], userId: "user-123" })
       ).resolves.toBeDefined()
     })
 
@@ -171,7 +189,18 @@ describe("KeywordSearchService", () => {
     })
 
     it("accepts topK option without error", async () => {
-      await expect(service.search("machine", { topK: 3 })).resolves.toBeDefined()
+      await expect(
+        service.search("machine", { topK: 3, userId: "user-123" })
+      ).resolves.toBeDefined()
+    })
+
+    it("always scopes the query to the current user (document_chunks + userId)", async () => {
+      await service.search("machine", { userId: "user-123" })
+      const [strings] = mockPrisma.$queryRaw.mock.calls[0] as unknown as [TemplateStringsArray]
+      const sql = strings.join("?")
+      expect(sql).toContain('"document_chunks"')
+      expect(sql).toContain('d."userId"')
+      expect(sql).not.toContain('"DocumentChunk"')
     })
   })
 
@@ -180,7 +209,9 @@ describe("KeywordSearchService", () => {
     it("propagates database errors to the caller", async () => {
       mockPrisma.$queryRaw.mockRejectedValueOnce(new Error("PostgreSQL connection lost"))
 
-      await expect(service.search("machine")).rejects.toThrow("PostgreSQL connection lost")
+      await expect(service.search("machine", { userId: "user-123" })).rejects.toThrow(
+        "PostgreSQL connection lost"
+      )
     })
   })
 })

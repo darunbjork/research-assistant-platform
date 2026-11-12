@@ -1,10 +1,27 @@
 import { Router } from "express"
+import type { Request, Response, NextFunction } from "express"
 import { AuthController } from "../controllers/auth.controller"
 import { authMiddleware } from "../middleware/auth.middleware"
 import { validateRegister, validateLogin } from "../middleware/validate.middleware"
+import {
+  createIpRateLimiter,
+  LOGIN_LIMIT,
+  REGISTER_LIMIT,
+} from "../middleware/rate-limit.middleware"
+import { env } from "../config/env"
 
 const router = Router()
 const controller = new AuthController()
+
+// ALLOW_REGISTRATION (default true): false closes signups with a 403.
+// Parsed once by the Zod env schema (task 3.1).
+function requireRegistrationOpen(_req: Request, res: Response, next: NextFunction): void {
+  if (!env.ALLOW_REGISTRATION) {
+    res.status(403).json({ error: "Registration is closed" })
+    return
+  }
+  next()
+}
 
 /**
  * @swagger
@@ -49,7 +66,13 @@ const controller = new AuthController()
  *       500:
  *         $ref: '#/components/responses/InternalError'
  */
-router.post("/register", validateRegister, controller.register)
+router.post(
+  "/register",
+  createIpRateLimiter(REGISTER_LIMIT),
+  requireRegistrationOpen,
+  validateRegister,
+  controller.register
+)
 
 /**
  * @swagger
@@ -101,7 +124,7 @@ router.post("/register", validateRegister, controller.register)
  *               data: null
  *               error: "Invalid email or password"
  */
-router.post("/login", validateLogin, controller.login)
+router.post("/login", createIpRateLimiter(LOGIN_LIMIT), validateLogin, controller.login)
 
 /**
  * @swagger

@@ -1,7 +1,9 @@
 // TODO: Global error handler — the safety net for the entire application.
 import type { Request, Response, NextFunction } from "express"
+import multer from "multer"
 import { logError } from "../utils/logger"
 import { fail } from "../types"
+import { env } from "../config/env"
 export class AppError extends Error {
   constructor(
     public readonly message: string,
@@ -67,6 +69,21 @@ export function errorMiddleware(
     return
   }
 
+  // Task 4.1: multer rejects oversized files while streaming the body.
+  if (error instanceof multer.MulterError) {
+    const message =
+      error.code === "LIMIT_FILE_SIZE" ? "File exceeds the 10 MB upload limit" : error.message
+    const statusCode = error.code === "LIMIT_FILE_SIZE" ? 413 : 400
+    logError("Upload error", error, {
+      service: "ErrorMiddleware",
+      code: error.code,
+      path: req.path,
+      method: req.method,
+    })
+    res.status(statusCode).json(fail(message))
+    return
+  }
+
   if (isPrismaError(error)) {
     logError("Database error", error, {
       service: "ErrorMiddleware",
@@ -84,7 +101,7 @@ export function errorMiddleware(
 
   res.status(500).json(
     fail(
-      process.env.NODE_ENV === "development"
+      env.NODE_ENV === "development"
         ? String(error) // show details in development
         : "Internal server error"
     )

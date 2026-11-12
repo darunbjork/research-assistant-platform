@@ -10,7 +10,8 @@ describe("JWT utilities", () => {
   let verifyRefreshToken: typeof import("../utils/jwt.utils").verifyRefreshToken
 
   beforeAll(async () => {
-    // Set env vars before importing (they're read at module load)
+    // Set before importing: config/env.ts parses process.env when
+    // jwt.utils loads (missing/duplicate secrets now fail there instead).
     process.env.JWT_SECRET = "test-access-secret-32-chars-minimum-abc"
     process.env.JWT_REFRESH_SECRET = "test-refresh-secret-32-chars-minimum-xyz"
 
@@ -55,14 +56,8 @@ describe("JWT utilities", () => {
       expect(parts).toHaveLength(3)
     })
 
-    it("throws when JWT_SECRET is not set", () => {
-      const savedSecret = process.env.JWT_SECRET
-      delete process.env.JWT_SECRET
-
-      expect(() => signTokens(VALID_PAYLOAD)).toThrow()
-
-      process.env.JWT_SECRET = savedSecret
-    })
+    // Missing JWT_SECRET is no longer possible at this layer: config/env.ts
+    // rejects an unset/short secret at startup (see config.env.test.ts).
   })
 
   // ── verifyAccessToken() ────────────────────────────────────────────────

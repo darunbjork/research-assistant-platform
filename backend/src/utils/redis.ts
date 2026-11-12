@@ -10,28 +10,28 @@
 
 import Redis from "ioredis"
 import { logStartup, logError } from "./logger"
+import { env } from "../config/env"
 
 // ── Create the Redis Client ───────────────────────────────────────────────
-const REDIS_URL = process.env.REDIS_URL ?? "redis://localhost:6379"
+const REDIS_URL = env.REDIS_URL
 
 export const redis = new Redis(REDIS_URL, {
-  // Retry strategy: if Redis goes down, retry with exponential backoff
-  // This prevents the app from crashing on a temporary Redis outage
-  retryStrategy(times: number): number | null {
-    if (times > 5) {
-      // After 5 attempts, stop retrying
-      // The app will continue without Redis — cache misses become API calls
+  // Retry strategy: reconnect forever with capped backoff.
+  // NEVER return null — returning null permanently stops the client, so a
+  // Redis restart would leave the app running without cache until a manual
+  // process restart. Backoff: 200ms, 400ms, … capped at 5s between retries.
+  retryStrategy(times: number): number {
+    // Log only every 10th attempt so a long outage doesn't flood the logs.
+    if (times % 10 === 0) {
       logError(
-        "Redis retry limit exceeded — running without cache",
+        `Redis still unavailable after ${times} attempts — continuing to retry`,
         new Error("Redis unavailable"),
         {
           service: "Redis",
         }
       )
-      return null
     }
-    // Wait: 100ms, 200ms, 400ms, 800ms, 1600ms between retries
-    return Math.min(times * 100, 2000)
+    return Math.min(times * 200, 5000)
   },
   // Do not log every command (too noisy in development)
   enableReadyCheck: true,

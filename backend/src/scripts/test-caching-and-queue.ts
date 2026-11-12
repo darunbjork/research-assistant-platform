@@ -1,6 +1,5 @@
 /* eslint-disable no-console */
-import dotenv from "dotenv"
-dotenv.config()
+import "../preload-env"
 
 import { PrismaClient } from "@prisma/client"
 import { EmbeddingService } from "../services/embedding.service"
@@ -110,7 +109,7 @@ async function main(): Promise<void> {
   while (status !== "completed" && status !== "failed" && attempts < 30) {
     await new Promise(r => setTimeout(r, 1000))
     const state = await testJob.getState()
-    const prog = testJob.progress()
+    const prog = testJob.progress() as number
     status = state
     attempts++
     process.stdout.write(`\r  Status: ${status} | Progress: ${prog}%    `)

@@ -24,8 +24,7 @@ const VALID_LOGIN = { email: "test@example.com", password: "securepass123" }
 describe("AuthService", () => {
   let service: AuthService
   let mockPrisma: ReturnType<typeof makeMockPrismaClient>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let p: any
+  let p: ReturnType<typeof makeMockPrismaClient>
 
   beforeEach(() => {
     mockPrisma = makeMockPrismaClient()
@@ -68,7 +67,7 @@ describe("AuthService", () => {
         expect.objectContaining({
           data: expect.objectContaining({
             email: "upper@example.com",
-          }),
+          }) as Record<string, unknown>,
         })
       )
     })
@@ -78,11 +77,16 @@ describe("AuthService", () => {
 
       expect(p.user.create).toHaveBeenCalledWith(
         expect.objectContaining({
-          data: expect.objectContaining({ passwordHash: "$2b$12$hashedpassword" }),
+          data: expect.objectContaining({ passwordHash: "$2b$12$hashedpassword" }) as Record<
+            string,
+            unknown
+          >,
         })
       )
 
-      const callArg = p.user.create.mock.calls[0]?.[0] as { data: Record<string, unknown> }
+      const callArg = (p.user.create.mock.calls[0] as unknown[] | undefined)?.[0] as {
+        data: Record<string, unknown>
+      }
       expect(callArg?.data?.["password"]).toBeUndefined()
     })
 
@@ -168,7 +172,9 @@ describe("AuthService", () => {
     it("normalises email to lowercase before lookup", async () => {
       await service.login({ email: "TEST@EXAMPLE.COM", password: "securepass123" })
       expect(p.user.findUnique).toHaveBeenCalledWith(
-        expect.objectContaining({ where: expect.objectContaining({ email: "test@example.com" }) })
+        expect.objectContaining({
+          where: expect.objectContaining({ email: "test@example.com" }) as Record<string, unknown>,
+        })
       )
     })
   })

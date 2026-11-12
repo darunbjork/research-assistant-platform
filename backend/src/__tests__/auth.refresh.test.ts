@@ -18,8 +18,7 @@ jest.mock("jsonwebtoken", () => ({
 describe("AuthService Refresh", () => {
   let service: AuthService
   let mockPrisma: ReturnType<typeof makeMockPrismaClient>
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  let p: any
+  let p: ReturnType<typeof makeMockPrismaClient>
 
   beforeEach(() => {
     mockPrisma = makeMockPrismaClient()

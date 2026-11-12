@@ -10,9 +10,11 @@ import type {
 } from "../types/eval.types"
 import { logRagEvent, logError } from "../utils/logger"
 import { ragTriadScores } from "../utils/metrics"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
 
 // ── Constants ──────────────────────────────────────────────────────────────
-const GEMINI_MODEL = "gemini-3.6-flash"
+const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 
 // Weights for the overall score
@@ -34,7 +36,7 @@ export class EvaluatorService {
   // ── evaluate ──────────────────────────────────────────────────────────
   // Evaluates one query-answer pair on all three RAG Triad dimensions.
   // Returns scores, explanations, and improvement recommendations.
-  async evaluate(request: EvalRequest): Promise<EvalResult> {
+  async evaluate(request: EvalRequest, signal?: AbortSignal): Promise<EvalResult> {
     const start = Date.now()
     const evalId = crypto.randomUUID()
 
@@ -47,9 +49,9 @@ export class EvaluatorService {
     const contextText = request.retrievedContext.join("\n\n---\n\n")
 
     const [contextResult, faithfulnessResult, answerResult] = await Promise.all([
-      this.evaluateContextRelevance(request.query, contextText),
-      this.evaluateFaithfulness(request.answer, contextText),
-      this.evaluateAnswerRelevance(request.query, request.answer),
+      this.evaluateContextRelevance(request.query, contextText, signal),
+      this.evaluateFaithfulness(request.answer, contextText, signal),
+      this.evaluateAnswerRelevance(request.query, request.answer, signal),
     ])
 
     // Compute weighted overall score
@@ -101,16 +103,19 @@ export class EvaluatorService {
   // ── evaluateBatch ─────────────────────────────────────────────────────
   // Evaluates multiple query-answer pairs and returns aggregate statistics.
   // Use this for systematic pipeline comparison.
-  async evaluateBatch(request: BatchEvalRequest): Promise<BatchEvalResult> {
+  async evaluateBatch(request: BatchEvalRequest, signal?: AbortSignal): Promise<BatchEvalResult> {
     const start = Date.now()
     const results: EvalResult[] = []
 
     // Evaluate pairs sequentially to avoid rate limits
     for (const pair of request.pairs) {
-      const result = await this.evaluate({
-        ...pair,
-        pipelineVersion: request.pipelineVersion ?? pair.pipelineVersion,
-      })
+      const result = await this.evaluate(
+        {
+          ...pair,
+          pipelineVersion: request.pipelineVersion ?? pair.pipelineVersion,
+        },
+        signal
+      )
       results.push(result)
     }
 
@@ -185,7 +190,8 @@ export class EvaluatorService {
   // Asks the LLM: "Do these retrieved chunks address this query?"
   private async evaluateContextRelevance(
     query: string,
-    context: string
+    context: string,
+    signal?: AbortSignal
   ): Promise<{ score: number; explanation: string }> {
     const prompt = `You are a RAG system quality evaluator.
 
@@ -215,14 +221,15 @@ Respond ONLY with valid JSON:
   "explanation": "One sentence explaining why this score was assigned"
 }`
 
-    return this.callAndParse(prompt)
+    return this.callAndParse(prompt, signal)
   }
 
   // ── Private: Evaluate Faithfulness ────────────────────────────────────
   // Asks the LLM: "Is everything in the answer backed by the context?"
   private async evaluateFaithfulness(
     answer: string,
-    context: string
+    context: string,
+    signal?: AbortSignal
   ): Promise<{ score: number; explanation: string }> {
     const prompt = `You are a RAG system quality evaluator.
 
@@ -255,14 +262,15 @@ Respond ONLY with valid JSON:
   "explanation": "One sentence explaining which claims were or were not supported"
 }`
 
-    return this.callAndParse(prompt)
+    return this.callAndParse(prompt, signal)
   }
 
   // ── Private: Evaluate Answer Relevance ───────────────────────────────
   // Asks the LLM: "Does the answer actually address what was asked?"
   private async evaluateAnswerRelevance(
     query: string,
-    answer: string
+    answer: string,
+    signal?: AbortSignal
   ): Promise<{ score: number; explanation: string }> {
     const prompt = `You are a RAG system quality evaluator.
 
@@ -295,11 +303,14 @@ Respond ONLY with valid JSON:
   "explanation": "One sentence explaining how well the answer addressed the query"
 }`
 
-    return this.callAndParse(prompt)
+    return this.callAndParse(prompt, signal)
   }
 
   // ── Private: Call Gemini and parse score ──────────────────────────────
-  private async callAndParse(prompt: string): Promise<{ score: number; explanation: string }> {
+  private async callAndParse(
+    prompt: string,
+    signal?: AbortSignal
+  ): Promise<{ score: number; explanation: string }> {
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
       generationConfig: {
@@ -310,10 +321,15 @@ Respond ONLY with valid JSON:
     }
 
     try {
-      const response = await this.callGemini(requestBody)
+      const response = await this.callGemini(requestBody, signal)
       const rawText = response.candidates[0]?.content.parts[0]?.text ?? ""
       return this.parseScoreResponse(rawText)
     } catch (error: unknown) {
+      // A caller-initiated abort is not an evaluation failure — rethrow so the
+      // agent run can stop with "aborted" instead of a neutral score.
+      if (signal?.aborted) {
+        throw error
+      }
       logError("Evaluation call failed", error, { service: "EvaluatorService" })
       // Return neutral score on failure — does not crash the evaluation
       return { score: 0.5, explanation: "Evaluation unavailable — using neutral score" }
@@ -464,13 +480,17 @@ Respond ONLY with valid JSON:
   }
 
   // ── Private: Call Gemini ──────────────────────────────────────────────
-  private async callGemini(requestBody: GeminiRequest): Promise<GeminiResponse> {
-    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent?key=${this.apiKey}`
+  private async callGemini(
+    requestBody: GeminiRequest,
+    signal?: AbortSignal
+  ): Promise<GeminiResponse> {
+    const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
+      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
     })
 
     if (!response.ok) {

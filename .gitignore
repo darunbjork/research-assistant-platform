@@ -1,0 +1,7 @@
+.DS_Store
+
+# Production secrets — never commit (template: .env.production.example)
+.env.production
+# Local rehearsal override (alternate host ports; production uses ports 80/443)
+docker-compose.prod.rehearsal.yml
+

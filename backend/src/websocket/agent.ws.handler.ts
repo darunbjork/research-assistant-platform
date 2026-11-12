@@ -1,5 +1,5 @@
 import type WebSocket from "ws"
-import { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { verifyAccessToken } from "../utils/jwt.utils"
 import { EmbeddingService } from "../services/embedding.service"
 import { HybridSearchService } from "../services/hybrid.search.service"
@@ -7,23 +7,64 @@ import { GenerationService } from "../services/generation.service"
 import { StreamingAgentService } from "../services/streaming.agent.service"
 import { parseClientMessage, toJson, type ServerMessage } from "../types/websocket.types"
 import { logRagEvent, logError } from "../utils/logger"
+import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
+import { consumeGlobalBudget } from "../utils/global-budget"
+import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
+import { env } from "../config/env"
+
+// ── Hardening constants (task 2.8) ────────────────────────────────────────
+// No successful auth within this window ⇒ close the connection.
+const AUTH_TIMEOUT_MS = 10_000
+// Application close codes (4000-4999 range is reserved for applications).
+const CLOSE_AUTH_TIMEOUT = 4001
+const CLOSE_TOKEN_EXPIRED = 4001
 
 // ── Service Instances ─────────────────────────────────────────────────────
 // Shared across all WebSocket connections — created once at module load.
 // This is safe because the services are stateless (no per-connection state).
-const prisma = new PrismaClient()
-const embeddingService = new EmbeddingService(process.env.GEMINI_API_KEY ?? "", redis)
+const embeddingService = new EmbeddingService(env.GEMINI_API_KEY, redis)
 const hybridSearchService = new HybridSearchService(prisma, embeddingService)
-const generationService = new GenerationService(process.env.GEMINI_API_KEY ?? "")
+const generationService = new GenerationService(env.GEMINI_API_KEY)
+
+// ── Running-agent registry (task 5.5) ─────────────────────────────────────
+// Every in-flight run's AbortController, across all live connections, so
+// graceful shutdown can abort them before closing the sockets.
+const activeRunControllers = new Set<AbortController>()
+
+/** Abort every in-flight agent run. Called once during shutdown (step 3). */
+export function abortRunningAgents(): void {
+  for (const controller of activeRunControllers) {
+    if (!controller.signal.aborted) {
+      controller.abort()
+    }
+  }
+  activeRunControllers.clear()
+}
 
 // ── Handler Class ─────────────────────────────────────────────────────────
 
 export class AgentWsHandler {
   private userId: string | null = null // null until authenticated
   private isRunning: boolean = false // true while agent is executing
+  /** Aborts the in-flight agent run when the connection closes. */
+  private runController: AbortController | null = null
+  /** `exp` (seconds since epoch) of the token accepted at auth time. */
+  private tokenExp: number | null = null
+  private authTimer: ReturnType<typeof setTimeout> | null = null
 
   constructor(private readonly ws: WebSocket) {
+    // Auth timeout: a connection that never authenticates is closed (4001)
+    // so an open socket can't sit around forever consuming resources.
+    this.authTimer = setTimeout(() => {
+      if (this.userId === null) {
+        logRagEvent("agent_step", "WebSocket auth timeout — closing connection", {
+          service: "AgentWsHandler",
+        })
+        this.ws.close(CLOSE_AUTH_TIMEOUT, "authentication timeout")
+      }
+    }, AUTH_TIMEOUT_MS)
+
     this.setup()
   }
 
@@ -44,6 +85,9 @@ export class AgentWsHandler {
 
     // Handle connection close
     this.ws.on("close", (_code: number, _reason: Buffer) => {
+      this.clearAuthTimer()
+      // Client went away — cancel any in-flight agent run (task 2.9).
+      this.runController?.abort()
       logRagEvent("agent_step", "WebSocket connection closed", {
         service: "AgentWsHandler",
         userId: this.userId ?? "unauthenticated",
@@ -96,6 +140,8 @@ export class AgentWsHandler {
     try {
       const payload = verifyAccessToken(cleanToken)
       this.userId = payload.userId
+      this.tokenExp = payload.exp ?? null
+      this.clearAuthTimer()
 
       this.send({
         type: "auth_confirmed",
@@ -133,6 +179,31 @@ export class AgentWsHandler {
       return
     }
 
+    // The access token may expire while the connection stays open (15m in
+    // production). Frontend reconnects and re-authenticates (task 3.6).
+    if (this.tokenExp !== null && Date.now() / 1000 > this.tokenExp) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: "Access token expired. Please reconnect and re-authenticate.",
+        code: "TOKEN_EXPIRED",
+      })
+      this.ws.close(CLOSE_TOKEN_EXPIRED, "token expired")
+      return
+    }
+
+    // AGENT_LIMIT applies to WebSocket starts exactly as it does to HTTP.
+    const decision = await consumeRateLimit(this.userId, AGENT_LIMIT)
+    if (!decision.allowed) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: AGENT_LIMIT.message,
+        code: "RATE_LIMITED",
+      })
+      return
+    }
+
     // Prevent concurrent sessions on the same connection
     if (this.isRunning) {
       this.send({
@@ -154,7 +225,31 @@ export class AgentWsHandler {
       return
     }
 
+    if (query.length > MAX_QUERY_LENGTH) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: `Query too long. Maximum ${MAX_QUERY_LENGTH} characters.`,
+        code: "INVALID_QUERY",
+      })
+      return
+    }
+
+    // Global daily budget: an agent run costs 5 units. Fails closed.
+    if (!(await consumeGlobalBudget(5))) {
+      this.send({
+        type: "error",
+        sessionId,
+        message: "Daily capacity reached, try again tomorrow",
+        code: "CAPACITY_REACHED",
+      })
+      return
+    }
+
     this.isRunning = true
+    const runController = new AbortController()
+    this.runController = runController
+    activeRunControllers.add(runController)
 
     logRagEvent("agent_step", "Streaming agent session started via WebSocket", {
       service: "AgentWsHandler",
@@ -165,7 +260,7 @@ export class AgentWsHandler {
     try {
       // Create the streaming agent with the send callback
       const streamingAgent = new StreamingAgentService(
-        process.env.GEMINI_API_KEY ?? "",
+        env.GEMINI_API_KEY,
         hybridSearchService,
         generationService
       )
@@ -179,8 +274,18 @@ export class AgentWsHandler {
         }
       }
 
-      await streamingAgent.run(query.trim(), this.userId, sessionId, onEvent)
+      await streamingAgent.run(query.trim(), this.userId, sessionId, onEvent, runController.signal)
     } catch (error: unknown) {
+      // Aborted by a client disconnect: info-level only, no error message.
+      if (runController.signal.aborted) {
+        logRagEvent("agent_step", "Streaming agent run aborted (connection closed)", {
+          service: "AgentWsHandler",
+          sessionId,
+          userId: this.userId,
+        })
+        return
+      }
+
       logError("Streaming agent failed", error, {
         service: "AgentWsHandler",
         sessionId,
@@ -195,6 +300,16 @@ export class AgentWsHandler {
       })
     } finally {
       this.isRunning = false
+      this.runController = null
+      activeRunControllers.delete(runController)
+    }
+  }
+
+  // ── Auth Timeout Helper ────────────────────────────────────────────────
+  private clearAuthTimer(): void {
+    if (this.authTimer !== null) {
+      clearTimeout(this.authTimer)
+      this.authTimer = null
     }
   }
 

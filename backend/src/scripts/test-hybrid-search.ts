@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
 
-import dotenv from "dotenv"
-dotenv.config()
+import "../preload-env"
 
 import { PrismaClient } from "@prisma/client"
 import { EmbeddingService } from "../services/embedding.service"
@@ -17,6 +16,12 @@ async function main(): Promise<void> {
   }
 
   const prisma = new PrismaClient()
+  const owner = await prisma.user.findFirst()
+  if (!owner) {
+    console.error("❌ No users in the database — register a user first.")
+    process.exit(1)
+  }
+  const userId = owner.id
   const embeddingService = new EmbeddingService(apiKey, redis)
   const hybridService = new HybridSearchService(prisma, embeddingService)
 
@@ -44,7 +49,7 @@ async function main(): Promise<void> {
     console.log(`QUERY:       "${testCase.query}"`)
     console.log(`DESCRIPTION: ${testCase.description}`)
 
-    const comparison = await hybridService.compareStrategies(testCase.query, { topK: 3 })
+    const comparison = await hybridService.compareStrategies(testCase.query, { topK: 3, userId })
 
     console.log(`\n  📐 VECTOR ONLY (${comparison.vectorOnly.length} results):`)
     comparison.vectorOnly.slice(0, 3).forEach((r, i) => {
@@ -96,7 +101,7 @@ async function main(): Promise<void> {
   console.log(`\n${"─".repeat(65)}`)
   console.log("CITATION FORMAT (what the frontend will display):")
 
-  const hybridResults = await hybridService.search("What is machine learning?", { topK: 2 })
+  const hybridResults = await hybridService.search("What is machine learning?", { topK: 2, userId })
   const citations = hybridService.toCitations(hybridResults)
 
   citations.forEach((citation, i) => {

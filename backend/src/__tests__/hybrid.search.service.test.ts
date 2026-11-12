@@ -13,12 +13,21 @@ import { EmbeddingService } from "../services/embedding.service"
 import { HybridSearchService } from "../services/hybrid.search.service"
 import type { VectorSearchResult, KeywordSearchResult, ChunkSearchResult } from "../types"
 
+// Unit tests must not read or write a real Redis. The search cache is now
+// always consulted (userId is required), so stub it: always miss, never store.
+jest.mock("../cache/index", () => ({
+  searchCache: {
+    get: jest.fn().mockResolvedValue(null),
+    set: jest.fn().mockResolvedValue(undefined),
+  },
+}))
+
 // ── Mock Factories ────────────────────────────────────────────────────────
 
 function makeMockEmbeddingService(): jest.Mocked<EmbeddingService> {
   return {
-    embedText: jest.fn().mockResolvedValue(Array(3072).fill(0.1) as number[]),
-    embedBatch: jest.fn().mockResolvedValue([Array(3072).fill(0.1) as number[]]),
+    embedText: jest.fn().mockResolvedValue(Array(768).fill(0.1) as number[]),
+    embedBatch: jest.fn().mockResolvedValue([Array(768).fill(0.1) as number[]]),
     getCacheStats: jest.fn().mockReturnValue({ hits: 0, misses: 0, hitRate: 0 }),
   } as unknown as jest.Mocked<EmbeddingService>
 }
@@ -88,17 +97,17 @@ describe("HybridSearchService", () => {
   // ── Empty queries ──────────────────────────────────────────────────────
   describe("search() — empty queries", () => {
     it("returns empty array for empty string", async () => {
-      const results = await service.search("")
+      const results = await service.search("", { userId: "user-123" })
       expect(results).toHaveLength(0)
     })
 
     it("returns empty array for whitespace string", async () => {
-      const results = await service.search("   ")
+      const results = await service.search("   ", { userId: "user-123" })
       expect(results).toHaveLength(0)
     })
 
     it("does not call embedText for empty query", async () => {
-      await service.search("")
+      await service.search("", { userId: "user-123" })
       expect(mockEmbedding.embedText).not.toHaveBeenCalled()
     })
   })
@@ -106,7 +115,7 @@ describe("HybridSearchService", () => {
   // ── RRF Algorithm ─────────────────────────────────────────────────────
   describe("reciprocalRankFusion — the core algorithm", () => {
     it("chunk-B (in BOTH lists) ranks higher than chunk-A (vector only)", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
 
       const chunkAIndex = results.findIndex(r => r.chunk.id === "chunk-A")
       const chunkBIndex = results.findIndex(r => r.chunk.id === "chunk-B")
@@ -118,7 +127,7 @@ describe("HybridSearchService", () => {
     })
 
     it("chunk-B (in BOTH lists) has a higher rrfScore than chunk-A (vector only)", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
 
       const chunkA = results.find(r => r.chunk.id === "chunk-A")
       const chunkB = results.find(r => r.chunk.id === "chunk-B")
@@ -132,13 +141,13 @@ describe("HybridSearchService", () => {
     })
 
     it("chunk-C (keyword only) appears in the merged results", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const chunkC = results.find(r => r.chunk.id === "chunk-C")
       expect(chunkC).toBeDefined()
     })
 
     it("all three unique chunks appear in the merged results", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const ids = results.map(r => r.chunk.id)
 
       expect(ids).toContain("chunk-A")
@@ -147,7 +156,7 @@ describe("HybridSearchService", () => {
     })
 
     it("no chunk appears twice (deduplication)", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const ids = results.map(r => r.chunk.id)
       const unique = new Set(ids)
 
@@ -155,7 +164,7 @@ describe("HybridSearchService", () => {
     })
 
     it("results are sorted by rrfScore descending", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
 
       for (let i = 0; i < results.length - 1; i++) {
         const current = results[i]?.rrfScore ?? 0
@@ -165,7 +174,7 @@ describe("HybridSearchService", () => {
     })
 
     it("chunk in BOTH lists has correct vectorRank and keywordRank", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const chunkB = results.find(r => r.chunk.id === "chunk-B")
 
       expect(chunkB?.vectorRank).toBe(1) // rank 1 in vector list (0-indexed)
@@ -173,14 +182,14 @@ describe("HybridSearchService", () => {
     })
 
     it("chunk only in vector list has keywordRank of 999", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const chunkA = results.find(r => r.chunk.id === "chunk-A")
 
       expect(chunkA?.keywordRank).toBe(999)
     })
 
     it("chunk only in keyword list has vectorRank of 999", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const chunkC = results.find(r => r.chunk.id === "chunk-C")
 
       expect(chunkC?.vectorRank).toBe(999)
@@ -190,7 +199,7 @@ describe("HybridSearchService", () => {
       // RRF formula: 1 / (k + rank + 1) = 1 / (60 + 0 + 1) = 1/61 ≈ 0.01639
       // chunk-A is rank 0 in vector, not in keyword:
       //   rrfScore = 1/61 ≈ 0.01639
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const chunkA = results.find(r => r.chunk.id === "chunk-A")
 
       expect(chunkA?.rrfScore).toBeCloseTo(1 / 61, 4)
@@ -202,7 +211,7 @@ describe("HybridSearchService", () => {
       //            = 1/62 + 1/61
       //            ≈ 0.01613 + 0.01639
       //            ≈ 0.03252
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const chunkB = results.find(r => r.chunk.id === "chunk-B")
       const expected = 1 / 62 + 1 / 61
 
@@ -271,9 +280,9 @@ describe("HybridSearchService", () => {
         .spyOn(service["keywordSearchService"], "search")
         .mockResolvedValue([makeMockKeywordResult("chunk-K", 0.9, 0)])
 
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
-      const results = await service.search("test")
+      const results = await service.search("test", { userId: "user-123" })
       expect(results).toHaveLength(1)
       expect(results[0]?.chunk.id).toBe("chunk-K")
 
@@ -287,9 +296,9 @@ describe("HybridSearchService", () => {
         .mockResolvedValue([makeMockVectorResult("chunk-V", 0.85, 0)])
       const keywordSpy = jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue([])
 
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
-      const results = await service.search("test")
+      const results = await service.search("test", { userId: "user-123" })
       expect(results).toHaveLength(1)
       expect(results[0]?.chunk.id).toBe("chunk-V")
 
@@ -300,9 +309,9 @@ describe("HybridSearchService", () => {
     it("works when both searches return empty results", async () => {
       jest.spyOn(service["vectorSearchService"], "search").mockResolvedValue([])
       jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue([])
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
-      const results = await service.search("test")
+      const results = await service.search("test", { userId: "user-123" })
       expect(results).toHaveLength(0)
     })
 
@@ -316,9 +325,9 @@ describe("HybridSearchService", () => {
 
       jest.spyOn(service["vectorSearchService"], "search").mockResolvedValue(manyVectorResults)
       jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue(manyKeywordResults)
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
-      const results = await service.search("test", { topK: 5 })
+      const results = await service.search("test", { topK: 5, userId: "user-123" })
       expect(results.length).toBeLessThanOrEqual(5)
     })
 
@@ -334,9 +343,9 @@ describe("HybridSearchService", () => {
 
       jest.spyOn(service["vectorSearchService"], "search").mockResolvedValue(sharedVectorResults)
       jest.spyOn(service["keywordSearchService"], "search").mockResolvedValue(sharedKeywordResults)
-      mockEmbedding.embedText.mockResolvedValue(Array(3072).fill(0.1))
+      mockEmbedding.embedText.mockResolvedValue(Array(768).fill(0.1))
 
-      const results = await service.search("test")
+      const results = await service.search("test", { userId: "user-123" })
       // Only 2 unique chunks, not 4
       expect(results).toHaveLength(2)
       // Both should have contributions from both lists
@@ -348,13 +357,29 @@ describe("HybridSearchService", () => {
   }) // ── Embedding calls ────────────────────────────────────────────────────
   describe("search() — embedding", () => {
     it("calls embedText with RETRIEVAL_QUERY task type", async () => {
-      await service.search("test query")
+      await service.search("test query", { userId: "user-123" })
 
-      expect(mockEmbedding.embedText).toHaveBeenCalledWith("test query", "RETRIEVAL_QUERY")
+      expect(mockEmbedding.embedText).toHaveBeenCalledWith(
+        "test query",
+        "RETRIEVAL_QUERY",
+        undefined
+      )
+    })
+
+    it("forwards the AbortSignal to embedText", async () => {
+      const controller = new AbortController()
+
+      await service.search("test query", { userId: "user-123" }, controller.signal)
+
+      expect(mockEmbedding.embedText).toHaveBeenCalledWith(
+        "test query",
+        "RETRIEVAL_QUERY",
+        controller.signal
+      )
     })
 
     it("calls embedText exactly once per search", async () => {
-      await service.search("test query")
+      await service.search("test query", { userId: "user-123" })
       expect(mockEmbedding.embedText).toHaveBeenCalledTimes(1)
     })
   })
@@ -362,7 +387,7 @@ describe("HybridSearchService", () => {
   // ── toCitations ───────────────────────────────────────────────────────
   describe("toCitations()", () => {
     it("converts hybrid results to Citation objects", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const citations = service.toCitations(results)
 
       citations.forEach(citation => {
@@ -392,7 +417,7 @@ describe("HybridSearchService", () => {
 
       service = new HybridSearchService(mockPrisma as unknown as PrismaClient, mockEmbedding)
 
-      const results = await service.search("test")
+      const results = await service.search("test", { userId: "user-123" })
       const citations = service.toCitations(results)
 
       expect(citations[0]?.excerpt).toHaveLength(203) // 200 chars + "..."
@@ -400,7 +425,7 @@ describe("HybridSearchService", () => {
     })
 
     it("returns same number of citations as results", async () => {
-      const results = await service.search("test query")
+      const results = await service.search("test query", { userId: "user-123" })
       const citations = service.toCitations(results)
       expect(citations).toHaveLength(results.length)
     })

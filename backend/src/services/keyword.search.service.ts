@@ -50,10 +50,7 @@ export class KeywordSearchService {
   // ── search ────────────────────────────────────────────────────────────
   // Finds chunks containing the query terms using PostgreSQL full-text search.
   // Returns results ordered by BM25-style rank score (highest first).
-  async search(
-    query: string,
-    options: Partial<KeywordSearchOptions> = {}
-  ): Promise<KeywordSearchResult[]> {
+  async search(query: string, options: KeywordSearchOptions): Promise<KeywordSearchResult[]> {
     if (!query || query.trim().length === 0) {
       return []
     }
@@ -78,81 +75,33 @@ export class KeywordSearchService {
         return []
       }
 
-      let results: RawKeywordSearchRow[]
-
-      if (documentIds.length > 0) {
-        // Restrict to specific documents
-        results = await this.prisma.$queryRaw<RawKeywordSearchRow[]>`
-          SELECT
-            dc.id,
-            dc."documentId",
-            dc.content,
-            dc."chunkIndex",
-            dc."tokenCount",
-            dc.source,
-            dc."pageNumber",
-            dc."chunkingStrategy",
-            dc."createdAt",
-            ts_rank(
-              to_tsvector('english', dc.content),
-              plainto_tsquery('english', ${sanitisedQuery})
-            ) AS rank
-          FROM "DocumentChunk" dc
-          WHERE dc."documentId" = ANY(${documentIds}::text[])
-            AND to_tsvector('english', dc.content)
-                @@ plainto_tsquery('english', ${sanitisedQuery})
-          ORDER BY rank DESC
-          LIMIT ${topK}
-        `
-      } else if (userId !== undefined) {
-        // Restrict to user's own documents via JOIN
-        results = await this.prisma.$queryRaw<RawKeywordSearchRow[]>`
-          SELECT
-            dc.id,
-            dc."documentId",
-            dc.content,
-            dc."chunkIndex",
-            dc."tokenCount",
-            dc.source,
-            dc."pageNumber",
-            dc."chunkingStrategy",
-            dc."createdAt",
-            ts_rank(
-              to_tsvector('english', dc.content),
-              plainto_tsquery('english', ${sanitisedQuery})
-            ) AS rank
-          FROM "DocumentChunk" dc
-          INNER JOIN "Document" d ON d.id = dc."documentId"
-          WHERE d."userId" = ${userId}
-            AND to_tsvector('english', dc.content)
-                @@ plainto_tsquery('english', ${sanitisedQuery})
-          ORDER BY rank DESC
-          LIMIT ${topK}
-        `
-      } else {
-        // Search all chunks
-        results = await this.prisma.$queryRaw<RawKeywordSearchRow[]>`
-          SELECT
-            dc.id,
-            dc."documentId",
-            dc.content,
-            dc."chunkIndex",
-            dc."tokenCount",
-            dc.source,
-            dc."pageNumber",
-            dc."chunkingStrategy",
-            dc."createdAt",
-            ts_rank(
-              to_tsvector('english', dc.content),
-              plainto_tsquery('english', ${sanitisedQuery})
-            ) AS rank
-          FROM "DocumentChunk" dc
-          WHERE to_tsvector('english', dc.content)
-                @@ plainto_tsquery('english', ${sanitisedQuery})
-          ORDER BY rank DESC
-          LIMIT ${topK}
-        `
-      }
+      // One query, always scoped to the owning user (cross-tenant isolation).
+      // An empty documentIds array means "all of this user's documents".
+      // The tsvector expression must match document_chunks_content_fts_idx exactly.
+      const results = await this.prisma.$queryRaw<RawKeywordSearchRow[]>`
+        SELECT
+          dc.id,
+          dc."documentId",
+          dc.content,
+          dc."chunkIndex",
+          dc."tokenCount",
+          dc.source,
+          dc."pageNumber",
+          dc."chunkingStrategy",
+          dc."createdAt",
+          ts_rank(
+            to_tsvector('english', dc.content),
+            plainto_tsquery('english', ${sanitisedQuery})
+          ) AS rank
+        FROM "document_chunks" dc
+        JOIN "documents" d ON d.id = dc."documentId"
+        WHERE d."userId" = ${userId}
+          AND (cardinality(${documentIds}::text[]) = 0 OR dc."documentId" = ANY(${documentIds}::text[]))
+          AND to_tsvector('english', dc.content)
+              @@ plainto_tsquery('english', ${sanitisedQuery})
+        ORDER BY rank DESC
+        LIMIT ${topK}
+      `
 
       const searchResults = this.toKeywordSearchResults(results)
 

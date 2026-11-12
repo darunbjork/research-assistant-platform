@@ -1,7 +1,6 @@
 /* eslint-disable no-console */
 
-import dotenv from "dotenv"
-dotenv.config()
+import "../preload-env"
 
 import { PrismaClient } from "@prisma/client"
 import { EmbeddingService } from "../services/embedding.service"
@@ -18,6 +17,12 @@ async function main(): Promise<void> {
   }
 
   const prisma = new PrismaClient()
+  const owner = await prisma.user.findFirst()
+  if (!owner) {
+    console.error("❌ No users in the database — register a user first.")
+    process.exit(1)
+  }
+  const userId = owner.id
   const embeddingService = new EmbeddingService(apiKey, redis)
   const hybridService = new HybridSearchService(prisma, embeddingService)
   const rerankerService = new RerankerService(apiKey)
@@ -38,7 +43,7 @@ async function main(): Promise<void> {
     console.log(`QUERY: "${query}"`)
     console.log()
 
-    const hybridResults = await hybridService.search(query, { topK: 6 })
+    const hybridResults = await hybridService.search(query, { topK: 6, userId })
 
     if (hybridResults.length === 0) {
       console.log("  No results found — upload a document first")

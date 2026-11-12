@@ -2,11 +2,52 @@ import type { Request, Response } from "express"
 import type { RateLimitConfig } from "../middleware/rate-limit.middleware"
 
 // ── Mock Redis ────────────────────────────────────────────────────────────
-// We mock the entire redis module so the rate limiter uses our fake Redis
+// We mock the entire redis module so the rate limiter uses our fake Redis.
+// consumeRateLimit() drives everything through multi().incr().expire(NX).ttl().exec(),
+// so the mock exposes a chainable pipeline that honours EXPIRE NX semantics.
 const mockRedisStore = new Map<string, number>()
 const mockTtlStore = new Map<string, number>()
 
 const mockRedis = {
+  multi: jest.fn(() => {
+    let incCount = 0
+    let expireResult = 0
+    let ttlResult = -1
+    const pipeline: {
+      incr: jest.Mock
+      expire: jest.Mock
+      ttl: jest.Mock
+      exec: jest.Mock
+    } = {
+      incr: jest.fn((key: string): typeof pipeline => {
+        const next = (mockRedisStore.get(key) ?? 0) + 1
+        mockRedisStore.set(key, next)
+        incCount = next
+        return pipeline
+      }),
+      expire: jest.fn((key: string, seconds: number, nx?: string): typeof pipeline => {
+        if (nx === "NX" && mockTtlStore.has(key)) {
+          expireResult = 0 // key already has a TTL — NX is a no-op
+        } else {
+          mockTtlStore.set(key, seconds)
+          expireResult = 1
+        }
+        return pipeline
+      }),
+      ttl: jest.fn((key: string): typeof pipeline => {
+        ttlResult = mockTtlStore.get(key) ?? -1
+        return pipeline
+      }),
+      exec: jest.fn(
+        async (): Promise<Array<[null, number]>> => [
+          [null, incCount],
+          [null, expireResult],
+          [null, ttlResult],
+        ]
+      ),
+    }
+    return pipeline
+  }),
   incr: jest.fn(async (key: string): Promise<number> => {
     const current = mockRedisStore.get(key) ?? 0
     const next = current + 1
@@ -37,7 +78,7 @@ jest.mock("../utils/redis", () => ({
 }))
 
 // Now import the middleware (it will use our mocked Redis)
-const { createRateLimiter } =
+const { createRateLimiter, createIpRateLimiter, consumeRateLimit, LOGIN_LIMIT, REGISTER_LIMIT } =
   require("../middleware/rate-limit.middleware") as typeof import("../middleware/rate-limit.middleware")
 
 // ── Test Helpers ──────────────────────────────────────────────────────────
@@ -80,6 +121,7 @@ describe("createRateLimiter()", () => {
     max: 3, // very low for testing
     message: "Rate limit exceeded",
     keyPrefix: "test",
+    failMode: "open",
   }
 
   beforeEach(() => {
@@ -146,25 +188,28 @@ describe("createRateLimiter()", () => {
       expect(res2.headers["X-RateLimit-Remaining"]).toBe(TEST_CONFIG.max - 2)
     })
 
-    it("sets TTL on first request only", async () => {
+    it("does not restart the window TTL on later requests (EXPIRE NX)", async () => {
       const limiter = createRateLimiter(TEST_CONFIG)
       const userId = "user-5"
+      const key = `rl:test:${userId}`
 
-      // First request — should set TTL
+      // First request — TTL is set to the window length (60s).
       await limiter(
         makeRequest(userId) as Request,
         makeResponse() as unknown as Response,
         makeNext()
       )
-      expect(mockRedis.expire).toHaveBeenCalledTimes(1)
+      expect(mockTtlStore.get(key)).toBe(60)
 
-      // Second request — should NOT set TTL again
+      // Simulate the window ageing on the Redis side, then hit the limiter
+      // again: EXPIRE NX must leave the existing TTL untouched.
+      mockTtlStore.set(key, 42)
       await limiter(
         makeRequest(userId) as Request,
         makeResponse() as unknown as Response,
         makeNext()
       )
-      expect(mockRedis.expire).toHaveBeenCalledTimes(1) // still 1
+      expect(mockTtlStore.get(key)).toBe(42)
     })
   })
 
@@ -276,14 +321,16 @@ describe("createRateLimiter()", () => {
       await limiter(req as Request, res as unknown as Response, next)
 
       expect(next).toHaveBeenCalledTimes(1)
-      expect(mockRedis.incr).not.toHaveBeenCalled() // no Redis call
+      expect(mockRedis.multi).not.toHaveBeenCalled() // no Redis call
     })
   })
 
   // ── Redis failure (fail open) ───────────────────────────────────────────
   describe("Redis failure — fail open", () => {
     it("calls next() when Redis throws (fail open)", async () => {
-      mockRedis.incr.mockRejectedValueOnce(new Error("Redis connection refused"))
+      mockRedis.multi.mockImplementationOnce(() => {
+        throw new Error("Redis connection refused")
+      })
 
       const limiter = createRateLimiter(TEST_CONFIG)
       const req = makeRequest("user-redis-down")
@@ -294,6 +341,204 @@ describe("createRateLimiter()", () => {
 
       // Should fail open — allow the request despite Redis being down
       expect(next).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
+// ── consumeRateLimit() — the Express-independent core ─────────────────────
+describe("consumeRateLimit()", () => {
+  const CORE_CONFIG: RateLimitConfig = {
+    windowMs: 60_000,
+    max: 2,
+    message: "core limit",
+    keyPrefix: "core",
+    failMode: "closed",
+  }
+
+  beforeEach(() => {
+    mockRedisStore.clear()
+    mockTtlStore.clear()
+    jest.clearAllMocks()
+  })
+
+  it("allows requests under the limit and reports remaining", async () => {
+    const first = await consumeRateLimit("user-1", CORE_CONFIG)
+    expect(first).toEqual({ allowed: true, remaining: 1, retryAfterSec: 60 })
+
+    const second = await consumeRateLimit("user-1", CORE_CONFIG)
+    expect(second.allowed).toBe(true)
+    expect(second.remaining).toBe(0)
+  })
+
+  it("denies once the limit is exceeded, with the TTL as retryAfterSec", async () => {
+    await consumeRateLimit("user-2", CORE_CONFIG)
+    await consumeRateLimit("user-2", CORE_CONFIG)
+
+    const third = await consumeRateLimit("user-2", CORE_CONFIG)
+    expect(third.allowed).toBe(false)
+    expect(third.remaining).toBe(0)
+    expect(third.retryAfterSec).toBe(60)
+  })
+
+  it("scopes counters by subject (user and ip: subjects are independent)", async () => {
+    await consumeRateLimit("ip:1.2.3.4", CORE_CONFIG)
+
+    const other = await consumeRateLimit("ip:9.9.9.9", CORE_CONFIG)
+    expect(other.allowed).toBe(true)
+    expect(other.remaining).toBe(1)
+
+    const same = await consumeRateLimit("ip:1.2.3.4", CORE_CONFIG)
+    expect(same.remaining).toBe(0)
+  })
+
+  it("uses the rl:<prefix>:<subject> key format", async () => {
+    await consumeRateLimit("user-5", CORE_CONFIG)
+    expect(mockRedisStore.get("rl:core:user-5")).toBe(1)
+  })
+
+  it("fails closed (retryAfterSec 60) when Redis is down", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const decision = await consumeRateLimit("user-3", { ...CORE_CONFIG, failMode: "closed" })
+    expect(decision).toEqual({ allowed: false, remaining: 0, retryAfterSec: 60 })
+  })
+
+  it("fails open when Redis is down and failMode is open", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const decision = await consumeRateLimit("user-4", { ...CORE_CONFIG, failMode: "open" })
+    expect(decision.allowed).toBe(true)
+    expect(decision.remaining).toBe(CORE_CONFIG.max)
+  })
+})
+
+// ── createIpRateLimiter() — per-IP limits for auth endpoints (D20) ────────
+describe("createIpRateLimiter()", () => {
+  const IP_CONFIG: RateLimitConfig = {
+    windowMs: 900_000, // 15 minutes
+    max: 3,
+    message: "Too many attempts",
+    keyPrefix: "ip-test",
+    failMode: "open",
+  }
+
+  function makeIpRequest(ip: string): Partial<Request> {
+    return { ip }
+  }
+
+  beforeEach(() => {
+    mockRedisStore.clear()
+    mockTtlStore.clear()
+    jest.clearAllMocks()
+  })
+
+  it("keys the counter by ip:<address>", async () => {
+    const limiter = createIpRateLimiter(IP_CONFIG)
+
+    await limiter(
+      makeIpRequest("203.0.113.7") as Request,
+      makeResponse() as unknown as Response,
+      makeNext()
+    )
+
+    expect(mockRedisStore.get("rl:ip-test:ip:203.0.113.7")).toBe(1)
+  })
+
+  it("allows up to the max per IP and denies the next with 429", async () => {
+    const limiter = createIpRateLimiter(IP_CONFIG)
+
+    for (let i = 0; i < IP_CONFIG.max; i++) {
+      const res = makeResponse()
+      const next = makeNext()
+      await limiter(makeIpRequest("198.51.100.9") as Request, res as unknown as Response, next)
+      expect(next).toHaveBeenCalledTimes(1)
+      expect(res.statusCode).toBe(200)
+    }
+
+    const res = makeResponse()
+    const next = makeNext()
+    await limiter(makeIpRequest("198.51.100.9") as Request, res as unknown as Response, next)
+
+    expect(res.statusCode).toBe(429)
+    expect(next).not.toHaveBeenCalled()
+    expect(res.headers["Retry-After"]).toBeDefined()
+    expect(res.headers["X-RateLimit-Remaining"]).toBe(0)
+    expect((res.body as { error?: string }).error).toBe(IP_CONFIG.message)
+  })
+
+  it("keeps different IPs independent", async () => {
+    const limiter = createIpRateLimiter(IP_CONFIG)
+
+    // IP A exhausts its window
+    for (let i = 0; i <= IP_CONFIG.max; i++) {
+      await limiter(
+        makeIpRequest("192.0.2.1") as Request,
+        makeResponse() as unknown as Response,
+        makeNext()
+      )
+    }
+
+    // IP B still has room
+    const res = makeResponse()
+    const next = makeNext()
+    await limiter(makeIpRequest("192.0.2.2") as Request, res as unknown as Response, next)
+
+    expect(next).toHaveBeenCalledTimes(1)
+    expect(res.statusCode).toBe(200)
+  })
+
+  it("fails open when Redis is down", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const limiter = createIpRateLimiter(IP_CONFIG)
+    const next = makeNext()
+    await limiter(
+      makeIpRequest("203.0.113.8") as Request,
+      makeResponse() as unknown as Response,
+      next
+    )
+
+    expect(next).toHaveBeenCalledTimes(1)
+  })
+
+  it("fails closed when Redis is down and failMode is closed", async () => {
+    mockRedis.multi.mockImplementationOnce(() => {
+      throw new Error("Redis connection refused")
+    })
+
+    const limiter = createIpRateLimiter({ ...IP_CONFIG, failMode: "closed" })
+    const res = makeResponse()
+    const next = makeNext()
+    await limiter(makeIpRequest("203.0.113.9") as Request, res as unknown as Response, next)
+
+    expect(res.statusCode).toBe(429)
+    expect(next).not.toHaveBeenCalled()
+  })
+})
+
+// ── Auth IP limits pinned to the plan's numbers (task 2.5) ────────────────
+describe("auth IP limit configs", () => {
+  it("LOGIN_LIMIT is 10 per 15 minutes, fail open, keyed login", () => {
+    expect(LOGIN_LIMIT).toMatchObject({
+      windowMs: 15 * 60 * 1000,
+      max: 10,
+      failMode: "open",
+      keyPrefix: "login",
+    })
+  })
+
+  it("REGISTER_LIMIT is 5 per hour, fail closed, keyed register", () => {
+    expect(REGISTER_LIMIT).toMatchObject({
+      windowMs: 60 * 60 * 1000,
+      max: 5,
+      failMode: "closed",
+      keyPrefix: "register",
     })
   })
 })

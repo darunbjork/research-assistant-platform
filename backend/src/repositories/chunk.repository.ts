@@ -47,7 +47,7 @@ export class ChunkRepository {
           embeddingArray = (chunk.embedding as { vector: number[] }).vector
         } else if (typeof chunk.embedding === "string") {
           try {
-            embeddingArray = JSON.parse(chunk.embedding)
+            embeddingArray = JSON.parse(chunk.embedding) as number[]
           } catch {
             throw new Error("Invalid embedding format: string parsing failed")
           }

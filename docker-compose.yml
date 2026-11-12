@@ -16,7 +16,6 @@ services:
       # the container — eliminates pg_hba.conf auth mismatches
     volumes:
       - postgres_data:/var/lib/postgresql/data
-      - ./backend/prisma/init.sql:/docker-entrypoint-initdb.d/init.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U postgres -d ragdb"]
       interval: 5s

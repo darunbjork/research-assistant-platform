@@ -109,3 +109,16 @@ Key endpoints:
 - `POST /api/v1/eval/score` — RAG Triad quality evaluation
 - `GET  /metrics` — Prometheus metrics
 - `WS   /ws/agent` — real-time agent streaming
+## Database migrations
+
+Prisma cannot represent HNSW or expression indexes. The baseline migration
+(`prisma/migrations/*/migration.sql`) creates them by hand:
+
+- `document_chunks_embedding_hnsw_idx` — HNSW on `embedding vector_cosine_ops`
+- `document_chunks_content_fts_idx` — GIN on `to_tsvector('english', content)`
+- `hnsw.iterative_scan = strict_order` (database-level setting)
+
+**When you create a future migration** with `npx prisma migrate dev --create-only`,
+open the generated `migration.sql` and **delete any generated `DROP INDEX` for
+these two indexes** before applying it. Prisma does not know they exist and will
+try to drop them whenever the underlying column changes.

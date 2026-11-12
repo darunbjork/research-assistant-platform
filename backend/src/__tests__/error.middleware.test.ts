@@ -13,6 +13,15 @@ import {
   RAGError,
 } from "../middleware/error.middleware"
 
+// env is parsed once at import (task 3.1) — mock it with a mutable copy so
+// the development/production branches can be flipped per test.
+jest.mock("../config/env", () => {
+  const actual = jest.requireActual("../config/env") as typeof import("../config/env")
+  return { ...actual, env: { ...actual.env } }
+})
+
+const { env } = require("../config/env") as typeof import("../config/env")
+
 // ── Helpers ────────────────────────────────────────────────────────────────
 
 function makeReq(): Partial<Request> {
@@ -160,8 +169,8 @@ describe("errorMiddleware()", () => {
   })
 
   it("does not expose internal error details in production", () => {
-    const savedEnv = process.env.NODE_ENV
-    process.env.NODE_ENV = "production"
+    const savedEnv = env.NODE_ENV
+    env.NODE_ENV = "production"
 
     const err = new Error("Internal secret details")
     const req = makeReq()
@@ -173,12 +182,12 @@ describe("errorMiddleware()", () => {
     expect(body.error).not.toContain("Internal secret details")
     expect(body.error).toBe("Internal server error")
 
-    process.env.NODE_ENV = savedEnv
+    env.NODE_ENV = savedEnv
   })
 
   it("exposes error message in development", () => {
-    const savedEnv = process.env.NODE_ENV
-    process.env.NODE_ENV = "development"
+    const savedEnv = env.NODE_ENV
+    env.NODE_ENV = "development"
 
     const err = new Error("Detailed dev message")
     const req = makeReq()
@@ -189,6 +198,6 @@ describe("errorMiddleware()", () => {
     const body = res.body as { error: string }
     expect(body.error).toContain("Detailed dev message")
 
-    process.env.NODE_ENV = savedEnv
+    env.NODE_ENV = savedEnv
   })
 })

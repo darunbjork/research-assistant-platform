@@ -4,10 +4,13 @@ import { ChunkingService } from "../services/chunking.service"
 import { EmbeddingService } from "../services/embedding.service"
 import { DocumentRepository } from "../repositories/document.repository"
 import { ChunkRepository } from "../repositories/chunk.repository"
-import { PrismaClient } from "@prisma/client"
+import type { PrismaClient } from "@prisma/client"
+import { prisma } from "../utils/prisma"
 import { logRagEvent, logError } from "../utils/logger"
+import { consumeGlobalBudget } from "../utils/global-budget"
 import { indexedDocuments } from "../utils/metrics"
 import type { ChunkToStore } from "../repositories/chunk.repository"
+import { env } from "../config/env"
 
 export interface IngestionJobData {
   name: string
@@ -38,18 +41,16 @@ const CONCURRENCY = 3
 const MAX_ATTEMPTS = 3
 const BACKOFF_DELAY_MS = 5_000
 
-let prismaInstance: PrismaClient | null = null
 let redisInstance: Redis | null = null
 
 function getPrisma(): PrismaClient {
-  if (!prismaInstance) prismaInstance = new PrismaClient()
-  return prismaInstance
+  return prisma
 }
 
 export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJobData> {
   redisInstance = redisClient
 
-  const redisUrl = process.env.REDIS_URL ?? "redis://localhost:6379"
+  const redisUrl = env.REDIS_URL
 
   const queue = new Bull<IngestionJobData>(QUEUE_NAME, {
     redis: redisUrl,
@@ -64,9 +65,15 @@ export function createIngestionQueue(redisClient: Redis): Bull.Queue<IngestionJo
     },
   })
 
-  queue.process(CONCURRENCY, async (job: Bull.Job<IngestionJobData>) => {
-    return processIngestionJob(job)
-  })
+  queue
+    .process(CONCURRENCY, async (job: Bull.Job<IngestionJobData>) => {
+      return processIngestionJob(job)
+    })
+    .catch((error: unknown) => {
+      logError("Ingestion queue processor failed to start", error, {
+        service: "IngestionQueue",
+      })
+    })
 
   queue.on("completed", (_job: Bull.Job<IngestionJobData>, result: IngestionJobResult) => {
     logRagEvent("ingest", "Ingestion job completed", {
@@ -116,7 +123,7 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
   const prisma = getPrisma()
   const chunkingService = new ChunkingService()
   const embeddingService = new EmbeddingService(
-    process.env.GEMINI_API_KEY ?? "",
+    env.GEMINI_API_KEY,
     redisInstance! // Redis instance is set when queue is created
   )
   const documentRepository = new DocumentRepository(prisma)
@@ -154,6 +161,14 @@ async function processIngestionJob(job: Bull.Job<IngestionJobData>): Promise<Ing
     })
 
     const chunkTexts = rawChunks.map(c => c.content)
+
+    // Global daily budget: ceil(chunks/100) units — a 100-chunk document
+    // costs 1. Checked right before the embedding spend.
+    const budgetCost = Math.ceil(rawChunks.length / 100)
+    if (!(await consumeGlobalBudget(budgetCost))) {
+      throw new Error("Daily capacity reached, try again tomorrow")
+    }
+
     const embeddings = await embeddingService.embedBatch(chunkTexts, "RETRIEVAL_DOCUMENT")
 
     await job.progress(PROGRESS.EMBEDDED)
@@ -239,10 +254,15 @@ export interface JobStatus {
 
 export async function getJobStatus(
   queue: Bull.Queue<IngestionJobData>,
-  jobId: string
+  jobId: string,
+  userId: string
 ): Promise<JobStatus | null> {
   const job = await queue.getJob(jobId)
   if (!job) return null
+
+  // D7: a job that belongs to a different user must be indistinguishable from
+  // a missing job — the controller answers 404, not 403 (project convention).
+  if (job.data.userId !== userId) return null
 
   const state = await job.getState()
   const progress = typeof job.progress() === "number" ? (job.progress() as number) : 0

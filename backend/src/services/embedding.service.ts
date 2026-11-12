@@ -14,11 +14,16 @@ import { embeddingRequests, embeddingLatency, tokenCost } from "../utils/metrics
 import { getTracer } from "../telemetry/tracer"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 import { RateLimitError } from "../middleware/error.middleware"
+import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { env } from "../config/env"
 
 // ── Constants ─────────────────────────────────────────────────────────────
-const GEMINI_EMBEDDING_MODEL = "gemini-embedding-001"
+const GEMINI_EMBEDDING_MODEL = env.GEMINI_EMBEDDING_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
-const EMBEDDING_DIMENSIONS = 3072
+// History: was 3072 (the model default). We request 768 explicitly because a
+// pgvector `vector` column cannot be indexed above 2,000 dimensions; see
+// docs/DEPLOY_READY_PLAN.md task 1.1. Must match `vector(768)` in schema.prisma.
+export const EMBEDDING_DIMENSIONS = 768
 const CACHE_TTL_SECONDS = 86_400 // 24 hours
 const MAX_BATCH_SIZE = 100 // Gemini API limit per batchEmbedContents call
 
@@ -41,7 +46,8 @@ export class EmbeddingService {
   // ── embedText ─────────────────────────────────────────────────────────
   async embedText(
     text: string,
-    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT"
+    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT",
+    signal?: AbortSignal
   ): Promise<number[]> {
     return withSpan(this.tracer, "embedding.embedText", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
@@ -69,7 +75,7 @@ export class EmbeddingService {
       const timer = embeddingLatency.startTimer()
       embeddingRequests.inc({ status: "success" })
 
-      const embedding = await this.callGeminiApi([text], taskType)
+      const embedding = await this.callGeminiApi([text], taskType, signal)
       const vector = embedding[0]
       if (vector === undefined) {
         throw new Error("Gemini returned no embedding vector")
@@ -96,7 +102,8 @@ export class EmbeddingService {
   // ── embedBatch ────────────────────────────────────────────────────────
   async embedBatch(
     texts: string[],
-    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT"
+    taskType: "RETRIEVAL_QUERY" | "RETRIEVAL_DOCUMENT" = "RETRIEVAL_DOCUMENT",
+    signal?: AbortSignal
   ): Promise<number[][]> {
     return withSpan(this.tracer, "embedding.embedBatch", async span => {
       span.setAttribute(LLM_ATTRS.SYSTEM, "google_gemini")
@@ -139,7 +146,8 @@ export class EmbeddingService {
 
           const embeddings = await this.callGeminiApi(
             batch.map(item => item.text),
-            taskType
+            taskType,
+            signal
           )
 
           timer()
@@ -171,21 +179,27 @@ export class EmbeddingService {
   }
 
   // ── Private: Gemini API call (single batch, no splitting) ──────────────
-  private async callGeminiApi(texts: string[], taskType: EmbeddingTaskType): Promise<number[][]> {
-    const url = `${GEMINI_BASE_URL}/models/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents?key=${this.apiKey}`
+  private async callGeminiApi(
+    texts: string[],
+    taskType: EmbeddingTaskType,
+    signal?: AbortSignal
+  ): Promise<number[][]> {
+    const url = `${GEMINI_BASE_URL}/models/${GEMINI_EMBEDDING_MODEL}:batchEmbedContents`
 
     const requestBody: GeminiEmbedRequest = {
       requests: texts.map(text => ({
         model: `models/${GEMINI_EMBEDDING_MODEL}`,
         content: { parts: [{ text }] },
         taskType,
+        outputDimensionality: EMBEDDING_DIMENSIONS,
       })),
     }
 
     const response = await fetch(url, {
       method: "POST",
-      headers: { "Content-Type": "application/json" },
+      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
+      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
     })
 
     if (!response.ok) {

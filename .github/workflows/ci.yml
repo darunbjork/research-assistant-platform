@@ -11,8 +11,8 @@ defaults:
     working-directory: backend
 
 jobs:
-  ci:
-    name: CI Pipeline
+  backend:
+    name: Backend
     runs-on: ubuntu-latest
 
     services:
@@ -43,10 +43,14 @@ jobs:
     env:
       DATABASE_URL: postgresql://testuser:testpass@localhost:5432/rag_test
       REDIS_URL: redis://localhost:6379
-      GEMINI_API_KEY: test-key-not-real
+      GEMINI_API_KEY: test-key-not-a-real-secret
       JWT_SECRET: test-secret-32-characters-minimum-abc
       JWT_REFRESH_SECRET: test-refresh-32-characters-minimum-xyz
       NODE_ENV: test
+      # artillery (loadtests) pulls @playwright/browser-chromium; its
+      # postinstall downloads a browser that ubuntu-26.04 runners do not
+      # support, failing npm ci. Backend CI never launches a browser.
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
 
     steps:
       # ── Step 1: Checkout ─────────────────────────────────────────────
@@ -54,10 +58,10 @@ jobs:
         uses: actions/checkout@v4
 
       # ── Step 2: Setup Node.js ─────────────────────────────────────────
-      - name: Setup Node.js 20
+      - name: Setup Node.js 22
         uses: actions/setup-node@v4
         with:
-          node-version: "20"
+          node-version: "22"
           cache: "npm"
           cache-dependency-path: backend/package-lock.json
 
@@ -69,38 +73,27 @@ jobs:
       - name: Type check (strict)
         run: npm run type-check
 
-      # ── Step 5: Zero any types ────────────────────────────────────────
-      - name: Zero any types
-        run: |
-          FOUND=$(grep -rnE ':\s*any\b|\bas any\b' src --include='*.ts' | grep -vE '// eslint|\.test\.ts|mock|__tests__|node_modules|dist' || true)
-          if [ -n "$FOUND" ]; then
-            echo "❌ Found 'any' types:"
-            echo "$FOUND"
-            exit 1
-          fi
-          echo "✅ Zero any types"
-
-      # ── Step 6: ESLint ────────────────────────────────────────────────
-      - name: Lint (ESLint)
+      # ── Step 5: ESLint (includes the no-any rules) ─────────────────────
+      - name: Lint (ESLint, --max-warnings 0)
         run: npm run lint
 
-      # ── Step 7: Prettier format check ────────────────────────────────
+      # ── Step 6: Prettier format check ────────────────────────────────
       - name: Format check (Prettier)
         run: npx prettier --check "src/**/*.ts"
 
-      # ── Step 8: Run Prisma migrations ────────────────────────────────
+      # ── Step 7: Run Prisma migrations ────────────────────────────────
       - name: Run database migrations
         run: npx prisma migrate deploy
 
-      # ── Step 9: Test with coverage ────────────────────────────────────
-      - name: Test with coverage (60% floor)
+      # ── Step 8: Test with coverage ────────────────────────────────────
+      - name: Test with coverage (floor 61% statements / 52% branches / 59% functions / 61% lines)
         run: npm run test:coverage
 
-      # ── Step 10: Build TypeScript ─────────────────────────────────────
+      # ── Step 9: Build TypeScript ─────────────────────────────────────
       - name: Build TypeScript
         run: npm run build
 
-      # ── Step 11: Verify build output ─────────────────────────────────
+      # ── Step 10: Verify build output ─────────────────────────────────
       - name: Verify build output
         run: |
           if [ ! -f dist/app.js ]; then
@@ -117,3 +110,108 @@ jobs:
           name: coverage-report
           path: backend/coverage/
           retention-days: 7
+
+  integration:
+    name: Integration tests
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg16
+        env:
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: rag_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+      redis:
+        image: redis:7-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      DATABASE_URL: postgresql://testuser:testpass@localhost:5432/rag_test
+      REDIS_URL: redis://localhost:6379
+      GEMINI_API_KEY: test-key-not-a-real-secret
+      JWT_SECRET: test-secret-32-characters-minimum-abc
+      JWT_REFRESH_SECRET: test-refresh-32-characters-minimum-xyz
+      NODE_ENV: test
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: backend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run database migrations
+        run: npx prisma migrate deploy
+
+      - name: Run integration tests
+        run: npm run test:integration
+
+  frontend:
+    name: Frontend
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
+
+  docker:
+    name: Docker images
+    runs-on: ubuntu-latest
+    needs: [backend, frontend]
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Build backend runtime image
+        run: docker build --target runtime ./backend
+
+      - name: Build web image (Caddy)
+        run: docker build -f deploy/web.Dockerfile .

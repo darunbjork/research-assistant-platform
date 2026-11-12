@@ -1,4 +1,4 @@
-export { getTracer, sdk } from "./tracer"
+export { getTracer, sdk, shutdownTracing } from "./tracer"
 export {
   withSpan,
   withSyncSpan,
