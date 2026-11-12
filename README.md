@@ -15,11 +15,12 @@
 
 - **Hybrid Search Engine**: Combines vector similarity (cosine distance via `pgvector`) with full-text keyword search using Reciprocal Rank Fusion (RRF).
 - **Cross-Encoder Reranking**: Re-orders retrieved context chunks for maximum relevance before passing them to the LLM.
-- **ReAct AI Agent**: Real-time agentic reasoning powered by `gemini-2.0-flash` with WebSocket streaming support (`Agent WS`).
-- **High-Performance Caching**: Redis-backed 24-hour caching for vector embeddings and search queries to minimize API cost and latency.
-- **Observability & Metrics**: Built-in OpenTelemetry tracing, Prometheus metrics, and Jaeger integration.
+- **ReAct AI Agent**: Real-time agentic reasoning powered by Google Gemini with WebSocket streaming support (`Agent WS`).
+- **Document Upload**: `POST /api/v1/documents/upload` accepts PDF (text-based only — scanned/image-only PDFs are rejected), TXT, MD, CSV (10 MB file, 500k characters, 200 PDF pages) and ingests in the background.
+- **High-Performance Caching**: Redis-backed caching — embeddings cached for 24 hours, search results for 5 minutes — to minimize API cost and latency.
+- **Observability & Metrics**: OpenTelemetry tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (off by default in production), Prometheus metrics guarded by `METRICS_TOKEN`, and a local Prometheus/Grafana/Jaeger stack via `npm run monitoring:up`.
 - **Robust Error Handling**: Structured Express middleware with automated 429 rate limit detection and fallback generation modes.
-- **Comprehensive Test Suite**: 454 unit and integration tests passing across 25 test suites.
+- **Comprehensive Test Suite**: 602 unit tests across 40 suites plus 7 integration tests; statement coverage 76% (CI floor: 61/52/59/61).
 
 ---
 
@@ -28,11 +29,13 @@
 | Layer | Technology |
 | :--- | :--- |
 | **Frontend** | React, TypeScript, Vite, TailwindCSS / Custom CSS, Axios, WebSockets |
-| **Backend** | Node.js, Express, TypeScript, Prisma ORM, OpenTelemetry |
-| **Database** | PostgreSQL + `pgvector` (Vector Search) |
-| **Caching & Queues** | Redis, BullMQ |
-| **LLM & Embeddings** | Google Gemini (`gemini-2.0-flash`, `gemini-embedding-001`) |
+| **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, OpenTelemetry |
+| **Database** | PostgreSQL 16 + `pgvector` (Vector Search, `vector(768)` + HNSW) |
+| **Caching & Queues** | Redis, [Bull](https://github.com/OptimalBits/bull) job queue (not BullMQ) |
+| **LLM & Embeddings** | Google Gemini — `gemini-embedding-001` at **768 dims**; generation model from `GEMINI_GENERATION_MODEL` (default `gemini-3.6-flash`) |
 | **Testing** | Jest, Supertest |
+
+**Local dev ports:** backend `3001`, frontend (Vite) `5173`, Postgres `5433` → container `5432`, Redis `6379`.
 
 ---
 
@@ -40,7 +43,7 @@
 
 ### Prerequisites
 
-- **Node.js**: v18.0.0 or higher
+- **Node.js**: v22.0.0 or higher (see `.nvmrc`)
 - **Docker & Docker Compose**: For running PostgreSQL (`pgvector`) and Redis
 - **Gemini API Key**: Free or Paid key from [Google AI Studio](https://aistudio.google.com/)
 
@@ -61,7 +64,7 @@
    GEMINI_API_KEY="your_gemini_api_key_here"
    JWT_SECRET="your_32_character_jwt_secret_here"
    JWT_REFRESH_SECRET="your_32_character_jwt_refresh_secret"
-   PORT=3002
+   PORT=3001
    ```
 
 ---
@@ -71,8 +74,10 @@
 Start PostgreSQL (`pgvector`) and Redis using Docker Compose from the root folder:
 
 ```bash
-docker-compose up -d
+docker compose up -d
 ```
+
+Postgres is published on host port **5433** (to avoid clashing with any local Postgres) and Redis on **6379**.
 
 ---
 
@@ -95,8 +100,8 @@ cd backend
 npm install
 npm run dev
 ```
-*Backend server runs at:* `http://localhost:3002`  
-*Swagger API Docs available at:* `http://localhost:3002/api-docs`
+*Backend server runs at:* `http://localhost:3001`  
+*Swagger API Docs available at:* `http://localhost:3001/api/docs`
 
 #### Option B: Running Frontend
 In a separate terminal window:
@@ -134,12 +139,11 @@ Run these before pushing — they mirror the CI pipeline:
 ```bash
 cd backend
 
-npm run lint                            # ESLint — detect lint errors
+npm run lint                            # ESLint — zero warnings allowed (includes the no-any rules)
 npx prettier --check "src/**/*.ts"      # Prettier — check formatting (CI fails on this)
 npx prettier --write "src/**/*.ts"      # Prettier — auto-fix formatting
 npm run type-check                      # TypeScript strict check (tsc --noEmit)
-npm run no-any                          # Fail if ': any' appears in src/
-npm run test:coverage                   # Tests with coverage thresholds
+npm run test:coverage                   # Tests + coverage (CI floor: 61/52/59/61)
 npm run build                           # Compile TypeScript to dist/
 ```
 
@@ -167,11 +171,13 @@ npm run preview                         # Serve the production build locally
 ## 📖 API Documentation
 
 Once the backend is running, explore the interactive Swagger documentation at:
-**`http://localhost:3002/api-docs`**
+**`http://localhost:3001/api/docs`**
 
 ### Core Endpoints:
 - `POST /api/v1/auth/register` & `POST /api/v1/auth/login` — Authentication
-- `POST /api/v1/documents` — Ingest document text / .txt files
+- `POST /api/v1/documents/upload` — Multipart file upload (PDF — text-based only, TXT, MD, CSV; 10 MB max) — returns 202 with a job id
+- `POST /api/v1/documents/ingest` — Ingest a document as text (JSON body: `name`, `content`, `mimeType`; 500k char limit) — returns a job id
+- `GET /api/v1/documents/jobs/{jobId}` — Poll ingestion job status (404 for other users' jobs)
 - `POST /api/v1/rag/query` — RAG hybrid search & grounded generation
 - `POST /api/v1/rag/query-with-rerank` — RAG + Cross-encoder reranking
 - `POST /api/v1/agent/chat` — ReAct Agent reasoning step-by-step
