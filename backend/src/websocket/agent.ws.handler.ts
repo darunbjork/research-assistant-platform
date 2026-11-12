@@ -14,8 +14,13 @@ import {
   type VoiceErrorCode,
 } from "../types/voice.types"
 import { logRagEvent, logError } from "../utils/logger"
-import { consumeRateLimit, AGENT_LIMIT } from "../middleware/rate-limit.middleware"
-import { consumeGlobalBudget } from "../utils/global-budget"
+import {
+  consumeRateLimit,
+  AGENT_LIMIT,
+  VOICE_TURN_LIMIT,
+  VOICE_SESSION_LIMIT,
+} from "../middleware/rate-limit.middleware"
+import { consumeGlobalBudget, consumeVoiceBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
 import { env } from "../config/env"
@@ -429,8 +434,11 @@ export class AgentWsHandler {
       return
     }
 
-    if (this.voiceSession !== null) {
-      const ageMs = Date.now() - this.voiceSession.startedAtMs
+    const existing = this.voiceSession
+    const isRestart = existing !== null && existing.sessionId === sessionId
+
+    if (existing !== null) {
+      const ageMs = Date.now() - existing.startedAtMs
       if (ageMs > VOICE_MAX_SESSION_MS) {
         this.voiceSession = null
         this.sendVoiceError(
@@ -440,15 +448,42 @@ export class AgentWsHandler {
         )
         return
       }
-      if (this.voiceSession.sessionId === sessionId) {
-        // New utterance inside the same session: reset the per-utterance
-        // counters, keep the session clock so the 10-minute cap still holds.
-        this.voiceSession.utteranceOpen = true
-        this.voiceSession.bytesReceived = 0
-        this.voiceSession.droppedFrames = 0
+    }
+
+    // Day 3b: quota gates — every voice_start is one voice turn. A
+    // brand-new session also consumes the scarcer session slot (10/h vs
+    // 20/h). All charges happen BEFORE any audio is accepted (so before
+    // any provider stream can open on Day 5) and all limiters fail CLOSED.
+    if (!isRestart) {
+      const sessionDecision = await consumeRateLimit(this.userId, VOICE_SESSION_LIMIT)
+      if (!sessionDecision.allowed) {
+        this.sendVoiceError("VOICE_RATE_LIMITED", VOICE_SESSION_LIMIT.message, sessionId)
         return
       }
-      // Different sessionId replaces the session entirely.
+    }
+
+    const turnDecision = await consumeRateLimit(this.userId, VOICE_TURN_LIMIT)
+    if (!turnDecision.allowed) {
+      this.sendVoiceError("VOICE_RATE_LIMITED", VOICE_TURN_LIMIT.message, sessionId)
+      return
+    }
+
+    if (!(await consumeVoiceBudget(1))) {
+      this.sendVoiceError(
+        "VOICE_CAPACITY_REACHED",
+        "Daily voice budget reached. Please try again later.",
+        sessionId
+      )
+      return
+    }
+
+    if (isRestart && existing !== null) {
+      // New utterance inside the same session: reset the per-utterance
+      // counters, keep the session clock so the 10-minute cap still holds.
+      existing.utteranceOpen = true
+      existing.bytesReceived = 0
+      existing.droppedFrames = 0
+      return
     }
 
     this.voiceSession = {

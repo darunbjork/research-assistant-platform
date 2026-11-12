@@ -10,13 +10,14 @@ datasource db {
 }
 
 model User {
-  id           String         @id @default(cuid())
-  email        String         @unique
-  passwordHash String
-  role         Role           @default(USER)
-  createdAt    DateTime       @default(now())
-  sessions     AgentSession[]
-  documents    Document[]
+  id               String              @id @default(cuid())
+  email            String              @unique
+  passwordHash     String
+  role             Role                @default(USER)
+  createdAt        DateTime            @default(now())
+  sessions         AgentSession[]
+  documents        Document[]
+  voiceTranscripts VoiceTranscript[]
 
   @@map("users")
 }
@@ -67,6 +68,22 @@ model AgentSession {
 
   @@index([userId])
   @@map("agent_sessions")
+}
+
+/// Voice transcripts (Day 3b) — TEXT ONLY, raw audio is never persisted.
+/// Additive table: no existing columns (incl. vector embeddings) are touched.
+model VoiceTranscript {
+  id        String   @id @default(cuid())
+  userId    String
+  sessionId String
+  text      String
+  latencyMs Int
+  createdAt DateTime @default(now())
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([sessionId])
+  @@map("voice_transcripts")
 }
 
 enum Role {

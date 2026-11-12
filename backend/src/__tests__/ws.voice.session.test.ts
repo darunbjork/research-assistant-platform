@@ -11,23 +11,37 @@
 
 import type WebSocket from "ws"
 
-// ── Mock Redis (module loads the limiter/budget; voice_start charges nothing
-//    until Day 3b, so only the module shape is needed) ────────────────────
+// ── Mock Redis (limiter + budget are wired at voice_start in Day 3b) ──────
 interface FakePipeline {
-  incr: () => FakePipeline
-  incrby: () => FakePipeline
-  expire: () => FakePipeline
-  ttl: () => FakePipeline
+  incr: (key?: string) => FakePipeline
+  incrby: (key?: string) => FakePipeline
+  expire: (key?: string) => FakePipeline
+  ttl: (key?: string) => FakePipeline
   exec: () => Promise<unknown>
 }
+// Keys observed by consumeRateLimit — asserted by the quota tests.
+const mockRedisKeys: string[] = []
+// Per-call exec overrides (queue), default = allowed (count 1, ttl 60).
+let mockExecQueue: unknown[][] = []
+const defaultExec: unknown[] = [
+  [null, 1],
+  [null, 1],
+  [null, 60],
+]
 const mockRedis = {
   multi: jest.fn((): FakePipeline => {
     const pipeline: FakePipeline = {
-      incr: () => pipeline,
-      incrby: () => pipeline,
-      expire: () => pipeline,
-      ttl: () => pipeline,
-      exec: async (): Promise<unknown> => [[null, 1]],
+      incr: (key?: string): FakePipeline => {
+        if (key !== undefined) mockRedisKeys.push(key)
+        return pipeline
+      },
+      incrby: (key?: string): FakePipeline => {
+        if (key !== undefined) mockRedisKeys.push(key)
+        return pipeline
+      },
+      expire: (): FakePipeline => pipeline,
+      ttl: (): FakePipeline => pipeline,
+      exec: async (): Promise<unknown> => mockExecQueue.shift() ?? defaultExec,
     }
     return pipeline
   }),
@@ -145,6 +159,8 @@ describe("voice session (Day 3a)", () => {
     mockRedisStoreReset()
     jest.clearAllMocks()
     mockExp = undefined
+    mockExecQueue = []
+    mockRedisKeys.length = 0
     mockFindUnique.mockImplementation(async () => ({ id: "user-ws" }))
   })
 
@@ -230,6 +246,95 @@ describe("voice session (Day 3a)", () => {
       await startVoice()
       expect(voiceErrors()).toHaveLength(0)
       expect(handler.getVoiceDiagnostics().sessionId).toBe("v1")
+    })
+  })
+
+  // ── Quota gates (Day 3b) ────────────────────────────────────────────────
+  describe("quota gates at voice_start", () => {
+    it("charges session + turn limiter and the daily budget on a new session", async () => {
+      await makeAuthenticated()
+      await startVoice()
+
+      expect(mockRedisKeys).toContain("rl:voice_session:user-ws")
+      expect(mockRedisKeys).toContain("rl:voice_turn:user-ws")
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      expect(voiceErrors()).toHaveLength(0)
+      expect(handler.getVoiceDiagnostics().sessionId).toBe("v1")
+    })
+
+    it("same-session restart charges the turn again but not the session slot", async () => {
+      await makeAuthenticated()
+      await startVoice()
+      await startVoice() // same sessionId → utterance restart
+
+      const sessionCharges = mockRedisKeys.filter(k => k === "rl:voice_session:user-ws").length
+      const turnCharges = mockRedisKeys.filter(k => k === "rl:voice_turn:user-ws").length
+      expect(sessionCharges).toBe(1)
+      expect(turnCharges).toBe(2)
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      expect(voiceErrors()).toHaveLength(0)
+    })
+
+    it("session limiter refusal is VOICE_RATE_LIMITED and creates no session", async () => {
+      // Session slot over its 10/h cap.
+      mockExecQueue = [
+        [
+          [null, 11],
+          [null, 1],
+          [null, 60],
+        ],
+      ]
+      await makeAuthenticated()
+      await startVoice()
+
+      expect(voiceErrors()[0]).toMatchObject({ code: "VOICE_RATE_LIMITED" })
+      expect(handler.getVoiceDiagnostics().sessionId).toBeNull()
+      expect(mockRedis.eval).not.toHaveBeenCalled() // fail fast, no budget spent
+    })
+
+    it("turn limiter refusal is VOICE_RATE_LIMITED (session charge already spent)", async () => {
+      // First call (session) allowed, second call (turn) over the 20/h cap.
+      mockExecQueue = [
+        defaultExec,
+        [
+          [null, 21],
+          [null, 1],
+          [null, 60],
+        ],
+      ]
+      await makeAuthenticated()
+      await startVoice()
+
+      expect(voiceErrors()[0]).toMatchObject({ code: "VOICE_RATE_LIMITED" })
+      expect(handler.getVoiceDiagnostics().sessionId).toBeNull()
+      expect(mockRedis.eval).not.toHaveBeenCalled()
+    })
+
+    it("budget refusal is VOICE_CAPACITY_REACHED and creates no session", async () => {
+      ;(mockRedis.eval as jest.Mock).mockResolvedValueOnce([-1, -1]) // cap hit
+      await makeAuthenticated()
+      await startVoice()
+
+      expect(voiceErrors()[0]).toMatchObject({ code: "VOICE_CAPACITY_REACHED" })
+      expect(handler.getVoiceDiagnostics().sessionId).toBeNull()
+    })
+
+    it("limiter Redis failure fails closed (VOICE_RATE_LIMITED, no session)", async () => {
+      mockExecQueue = [[]] // malformed reply → consumeRateLimit throws → closed
+      await makeAuthenticated()
+      await startVoice()
+
+      expect(voiceErrors()[0]).toMatchObject({ code: "VOICE_RATE_LIMITED" })
+      expect(handler.getVoiceDiagnostics().sessionId).toBeNull()
+    })
+
+    it("budget Redis failure fails closed (VOICE_CAPACITY_REACHED)", async () => {
+      ;(mockRedis.eval as jest.Mock).mockRejectedValueOnce(new Error("redis down"))
+      await makeAuthenticated()
+      await startVoice()
+
+      expect(voiceErrors()[0]).toMatchObject({ code: "VOICE_CAPACITY_REACHED" })
+      expect(handler.getVoiceDiagnostics().sessionId).toBeNull()
     })
   })
 
