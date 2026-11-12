@@ -41,15 +41,14 @@ export default {
     "!src/__integration__/**"
   ],
 
-  // TODO: raise to 80/70/80/80 after adding tests for
-  // src/routes, src/controllers, and src/middleware
-  // (currently at 0% coverage).
+  // Task 5.8: Phase 0 baseline (61.43/52.53/59.43/61.67) rounded down.
+  // Raise step by step — never lower.
   coverageThreshold: {
     global: {
-      statements: 60,
-      branches: 50,
-      functions: 55,
-      lines: 60
+      statements: 61,
+      branches: 52,
+      functions: 59,
+      lines: 61
     }
   }
 }
