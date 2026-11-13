@@ -311,8 +311,13 @@ export class AgentWsHandler {
       return
     }
 
-    // Global daily budget: an agent run costs 5 units. Fails closed.
-    if (!(await consumeGlobalBudget(5))) {
+    // Daily budget: an agent run costs 5 units. Fails closed. A run on a
+    // connection that owns an active VOICE session is voice spend, so it
+    // charges the 40% voice sub-cap (both counters, atomic) — otherwise
+    // voice-triggered runs would bypass the sub-cap entirely.
+    const viaVoice = this.voiceSession !== null
+    const budgetCharged = viaVoice ? await consumeVoiceBudget(5) : await consumeGlobalBudget(5)
+    if (!budgetCharged) {
       this.send({
         type: "error",
         sessionId,
@@ -331,6 +336,7 @@ export class AgentWsHandler {
       service: "AgentWsHandler",
       sessionId,
       userId: this.userId,
+      viaVoice,
     })
 
     try {

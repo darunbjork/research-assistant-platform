@@ -21,6 +21,7 @@
 - **Observability & Metrics**: OpenTelemetry tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (off by default in production), Prometheus metrics guarded by `METRICS_TOKEN`, and a local Prometheus/Grafana/Jaeger stack via `npm run monitoring:up`.
 - **Robust Error Handling**: Structured Express middleware with automated 429 rate limit detection and fallback generation modes.
 - **Comprehensive Test Suite**: 602 unit tests across 40 suites plus 7 integration tests; statement coverage 76% (CI floor: 61/52/59/61).
+- **Voice Data Retention**: Voice transcripts are text-only (raw audio is never stored) and count as personal data — kept **30 days**, purged automatically on service startup and after each save, and fully removed when a user is deleted (foreign-key cascade).
 
 ---
 

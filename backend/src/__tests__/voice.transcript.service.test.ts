@@ -10,17 +10,19 @@ import type { VoiceTranscriptRecord } from "../types/voice.types"
 
 const mockCreate = jest.fn()
 const mockFindMany = jest.fn()
+const mockDeleteMany = jest.fn()
 
 jest.mock("../utils/prisma", () => ({
   prisma: {
     voiceTranscript: {
       create: (...args: unknown[]): unknown => mockCreate(...args),
       findMany: (...args: unknown[]): unknown => mockFindMany(...args),
+      deleteMany: (...args: unknown[]): unknown => mockDeleteMany(...args),
     },
   },
 }))
 
-const { saveVoiceTranscript, listVoiceTranscripts } =
+const { saveVoiceTranscript, listVoiceTranscripts, purgeExpiredVoiceTranscripts } =
   require("../services/voice.transcript.service") as typeof import("../services/voice.transcript.service")
 
 const row = {
@@ -126,6 +128,59 @@ describe("voice transcript service (Day 3b)", () => {
       mockFindMany.mockRejectedValueOnce(new Error("db down"))
 
       await expect(listVoiceTranscripts("user-1")).resolves.toEqual([])
+    })
+  })
+
+  // ── Retention (Day 3b): spoken content is personal data ────────────────
+  describe("retention purge (30 days)", () => {
+    it("save triggers a per-user sweep past the cutoff", async () => {
+      mockCreate.mockResolvedValue(row)
+      mockDeleteMany.mockResolvedValue({ count: 2 })
+
+      await saveVoiceTranscript({
+        userId: "user-1",
+        sessionId: "sess-1",
+        text: "hello",
+        latencyMs: 10,
+      })
+      await new Promise(resolve => setImmediate(resolve)) // let the void purge settle
+
+      expect(mockDeleteMany).toHaveBeenCalledTimes(1)
+      const arg = (mockDeleteMany.mock.calls[0] as unknown[] | undefined)?.[0] as {
+        where: { userId?: string; createdAt: { lt: Date } }
+      }
+      expect(arg.where.userId).toBe("user-1")
+      expect(arg.where.createdAt.lt).toBeInstanceOf(Date)
+    })
+
+    it("global purge (startup) deletes every tenant's expired rows", async () => {
+      mockDeleteMany.mockResolvedValue({ count: 3 })
+
+      await expect(purgeExpiredVoiceTranscripts()).resolves.toBe(3)
+
+      const arg = (mockDeleteMany.mock.calls[0] as unknown[] | undefined)?.[0] as {
+        where: { userId?: string; createdAt: { lt: Date } }
+      }
+      expect(arg.where.userId).toBeUndefined()
+      const expectedCutoff = Date.now() - 30 * 24 * 60 * 60 * 1000
+      expect(Math.abs(arg.where.createdAt.lt.getTime() - expectedCutoff)).toBeLessThan(5_000)
+    })
+
+    it("user-scoped purge only touches that user's rows", async () => {
+      mockDeleteMany.mockResolvedValue({ count: 1 })
+
+      await expect(purgeExpiredVoiceTranscripts("user-1")).resolves.toBe(1)
+
+      const arg = (mockDeleteMany.mock.calls[0] as unknown[] | undefined)?.[0] as {
+        where: { userId?: string }
+      }
+      expect(arg.where.userId).toBe("user-1")
+    })
+
+    it("fails soft on a DB error", async () => {
+      mockDeleteMany.mockRejectedValueOnce(new Error("db down"))
+
+      await expect(purgeExpiredVoiceTranscripts()).resolves.toBe(0)
     })
   })
 })
