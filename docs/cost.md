@@ -132,6 +132,8 @@ re-flags this.
 - **Breaker error classification (locked for Day 5):** timeouts, 5xx and network errors count toward the threshold; other 4xx caller errors do **not**; a provider quota signal (Deepgram **402**, ElevenLabs `character_limit` refusal) **opens the breaker immediately** and surfaces `VOICE_BUDGET_REACHED` ("voice budget reached") instead of `PROVIDER_UNAVAILABLE` — retrying for 5 minutes cannot fix a spent cap.
 - Hard caps: 60 s utterance, 10 min session, 4 KB frames, 500-char transcripts (Day 1 types).
 - Raw audio never persisted; transcripts only, via new Prisma migration (Day 3).
+- **Voice transcript retention (Day 3b):** spoken content is personal data — kept **30 days**, purged on service startup and opportunistically after each save; user delete cascades all of a user's transcripts.
+- **Day 5 key hygiene:** the Deepgram key lives only in server env and travels in the `Authorization` header — never in URLs, log lines, or OTel span attributes (D8 lesson).
 - Outage runbook `docs/runbooks/voice-provider-outage.md` (Day 12).
 
 ## 6. Switching to real mode (only after §4 is checked)

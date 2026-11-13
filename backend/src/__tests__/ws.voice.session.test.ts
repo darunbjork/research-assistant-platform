@@ -401,6 +401,57 @@ describe("voice session (Day 3a)", () => {
     })
   })
 
+  // ── Voice-triggered agent runs must hit the 40% sub-cap (Day 3b fix) ───
+  describe("voice-triggered agent runs", () => {
+    it("charges the agent run (5 units) through consumeVoiceBudget, not the plain counter", async () => {
+      await makeAuthenticated()
+      await startVoice()
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1) // voice_start cost 1
+
+      ws.emit(
+        "message",
+        JSON.stringify({ type: "start", query: "what is in doc?", sessionId: "s1" })
+      )
+      await flush()
+
+      // Second eval = the agent run, ARGV cost "5" — both counters move.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(2)
+      const agentRunCall = (
+        (mockRedis.eval as jest.Mock).mock.calls[1] as unknown[] | undefined
+      )?.[4]
+      expect(agentRunCall).toBe("5")
+      // The plain global counter (consumeGlobalBudget's INCRBY) was never used.
+      expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
+      expect(errors()).toHaveLength(0)
+    })
+
+    it("a text agent run (no voice session) still charges the plain global counter", async () => {
+      await makeAuthenticated()
+
+      ws.emit(
+        "message",
+        JSON.stringify({ type: "start", query: "plain text query", sessionId: "s2" })
+      )
+      await flush()
+
+      expect(mockRedis.eval).not.toHaveBeenCalled() // voice budget untouched
+      expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(true)
+      expect(errors()).toHaveLength(0)
+    })
+
+    it("voice agent run fails closed when the voice budget refuses (5 units)", async () => {
+      await makeAuthenticated()
+      await startVoice()
+      ;(mockRedis.eval as jest.Mock).mockResolvedValueOnce([-1, -1]) // agent run refused
+
+      ws.emit("message", JSON.stringify({ type: "start", query: "budgeted out", sessionId: "s3" }))
+      await flush()
+
+      expect(errors()).toMatchObject([{ code: "CAPACITY_REACHED" }])
+      expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
+    })
+  })
+
   // ── Frame cap, pacing, byte-counted caps (fake clock) ───────────────────
   describe("caps and pacing", () => {
     beforeEach(() => {

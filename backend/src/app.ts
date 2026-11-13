@@ -13,6 +13,7 @@ import { prisma } from "./utils/prisma"
 import { ok, fail } from "./types"
 import { logStartup, logError } from "./utils/logger"
 import { requestLoggerMiddleware } from "./middleware/request-logger.middleware"
+import { purgeExpiredVoiceTranscripts } from "./services/voice.transcript.service"
 import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
 import authRouter from "./routes/auth.routes"
@@ -154,6 +155,10 @@ httpServer.listen(PORT, () => {
   console.log(`🏥 Health      → http://localhost:${PORT}/health`)
   console.log(`📊 Metrics     → http://localhost:${PORT}/metrics`)
   console.log(`📖 API Docs    → http://localhost:${PORT}/api/docs`)
+
+  // Voice transcript retention (Day 3b): 30-day purge on startup — there is
+  // no cron on the single VPS (ADR 0002). Fails soft, never blocks boot.
+  void purgeExpiredVoiceTranscripts()
 })
 
 export default app
