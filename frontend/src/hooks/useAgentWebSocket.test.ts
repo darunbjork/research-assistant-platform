@@ -28,7 +28,7 @@ class MockWebSocket {
   onmessage: ((event: MessageEvent) => void) | null = null
   onerror: (() => void) | null = null
   onclose: ((event: CloseEvent) => void) | null = null
-  sent: string[] = []
+  sent: Array<string | Uint8Array> = []
   url: string
 
   constructor(url: string) {
@@ -36,7 +36,7 @@ class MockWebSocket {
     MockWebSocket.instances.push(this)
   }
 
-  send(data: string): void {
+  send(data: string | Uint8Array): void {
     this.sent.push(data)
   }
 
@@ -140,6 +140,150 @@ describe("useAgentWebSocket — F5 run-state reset", () => {
 
     expect(result.current.error).toBeNull()
     expect(result.current.isRunning).toBe(true)
-    expect(reconnected.sent.some(payload => payload.includes('"type":"start"'))).toBe(true)
+    expect(reconnected.sent.some(payload =>
+      typeof payload === "string" && payload.includes('"type":"start"')
+    )).toBe(true)
+  })
+})
+
+/** Connect and authenticate WITHOUT starting a query. */
+function authenticateOnly(): {
+  result: { current: UseAgentWebSocketReturn }
+  ws: MockWebSocket
+} {
+  const rendered = renderHook(() => useAgentWebSocket())
+  const ws = latestSocket()
+
+  act(() => ws.fireOpen())
+  act(() => ws.fireServerMessage({ type: "connected", sessionId: "pending-auth" }))
+  act(() => ws.fireServerMessage({ type: "auth_confirmed", userId: "user-1" }))
+  expect(rendered.result.current.connectionState).toBe("authenticated")
+
+  return { result: rendered.result, ws }
+}
+
+/** Every JSON payload the hook sent, parsed. */
+function sentJson(ws: MockWebSocket): Array<Record<string, unknown>> {
+  return ws.sent
+    .filter((payload): payload is string => typeof payload === "string")
+    .map(payload => JSON.parse(payload) as Record<string, unknown>)
+}
+
+describe("useAgentWebSocket — voice protocol (Day 4)", () => {
+  beforeEach(() => {
+    MockWebSocket.instances = []
+    vi.useFakeTimers()
+    vi.stubGlobal("WebSocket", MockWebSocket)
+    saveTokens("test-access-token", "test-refresh-token")
+  })
+
+  afterEach(() => {
+    cleanup()
+    vi.clearAllTimers()
+    vi.useRealTimers()
+    vi.unstubAllGlobals()
+    localStorage.clear()
+  })
+
+  it("voice_start carries one stable sessionId across utterances", () => {
+    const { result, ws } = authenticateOnly()
+
+    act(() => result.current.voiceStart())
+    act(() => result.current.voiceStart())
+
+    const starts = sentJson(ws).filter(m => m.type === "voice_start")
+    expect(starts).toHaveLength(2)
+    expect(typeof starts[0]?.sessionId).toBe("string")
+    expect(starts[1]?.sessionId).toBe(starts[0]?.sessionId)
+  })
+
+  it("voice_end re-uses the voice_start session id", () => {
+    const { result, ws } = authenticateOnly()
+
+    act(() => result.current.voiceStart())
+    act(() => result.current.voiceEnd())
+
+    const start = sentJson(ws).find(m => m.type === "voice_start")
+    const end = sentJson(ws).find(m => m.type === "voice_end")
+    expect(end?.sessionId).toBe(start?.sessionId)
+  })
+
+  it("sendVoiceFrame writes the frame as binary, not JSON", () => {
+    const { result, ws } = authenticateOnly()
+    act(() => result.current.voiceStart())
+
+    const frame = new Uint8Array([1, 2, 3, 4])
+    act(() => result.current.sendVoiceFrame(frame))
+
+    const last = ws.sent.at(-1)
+    expect(last).toBeInstanceOf(Uint8Array)
+    expect(Array.from(last as Uint8Array)).toEqual([1, 2, 3, 4])
+  })
+
+  it("voice_start before authentication errors and sends nothing", () => {
+    const rendered = renderHook(() => useAgentWebSocket())
+    const ws = latestSocket()
+    act(() => ws.fireOpen())
+    act(() => ws.fireServerMessage({ type: "connected", sessionId: "pending-auth" }))
+
+    act(() => rendered.result.current.voiceStart())
+
+    expect(rendered.result.current.error).not.toBeNull()
+    expect(sentJson(ws).some(m => m.type === "voice_start")).toBe(false)
+  })
+
+  it("voice_start on a closed socket sends nothing", () => {
+    const { result, ws } = authenticateOnly()
+    act(() => ws.fireClose(1006))
+
+    act(() => result.current.voiceStart())
+
+    expect(sentJson(ws).some(m => m.type === "voice_start")).toBe(false)
+    expect(result.current.error).not.toBeNull()
+  })
+
+  it("a server voice_error lands in voiceError and the chat error", () => {
+    const { result, ws } = authenticateOnly()
+
+    act(() => ws.fireServerMessage({
+      type: "voice_error",
+      sessionId: "s1",
+      code: "VOICE_RATE_LIMITED",
+      message: "Voice turn limit reached."
+    }))
+
+    expect(result.current.voiceError).toBe("Voice turn limit reached.")
+    expect(result.current.error).toBe("Voice turn limit reached.")
+    expect(result.current.isRunning).toBe(false)
+  })
+
+  it("voiceStart clears a previous voiceError", () => {
+    const { result, ws } = authenticateOnly()
+
+    act(() => ws.fireServerMessage({
+      type: "voice_error",
+      sessionId: "s1",
+      code: "VOICE_CAPACITY_REACHED",
+      message: "Daily voice budget reached."
+    }))
+    expect(result.current.voiceError).not.toBeNull()
+
+    act(() => result.current.voiceStart())
+
+    expect(result.current.voiceError).toBeNull()
+  })
+
+  it("TOKEN_EXPIRED voice_error shows the reconnecting message", () => {
+    const { result, ws } = authenticateOnly()
+
+    act(() => ws.fireServerMessage({
+      type: "voice_error",
+      sessionId: "s1",
+      code: "TOKEN_EXPIRED",
+      message: "Access token expired."
+    }))
+
+    expect(result.current.currentMessage).toBe("Session expired — reconnecting…")
+    expect(result.current.voiceError).toBe("Access token expired.")
   })
 })

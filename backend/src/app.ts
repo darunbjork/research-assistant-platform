@@ -43,7 +43,11 @@ app.set("trust proxy", 1)
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(
   helmet({
-    contentSecurityPolicy: env.NODE_ENV === "production" ? undefined : false,
+    // Caddy is the single source of truth for security headers in front of
+    // this app (CSP + Permissions-Policy: microphone=(self) — Day 4).
+    // Enabling helmet's CSP would emit a second, conflicting header in
+    // production; dev has no CSP, which is fine for localhost.
+    contentSecurityPolicy: false,
   })
 )
 app.use(

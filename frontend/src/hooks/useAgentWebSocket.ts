@@ -16,8 +16,9 @@ interface WsStatusMsg      { type: "status"; status: AgentStatus; message: strin
 interface WsStepMsg        { type: "step"; step: AgentStep }
 interface WsQualityMsg     { type: "quality"; score: number; shouldRetry: boolean; retryReason?: string }
 interface WsCompleteMsg    { type: "complete"; result: AgentResult }
-interface WsErrorMsg       { type: "error"; message: string; code?: string }
-interface WsPongMsg        { type: "pong" }
+interface WsErrorMsg      { type: "error"; message: string; code?: string }
+interface WsVoiceErrorMsg { type: "voice_error"; sessionId: string; code?: string; message: string }
+interface WsPongMsg       { type: "pong" }
 
 type ServerMsg =
   | WsConnectedMsg
@@ -27,6 +28,7 @@ type ServerMsg =
   | WsQualityMsg
   | WsCompleteMsg
   | WsErrorMsg
+  | WsVoiceErrorMsg
   | WsPongMsg
 
 // ── Connection States ─────────────────────────────────────────────────────
@@ -45,11 +47,19 @@ export interface UseAgentWebSocketReturn {
   steps:            AgentStep[]
   citations:        Citation[]
   finalAnswer:      string
-  qualityScore:     number | null
-  error:            string | null
-  isRunning:        boolean
-  startQuery:       (query: string) => void
-  disconnect:       () => void
+  qualityScore:   number | null
+  error:          string | null
+  /** Last voice-layer refusal (quota, session, budget…) — null when none. */
+  voiceError:     string | null
+  isRunning:      boolean
+  startQuery:     (query: string) => void
+  disconnect:     () => void
+  /** Day 4: open a voice utterance (re-uses the session id across turns). */
+  voiceStart:     () => void
+  /** Day 4: close the utterance — the voice session survives for 10 min. */
+  voiceEnd:       () => void
+  /** Day 4: one binary PCM16 frame (≤ 4096 bytes) to the server. */
+  sendVoiceFrame: (frame: Uint8Array<ArrayBuffer>) => void
 }
 
 // ── WebSocket URL ─────────────────────────────────────────────────────────
@@ -73,6 +83,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
   const [finalAnswer,     setFinalAnswer]     = useState("")
   const [qualityScore,    setQualityScore]    = useState<number | null>(null)
   const [error,           setError]           = useState<string | null>(null)
+  const [voiceError,      setVoiceError]      = useState<string | null>(null)
   const [isRunning,       setIsRunning]       = useState(false)
 
   const wsRef         = useRef<WebSocket | null>(null)
@@ -80,6 +91,9 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
   // One token refresh per expiry (task 3.6): set on a 4001 close, cleared
   // again once the server confirms authentication with the new token.
   const refreshAttemptedRef = useRef(false)
+  // Day 4: the voice session id survives voice_end (10-minute server
+  // session) but dies with the socket — the server keeps it per-connection.
+  const voiceSessionIdRef = useRef<string | null>(null)
 
   // ── Reset state for a new query ────────────────────────────────────────
   const resetQueryState = useCallback((): void => {
@@ -151,6 +165,19 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
           setIsRunning(false)
           break
 
+        case "voice_error":
+          // Day 4: quota/session/budget refusals from the voice layer.
+          // Kept separate from `error` so the UI can stop the mic without
+          // mistaking a voice refusal for a failed agent run.
+          setVoiceError(message.message)
+          if (message.code === "TOKEN_EXPIRED") {
+            setCurrentMessage("Session expired — reconnecting…")
+          } else {
+            setError(message.message)
+            setCurrentMessage("Voice error")
+          }
+          break
+
         case "pong":
           // Heartbeat response — no state update needed
           break
@@ -195,6 +222,9 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     ws.onclose = (event) => {
       setConnectionState("disconnected")
       wsRef.current = null
+      // Day 4: the server keeps the voice session per-connection — a new
+      // socket must start a fresh one (fresh quota gates apply there too).
+      voiceSessionIdRef.current = null
 
       if (pingIntervalRef.current) {
         clearInterval(pingIntervalRef.current)
@@ -283,6 +313,34 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     }
   }, [connectionState, isRunning, resetQueryState, connect])
 
+  // ── Voice layer (Day 4): utterance control + binary frames ─────────────
+  const voiceStart = useCallback((): void => {
+    if (connectionState !== "authenticated") {
+      setError("WebSocket not ready. Please wait a moment and try again.")
+      return
+    }
+    const ws = wsRef.current
+    if (ws?.readyState !== WebSocket.OPEN) return
+    if (voiceSessionIdRef.current === null) {
+      voiceSessionIdRef.current = generateSessionId()
+    }
+    setVoiceError(null)
+    ws.send(JSON.stringify({ type: "voice_start", sessionId: voiceSessionIdRef.current }))
+  }, [connectionState])
+
+  const voiceEnd = useCallback((): void => {
+    const ws = wsRef.current
+    const sessionId = voiceSessionIdRef.current
+    if (ws?.readyState !== WebSocket.OPEN || sessionId === null) return
+    ws.send(JSON.stringify({ type: "voice_end", sessionId }))
+  }, [])
+
+  const sendVoiceFrame = useCallback((frame: Uint8Array<ArrayBuffer>): void => {
+    const ws = wsRef.current
+    if (ws?.readyState !== WebSocket.OPEN) return
+    ws.send(frame)
+  }, [])
+
   // ── Connect on mount, disconnect on unmount ────────────────────────────
   useEffect(() => {
     connect()
@@ -303,8 +361,12 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     finalAnswer,
     qualityScore,
     error,
+    voiceError,
     isRunning,
     startQuery,
-    disconnect
+    disconnect,
+    voiceStart,
+    voiceEnd,
+    sendVoiceFrame
   }
 }
