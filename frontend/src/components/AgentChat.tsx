@@ -1,6 +1,7 @@
 import { useState, useRef, useEffect }  from "react"
 import { queryAgent }         from "../utils/api"
 import { useAgentWebSocket }            from "../hooks/useAgentWebSocket"
+import { useVoiceCapture }              from "../hooks/useVoiceCapture"
 import MessageCard                      from "./MessageCard"
 import AgentStatusBadge                 from "./AgentStatusBadge"
 import type { ChatMessage, AgentStatus } from "../types"
@@ -37,6 +38,45 @@ export default function AgentChat() {
 
   // ── WebSocket hook ─────────────────────────────────────────────────────
   const ws = useAgentWebSocket()
+
+  // ── Voice capture (Day 4) ──────────────────────────────────────────────
+  const voice = useVoiceCapture()
+
+  const handleVoiceToggle = (): void => {
+    if (voice.isCapturing) {
+      ws.voiceEnd()
+      voice.stopCapture()
+      return
+    }
+    if (ws.connectionState !== "authenticated") return
+    ws.voiceStart()
+    void voice.startCapture(ws.sendVoiceFrame)
+  }
+
+  // A voice refusal (quota, session, budget) stops the mic immediately —
+  // otherwise frames keep arriving for an utterance the server refused and
+  // every frame earns another voice_error. Whole-object deps: the members
+  // are called, and eslint-plugin-react-hooks v7 wants the objects then.
+  useEffect(() => {
+    if (voice.isCapturing && ws.voiceError !== null) {
+      ws.voiceEnd()
+      voice.stopCapture()
+    }
+  }, [ws, voice])
+
+  // The mic must not outlive the connection or the ws-agent mode.
+  useEffect(() => {
+    if (voice.isCapturing && ws.connectionState === "disconnected") {
+      voice.stopCapture()
+    }
+  }, [ws, voice])
+
+  useEffect(() => {
+    if (chatMode !== "ws-agent" && voice.isCapturing) {
+      ws.voiceEnd()
+      voice.stopCapture()
+    }
+  }, [chatMode, ws, voice])
 
   // Auto-scroll when messages change
   useEffect(() => {
@@ -379,6 +419,28 @@ export default function AgentChat() {
             disabled={isDisabled}
             className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-400 transition-colors"
           />
+          {chatMode === "ws-agent" && (
+            <button
+              onClick={handleVoiceToggle}
+              disabled={ws.connectionState !== "authenticated"}
+              aria-label={voice.isCapturing ? "Stop microphone" : "Start microphone"}
+              title={
+                voice.isCapturing
+                  ? "Stop microphone (ends the voice turn)"
+                  : "Start microphone (voice turn, silence-gated)"
+              }
+              className={`
+                px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex-shrink-0 border
+                ${voice.isCapturing
+                  ? "bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
+                  : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+                }
+                disabled:opacity-50 disabled:cursor-not-allowed
+              `}
+            >
+              {voice.isCapturing ? "Stop mic" : "Mic"}
+            </button>
+          )}
           <button
             onClick={() => void handleSend()}
             disabled={isDisabled || !inputValue.trim()}
