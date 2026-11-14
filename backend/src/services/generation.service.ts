@@ -1,3 +1,4 @@
+import { geminiText } from "../utils/gemini-response"
 // backend/src/services/generation.service.ts
 // Updated Day 22: spans on Gemini generation calls.
 
@@ -44,7 +45,7 @@ export interface GenerationConfig {
 const DEFAULT_CONFIG: GenerationConfig = {
   temperature: 0.1,
   topP: 0.8,
-  maxOutputTokens: 1024,
+  maxOutputTokens: 4096,
   botName: "ResearchBot",
   maxContextChunks: 5,
 }
@@ -117,8 +118,7 @@ export class GenerationService {
     timer()
     tokenCost.inc({ operation: "generation" }, response.usageMetadata?.totalTokenCount ?? 0)
 
-    const rawAnswer =
-      response.candidates?.[0]?.content?.parts?.[0]?.text ?? "(No response from Gemini)"
+    const rawAnswer = geminiText(response)
     const { answer, invalidCitationCount } = this.stripInvalidCitations(
       rawAnswer,
       usedChunks.length
@@ -141,7 +141,7 @@ export class GenerationService {
 
     return {
       answer,
-      citations: this.buildCitations(context),
+      citations: this.buildCitations(usedChunks),
       tokensUsed: response.usageMetadata?.totalTokenCount ?? 0,
       model: GEMINI_MODEL,
       durationMs: Date.now() - start,
@@ -332,6 +332,8 @@ Begin your answer now.`
 
         return await (response.json() as Promise<GeminiResponse>)
       } catch (error) {
+        if (signal?.aborted || (error instanceof Error && error.name === "TimeoutError"))
+          throw error
         if (attempt === maxRetries) {
           throw error
         }

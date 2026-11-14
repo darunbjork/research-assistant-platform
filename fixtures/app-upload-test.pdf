@@ -1,0 +1,69 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Catalog /Pages 2 0 R >>
+endobj
+2 0 obj
+<< /Type /Pages /Kids [3 0 R 7 0 R] /Count 2 >>
+endobj
+3 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 6 0 R >>
+endobj
+4 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+5 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica-Bold /Encoding /WinAnsiEncoding >>
+endobj
+6 0 obj
+<< /Length 1126 >>
+stream
+BT /F2 16 Tf 72 742 Td (Amber Falcon Operations Report - Upload Test Document) Tj ET
+BT /F1 11 Tf 72 718 Td (PDF with a real text layer: selectable text, not a scanned image.) Tj ET
+BT /F1 11 Tf 72 699 Td (Prepared to exercise the upload pipeline. Generated 2026-11-14.) Tj ET
+BT /F2 13 Tf 72 674 Td (1. Summary) Tj ET
+BT /F1 11 Tf 72 653 Td (This report tests document upload end to end: magic-byte validation,) Tj ET
+BT /F1 11 Tf 72 634 Td (server-side text extraction, page counting, chunking, embedding and) Tj ET
+BT /F1 11 Tf 72 615 Td (retrieval. After ingestion, the phrase amber falcon must be findable) Tj ET
+BT /F1 11 Tf 72 596 Td (by semantic search. A second marker, quantum ferret, appears on page) Tj ET
+BT /F1 11 Tf 72 577 Td (two so cross-page retrieval can be checked as well.) Tj ET
+BT /F2 13 Tf 72 552 Td (2. Key facts) Tj ET
+BT /F1 11 Tf 72 531 Td (Site code: AF-7734) Tj ET
+BT /F1 11 Tf 72 512 Td (Operator: field-test) Tj ET
+BT /F1 11 Tf 72 493 Td (File limits: 10 MB, 200 pages, at least 50 characters of text.) Tj ET
+BT /F1 11 Tf 72 474 Td (Accepted types: PDF, TXT, MD, CSV. This file is a PDF.) Tj ET
+endstream
+endobj
+7 0 obj
+<< /Type /Page /Parent 2 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 4 0 R /F2 5 0 R >> >> /Contents 8 0 R >>
+endobj
+8 0 obj
+<< /Length 775 >>
+stream
+BT /F2 13 Tf 72 742 Td (3. Cross-page marker) Tj ET
+BT /F1 11 Tf 72 721 Td (Page two exists so extraction reports pageCount = 2.) Tj ET
+BT /F1 11 Tf 72 702 Td (Marker phrase: quantum ferret. Even if chunking splits across the) Tj ET
+BT /F1 11 Tf 72 683 Td (page boundary, retrieval should still surface this sentence.) Tj ET
+BT /F2 13 Tf 72 658 Td (4. Ingestion checklist) Tj ET
+BT /F1 11 Tf 72 637 Td (- upload accepts the PDF without a type or size warning) Tj ET
+BT /F1 11 Tf 72 618 Td (- extracted text comes from BOTH pages \(pageCount = 2\)) Tj ET
+BT /F1 11 Tf 72 599 Td (- the document appears in the library list after processing) Tj ET
+BT /F1 11 Tf 72 580 Td (- search finds amber falcon and quantum ferret) Tj ET
+BT /F1 11 Tf 72 555 Td (End of test document.) Tj ET
+endstream
+endobj
+xref
+0 9
+0000000000 65535 f 
+0000000009 00000 n 
+0000000058 00000 n 
+0000000121 00000 n 
+0000000257 00000 n 
+0000000354 00000 n 
+0000000456 00000 n 
+0000001634 00000 n 
+0000001770 00000 n 
+trailer
+<< /Size 9 /Root 1 0 R >>
+startxref
+2596
+%%EOF

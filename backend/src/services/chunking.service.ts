@@ -127,6 +127,11 @@ export class ChunkingService {
   chunkRecursive(text: string, config: Partial<RecursiveChunkConfig> = {}): RawChunk[] {
     const maxChunkSize = config.maxChunkSize ?? DEFAULTS.RECURSIVE_MAX_SIZE
     const overlap = config.overlap ?? DEFAULTS.RECURSIVE_OVERLAP
+    if (maxChunkSize <= 0 || overlap < 0 || overlap >= maxChunkSize) {
+      throw new Error(
+        "maxChunkSize must be positive and overlap must be between 0 and maxChunkSize"
+      )
+    }
     const separators = config.separators ?? [
       "\n\n", // paragraph break — try this first
       "\n", // line break
@@ -232,6 +237,8 @@ export class ChunkingService {
       return []
     }
 
+    if (text.length <= maxSize) return [text]
+
     const currentSeparator = separators[0]
     const remainingSeparators = separators.slice(1)
 
@@ -248,14 +255,25 @@ export class ChunkingService {
     }
 
     const result: string[] = []
+    let pending = ""
     for (const piece of pieces) {
-      if (piece.length <= maxSize) {
-        result.push(piece)
-      } else {
-        const subChunks = this.splitRecursively(piece, remainingSeparators, maxSize, overlap)
-        result.push(...subChunks)
+      const segments =
+        piece.length <= maxSize
+          ? [piece]
+          : this.splitRecursively(piece, remainingSeparators, maxSize, overlap)
+      for (const segment of segments) {
+        const joined = pending ? pending + currentSeparator + segment : segment
+        if (joined.length <= maxSize) {
+          pending = joined
+        } else {
+          if (pending) result.push(pending)
+          const tail = overlap > 0 ? pending.slice(-overlap) : ""
+          const withOverlap = tail ? tail + currentSeparator + segment : segment
+          pending = withOverlap.length <= maxSize ? withOverlap : segment
+        }
       }
     }
+    if (pending) result.push(pending)
     return result
   }
 

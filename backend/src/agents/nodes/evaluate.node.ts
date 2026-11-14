@@ -1,3 +1,5 @@
+import { CONTEXT_DATA_RULE, wrapInContext } from "../../utils/prompt-boundary"
+import { geminiText } from "../../utils/gemini-response"
 // backend/src/agents/nodes/evaluate.node.ts
 // The self-evaluation component of the ReAct agent.
 //
@@ -28,6 +30,7 @@ import { env } from "../../config/env"
 // ── Types ─────────────────────────────────────────────────────────────────
 
 export interface EvaluationResult {
+  tokensUsed?: number
   overallScore: number // 0-1 composite score
   contextRelevance: number // 0-1 did search find relevant chunks?
   faithfulness: number // 0-1 is draft answer supported by evidence?
@@ -107,6 +110,7 @@ export class EvaluatorNode {
           retryReason: "",
           suggestedQuery: llmResult.suggestedQuery,
           evaluationMethod: "hybrid",
+          tokensUsed: llmResult.tokensUsed ?? 0,
         }
 
         blended.overallScore =
@@ -302,9 +306,7 @@ export class EvaluatorNode {
     // Build evidence summary for the evaluator
     const evidenceSummary = toolCallHistory
       .filter(tc => tc.success)
-      .map(
-        (tc, i) => `[Evidence ${i + 1}] Tool: ${tc.toolName}\nOutput: ${tc.output.slice(0, 300)}`
-      )
+      .map((tc, i) => `[Evidence ${i + 1}] Tool: ${tc.toolName}\nOutput: ${tc.output}`)
       .join("\n\n")
 
     const evaluationPrompt = `You are a quality evaluator for an AI research assistant.
@@ -315,7 +317,8 @@ USER QUERY:
 ${userQuery}
 
 RETRIEVED EVIDENCE:
-${evidenceSummary || "(No evidence retrieved)"}
+${wrapInContext(evidenceSummary || "(No evidence retrieved)")}
+${CONTEXT_DATA_RULE}
 
 DRAFT ANSWER:
 ${draftAnswer}
@@ -359,7 +362,8 @@ Respond ONLY with valid JSON (no markdown fences):
       generationConfig: {
         temperature: 0.1, // deterministic scoring
         topP: 1.0,
-        maxOutputTokens: 256,
+        maxOutputTokens: 4096,
+        responseMimeType: "application/json",
       },
     }
 
@@ -371,7 +375,7 @@ Respond ONLY with valid JSON (no markdown fences):
       method: "POST",
       headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
       body: JSON.stringify(requestBody),
-      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
+      signal: withTimeout(signal, Math.min(GEMINI_TIMEOUT_MS, 10_000)),
     })
 
     if (!response.ok) {
@@ -379,9 +383,12 @@ Respond ONLY with valid JSON (no markdown fences):
     }
 
     const data = (await response.json()) as GeminiResponse
-    const rawText = data.candidates[0]?.content.parts[0]?.text ?? ""
+    const rawText = geminiText(data)
 
-    return this.parseLLMEvaluation(rawText)
+    return {
+      ...this.parseLLMEvaluation(rawText),
+      tokensUsed: data.usageMetadata?.totalTokenCount ?? 0,
+    }
   }
 
   // ── parseLLMEvaluation ────────────────────────────────────────────────
@@ -403,6 +410,13 @@ Respond ONLY with valid JSON (no markdown fences):
         suggestedQuery?: unknown
       }
 
+      if (
+        ![parsed.contextRelevance, parsed.faithfulness, parsed.answerRelevance].every(
+          value => typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1
+        )
+      )
+        throw new Error("Invalid evaluation scores")
+
       const contextRelevance = this.clamp(Number(parsed.contextRelevance ?? 0.5))
       const faithfulness = this.clamp(Number(parsed.faithfulness ?? 0.5))
       const answerRelevance = this.clamp(Number(parsed.answerRelevance ?? 0.5))
@@ -420,16 +434,7 @@ Respond ONLY with valid JSON (no markdown fences):
         evaluationMethod: "llm",
       }
     } catch {
-      // Parsing failed — return neutral scores
-      return {
-        contextRelevance: 0.5,
-        faithfulness: 0.5,
-        answerRelevance: 0.5,
-        overallScore: 0.5,
-        shouldRetry: true,
-        retryReason: "Could not parse evaluation response",
-        evaluationMethod: "llm",
-      }
+      throw new Error("Could not parse evaluation response")
     }
   }
 

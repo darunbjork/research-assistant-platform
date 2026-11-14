@@ -1,3 +1,4 @@
+import { geminiText } from "../utils/gemini-response"
 import crypto from "crypto"
 import type { HybridSearchService } from "./hybrid.search.service"
 import type { GenerationService } from "./generation.service"
@@ -16,7 +17,8 @@ import { EvaluatorNode } from "../agents/nodes/evaluate.node"
 import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations, activeAgentSessions } from "../utils/metrics"
-import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { requestGemini } from "../utils/gemini-request"
+import { RateLimitError } from "../middleware/error.middleware"
 import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 import { getTracer } from "../telemetry/tracer"
@@ -116,15 +118,15 @@ export class AgentService {
               break
             }
             logError("Agent reasoning failed", error, { service: "AgentService", sessionId })
-            state.status = "error"
-            state.error = error instanceof Error ? error.message : "Reasoning failed"
-            break
+            throw error
           }
 
           if (decision.toolName === "DONE") {
             steps.push({
               stepNumber: state.iterationCount,
-              description: "Determined sufficient information gathered",
+              description: lastEval?.shouldRetry
+                ? "Search completed; evidence may be incomplete"
+                : "Determined sufficient information gathered",
               durationMs: 0,
               timestamp: new Date(),
             })
@@ -216,6 +218,8 @@ export class AgentService {
               },
               signal
             )
+
+            tokenUsage.total += lastEval.tokensUsed ?? 0
 
             state.qualityScore = lastEval.overallScore
 
@@ -346,10 +350,7 @@ export class AgentService {
 
     const evidence = state.toolCallHistory
       .filter((tc: ToolCall) => tc.success)
-      .map(
-        (tc: ToolCall, i: number) =>
-          `[Evidence ${i + 1}] (${tc.toolName}): ${tc.output.slice(0, 400)}`
-      )
+      .map((tc: ToolCall, i: number) => `[Evidence ${i + 1}] (${tc.toolName}): ${tc.output}`)
       .join("\n\n")
 
     const draftPrompt = `Based on this evidence, draft a concise answer to the query.
@@ -373,17 +374,17 @@ Provide a brief, direct draft answer (2-4 sentences maximum):`
       generationConfig: {
         temperature: 0.1,
         topP: 1.0,
-        maxOutputTokens: 256,
+        maxOutputTokens: 4096,
       },
     }
 
     try {
       const response = await this.callGemini(requestBody, signal)
       tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
-      return response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+      return geminiText(response)
     } catch (error: unknown) {
       // Aborts must stop the run — do not swallow them into an empty draft.
-      if (signal?.aborted) throw error
+      if (signal?.aborted || error instanceof RateLimitError) throw error
       return ""
     }
   }
@@ -405,7 +406,7 @@ Provide a brief, direct draft answer (2-4 sentences maximum):`
               (tc: ToolCall, i: number) =>
                 `Step ${i + 1} — ${tc.toolName}\n` +
                 `Input: ${JSON.stringify(tc.input)}\n` +
-                `Output: ${tc.output.slice(0, 250)}`
+                `Output: ${tc.output}`
             )
             .join("\n\n")
 
@@ -451,15 +452,27 @@ Respond ONLY with valid JSON (no markdown):
       generationConfig: {
         temperature: 0.1,
         topP: 1.0,
-        maxOutputTokens: 256,
+        maxOutputTokens: 4096,
       },
     }
+
+    requestBody.generationConfig!.responseMimeType = "application/json"
 
     const response = await this.callGemini(requestBody, signal)
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
-    const rawText = response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
-    return this.parseToolDecision(rawText)
+    const rawText = geminiText(response)
+    const decision = this.parseToolDecision(rawText)
+    const retryQuery = lastEval?.suggestedQuery?.trim()
+    if (
+      decision.toolName === "DONE" &&
+      lastEval?.shouldRetry &&
+      retryQuery &&
+      !state.toolCallHistory.some(tc => tc.input["query"] === retryQuery)
+    ) {
+      return { toolName: "rag_search", input: { query: retryQuery }, reason: lastEval.retryReason }
+    }
+    return decision
   }
 
   private async synthesiseFinalAnswer(
@@ -505,14 +518,14 @@ RULES:
       generationConfig: {
         temperature: 0.1,
         topP: 0.8,
-        maxOutputTokens: 1024,
+        maxOutputTokens: 4096,
       },
     }
 
     const response = await this.callGemini(requestBody, signal)
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
-    const answer = response.candidates?.[0]?.content?.parts?.[0]?.text ?? ""
+    const answer = geminiText(response)
     const citations = this.extractCitationsFromHistory(state.toolCallHistory)
 
     return { answer, citations }
@@ -553,7 +566,7 @@ RULES:
       logRagEvent("agent_step", "Failed to parse tool decision — defaulting to DONE", {
         service: "AgentService",
       })
-      return { toolName: "DONE", input: {}, reason: "Parse error" }
+      throw new Error("Gemini returned an invalid tool decision. Please try again.")
     }
   }
 
@@ -607,24 +620,6 @@ RULES:
   ): Promise<GeminiResponse> {
     const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
 
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
-      body: JSON.stringify(requestBody),
-      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
-    })
-
-    if (!response.ok) {
-      let msg = `Gemini API error: ${response.status} ${response.statusText}`
-      try {
-        const body = (await response.json()) as { error?: { message?: string } }
-        if (body.error?.message) msg += ` — ${body.error.message}`
-      } catch {
-        /* ignore */
-      }
-      throw new Error(msg)
-    }
-
-    return response.json() as Promise<GeminiResponse>
+    return requestGemini(url, this.apiKey, requestBody, signal)
   }
 }

@@ -8,32 +8,32 @@
 // Clicking "Show excerpt" expands to show the actual chunk text.
 // This keeps the UI clean for short answers and detailed for verification.
 
-import { useState } from "react"
-import type { Citation } from "../types"
+import { useState } from "react";
+import type { Citation } from "../types";
 
 interface Props {
-  citation: Citation
-  index:    number   // 1-based source number ([Source 1], [Source 2], etc.)
+  citation: Citation;
+  index: number; // 1-based source number ([Source 1], [Source 2], etc.)
 }
 
 // Formats a relevance score (0-1) as a percentage
 function formatScore(score: number): string {
-  return `${Math.round(score * 100)}%`
+  return score.toFixed(5);
 }
 
 // Formats a file size or source name for display
 function formatSourceName(name: string): string {
   // Truncate long file names
   if (name.length > 40) {
-    return `...${name.slice(-37)}`
+    return `...${name.slice(-37)}`;
   }
-  return name
+  return name;
 }
 
 export default function CitationCard({ citation, index }: Props) {
-  const [expanded, setExpanded] = useState(false)
+  const [expanded, setExpanded] = useState(false);
 
-  const relevancePercentage = formatScore(citation.relevanceScore)
+  const relevancePercentage = formatScore(citation.relevanceScore);
 
   return (
     <div className="mt-1 border border-slate-200 rounded-lg bg-slate-50 text-sm overflow-hidden">
@@ -61,12 +61,12 @@ export default function CitationCard({ citation, index }: Props) {
         <div className="flex items-center gap-2 shrink-0">
           {/* Relevance score */}
           <span className="text-xs text-slate-500">
-            {relevancePercentage} match
+            Score {relevancePercentage}
           </span>
 
           {/* Expand/collapse toggle */}
           <button
-            onClick={() => setExpanded(prev => !prev)}
+            onClick={() => setExpanded((prev) => !prev)}
             className="text-xs text-blue-600 hover:text-blue-800 font-medium transition-colors"
           >
             {expanded ? "Hide ▲" : "Show ▼"}
@@ -82,10 +82,12 @@ export default function CitationCard({ citation, index }: Props) {
           </p>
           <div className="mt-2 flex items-center gap-1 text-xs text-slate-400">
             <span>Relevance score:</span>
-            <span className="font-mono">{citation.relevanceScore.toFixed(5)}</span>
+            <span className="font-mono">
+              {citation.relevanceScore.toFixed(5)}
+            </span>
           </div>
         </div>
       )}
     </div>
-  )
+  );
 }

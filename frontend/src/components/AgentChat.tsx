@@ -1,57 +1,60 @@
-import { useState, useRef, useEffect }  from "react"
-import { queryAgent }         from "../utils/api"
-import { useAgentWebSocket }            from "../hooks/useAgentWebSocket"
-import { useVoiceCapture }              from "../hooks/useVoiceCapture"
-import MessageCard                      from "./MessageCard"
-import AgentStatusBadge                 from "./AgentStatusBadge"
-import type { ChatMessage, AgentStatus } from "../types"
+import { useState, useRef, useEffect } from "react";
+import { queryAgent } from "../utils/api";
+import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
+import { useVoiceCapture } from "../hooks/useVoiceCapture";
+import MessageCard from "./MessageCard";
+import AgentStatusBadge from "./AgentStatusBadge";
+import type { ChatMessage, AgentStatus } from "../types";
 
 function generateId(): string {
-  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`
+  return `msg-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
 }
 
 function formatTime(date: Date): string {
-  return date.toLocaleTimeString("en-US", { hour: "2-digit", minute: "2-digit" })
+  return date.toLocaleTimeString("en-US", {
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-type ChatMode = "ws-agent" | "http-agent" | "rag" | "rag-rerank"
+type ChatMode = "ws-agent" | "http-agent" | "rag" | "rag-rerank";
 
 const WELCOME_MESSAGE: ChatMessage = {
-  id:        "welcome",
+  id: "welcome",
   text:
     "Hello! I'm ResearchBot 🤖\n\n" +
     "I use real-time WebSocket streaming to show you my reasoning as it happens.\n\n" +
     "Upload a document and ask me anything — watch me think step by step!",
-  sender:    "agent",
+  sender: "agent",
   timestamp: formatTime(new Date()),
-  citations: []
-}
+  citations: [],
+};
 
 export default function AgentChat() {
-  const [messages,   setMessages]   = useState<ChatMessage[]>([WELCOME_MESSAGE])
-  const [inputValue, setInputValue] = useState("")
-  const [chatMode,   setChatMode]   = useState<ChatMode>("ws-agent")
-  const [httpStatus, setHttpStatus] = useState<AgentStatus>("idle")
+  const [messages, setMessages] = useState<ChatMessage[]>([WELCOME_MESSAGE]);
+  const [inputValue, setInputValue] = useState("");
+  const [chatMode, setChatMode] = useState<ChatMode>("ws-agent");
+  const [httpStatus, setHttpStatus] = useState<AgentStatus>("idle");
 
-  const bottomRef = useRef<HTMLDivElement>(null)
-  const inputRef  = useRef<HTMLInputElement>(null)
+  const bottomRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
 
   // ── WebSocket hook ─────────────────────────────────────────────────────
-  const ws = useAgentWebSocket()
+  const ws = useAgentWebSocket();
 
   // ── Voice capture (Day 4) ──────────────────────────────────────────────
-  const voice = useVoiceCapture()
+  const voice = useVoiceCapture();
 
   const handleVoiceToggle = (): void => {
     if (voice.isCapturing) {
-      ws.voiceEnd()
-      voice.stopCapture()
-      return
+      ws.voiceEnd();
+      voice.stopCapture();
+      return;
     }
-    if (ws.connectionState !== "authenticated") return
-    ws.voiceStart()
-    void voice.startCapture(ws.sendVoiceFrame)
-  }
+    if (ws.connectionState !== "authenticated") return;
+    ws.voiceStart();
+    void voice.startCapture(ws.sendVoiceFrame);
+  };
 
   // A voice refusal (quota, session, budget) stops the mic immediately —
   // otherwise frames keep arriving for an utterance the server refused and
@@ -59,242 +62,271 @@ export default function AgentChat() {
   // are called, and eslint-plugin-react-hooks v7 wants the objects then.
   useEffect(() => {
     if (voice.isCapturing && ws.voiceError !== null) {
-      ws.voiceEnd()
-      voice.stopCapture()
+      ws.voiceEnd();
+      voice.stopCapture();
     }
-  }, [ws, voice])
+  }, [ws, voice]);
 
   // The mic must not outlive the connection or the ws-agent mode.
   useEffect(() => {
     if (voice.isCapturing && ws.connectionState === "disconnected") {
-      voice.stopCapture()
+      voice.stopCapture();
     }
-  }, [ws, voice])
+  }, [ws, voice]);
 
   useEffect(() => {
     if (chatMode !== "ws-agent" && voice.isCapturing) {
-      ws.voiceEnd()
-      voice.stopCapture()
+      ws.voiceEnd();
+      voice.stopCapture();
     }
-  }, [chatMode, ws, voice])
+  }, [chatMode, ws, voice]);
 
   // Auto-scroll when messages change
   useEffect(() => {
-    bottomRef.current?.scrollIntoView({ behavior: "smooth" })
-  }, [messages])
+    bottomRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [messages]);
 
   // ── Watch for completed WebSocket responses ────────────────────────────
   // When finalAnswer arrives via WebSocket, add it to the chat
-  const lastFinalAnswer = useRef("")
+  const lastResult = useRef<typeof ws.result>(null);
 
   useEffect(() => {
-    if (
-      ws.finalAnswer &&
-      ws.finalAnswer !== lastFinalAnswer.current &&
-      chatMode === "ws-agent"
-    ) {
-      lastFinalAnswer.current = ws.finalAnswer
-
-      const agentMessage: ChatMessage = {
-        id:          generateId(),
-        text:        ws.finalAnswer,
-        sender:      "agent",
-        timestamp:   formatTime(new Date()),
-        citations:   ws.citations,
-        agentSteps:  ws.steps,
-        status:      "done",
+    const result = ws.result;
+    if (!result || result === lastResult.current || chatMode !== "ws-agent")
+      return;
+    lastResult.current = result;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        text: result.finalAnswer,
+        sender: "agent",
+        timestamp: formatTime(new Date()),
+        citations: result.citations,
+        agentSteps: result.steps,
+        status: result.status,
         metadata: {
-          chunksRetrieved: ws.citations.length,
-          tokensUsed:      0,
-          durationMs:      0,
-          iterationCount:  ws.steps.filter(s => s.toolUsed).length
-        }
-      }
-
-      setMessages(prev => [...prev, agentMessage])
-    }
-  }, [ws.finalAnswer, ws.citations, ws.steps, chatMode])
+          chunksRetrieved: result.citations.length,
+          tokensUsed: result.tokensUsed,
+          durationMs: result.durationMs,
+          iterationCount: result.iterationCount,
+        },
+      },
+    ]);
+  }, [ws.result, chatMode]);
 
   // ── Determine active status ────────────────────────────────────────────
-  const activeStatus: AgentStatus = chatMode === "ws-agent" ? ws.agentStatus : httpStatus
-  const isDisabled = chatMode === "ws-agent" ? ws.isRunning : httpStatus !== "idle"
+  const activeStatus: AgentStatus =
+    chatMode === "ws-agent" ? ws.agentStatus : httpStatus;
+  const isDisabled =
+    chatMode === "ws-agent" ? ws.isRunning : httpStatus !== "idle";
 
   // ── Send handler ───────────────────────────────────────────────────────
   const handleSend = async (): Promise<void> => {
-    const query = inputValue.trim()
-    if (!query || isDisabled) return
+    const query = inputValue.trim();
+    if (!query || isDisabled) return;
 
-    setInputValue("")
+    setInputValue("");
 
     // Add user message
     const userMessage: ChatMessage = {
-      id:        generateId(),
-      text:      query,
-      sender:    "user",
-      timestamp: formatTime(new Date())
-    }
-    setMessages(prev => [...prev, userMessage])
+      id: generateId(),
+      text: query,
+      sender: "user",
+      timestamp: formatTime(new Date()),
+    };
+    setMessages((prev) => [...prev, userMessage]);
 
     if (chatMode === "ws-agent") {
       // WebSocket mode — streaming
-      ws.startQuery(query)
+      ws.startQuery(query);
     } else if (chatMode === "http-agent") {
       // HTTP Agent mode (fallback)
-      await handleHttpAgent(query)
+      await handleHttpAgent(query);
     } else if (chatMode === "rag-rerank") {
       // RAG+Rerank mode
-      await handleRagRerank(query)
+      await handleRagRerank(query);
     } else {
       // RAG mode
-      await handleRagQuery(query)
+      await handleRagQuery(query);
     }
 
-    setTimeout(() => inputRef.current?.focus(), 100)
-  }
+    setTimeout(() => inputRef.current?.focus(), 100);
+  };
 
   const handleHttpAgent = async (query: string): Promise<void> => {
-    setHttpStatus("thinking")
-    await new Promise(r => setTimeout(r, 300))
-    setHttpStatus("searching")
+    setHttpStatus("thinking");
+    await new Promise((r) => setTimeout(r, 300));
+    setHttpStatus("searching");
 
     try {
-      const result = await queryAgent(query)
-      setHttpStatus("generating")
-      await new Promise(r => setTimeout(r, 200))
+      const result = await queryAgent(query);
+      setHttpStatus("generating");
+      await new Promise((r) => setTimeout(r, 200));
 
       const agentMessage: ChatMessage = {
-        id:          generateId(),
-        text:        result.finalAnswer,
-        sender:      "agent",
-        timestamp:   formatTime(new Date()),
-        citations:   result.citations,
-        agentSteps:  result.steps,
-        status:      "done",
+        id: generateId(),
+        text: result.finalAnswer,
+        sender: "agent",
+        timestamp: formatTime(new Date()),
+        citations: result.citations,
+        agentSteps: result.steps,
+        status: "done",
         metadata: {
           chunksRetrieved: result.citations.length,
-          tokensUsed:      result.tokensUsed,
-          durationMs:      result.durationMs,
-          iterationCount:  result.iterationCount
-        }
-      }
+          tokensUsed: result.tokensUsed,
+          durationMs: result.durationMs,
+          iterationCount: result.iterationCount,
+        },
+      };
 
-      setMessages(prev => [...prev, agentMessage])
-      setHttpStatus("done")
-      setTimeout(() => setHttpStatus("idle"), 1500)
+      setMessages((prev) => [...prev, agentMessage]);
+      setHttpStatus("done");
+      setTimeout(() => setHttpStatus("idle"), 1500);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Request failed"
-      setMessages(prev => [...prev, {
-        id: generateId(), text: `Error: ${message}`,
-        sender: "agent", timestamp: formatTime(new Date()), status: "error"
-      }])
-      setHttpStatus("error")
-      setTimeout(() => setHttpStatus("idle"), 2000)
+      const message = err instanceof Error ? err.message : "Request failed";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          text: `Error: ${message}`,
+          sender: "agent",
+          timestamp: formatTime(new Date()),
+          status: "error",
+        },
+      ]);
+      setHttpStatus("error");
+      setTimeout(() => setHttpStatus("idle"), 2000);
     }
-  }
+  };
 
   const handleRagQuery = async (query: string): Promise<void> => {
-    setHttpStatus("searching")
+    setHttpStatus("searching");
     try {
-      const { queryRag: qr } = await import("../utils/api")
-      const result = await qr(query)
-      setHttpStatus("done")
+      const { queryRag: qr } = await import("../utils/api");
+      const result = await qr(query);
+      setHttpStatus("done");
 
-      setMessages(prev => [...prev, {
-        id:        generateId(),
-        text:      result.answer,
-        sender:    "agent",
-        timestamp: formatTime(new Date()),
-        citations: result.citations,
-        status:    "done",
-        metadata: {
-          chunksRetrieved: result.chunksRetrieved,
-          tokensUsed:      result.tokensUsed,
-          durationMs:      result.durationMs
-        }
-      }])
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          text: result.answer,
+          sender: "agent",
+          timestamp: formatTime(new Date()),
+          citations: result.citations,
+          status: "done",
+          metadata: {
+            chunksRetrieved: result.chunksRetrieved,
+            tokensUsed: result.tokensUsed,
+            durationMs: result.durationMs,
+          },
+        },
+      ]);
 
-      setTimeout(() => setHttpStatus("idle"), 1500)
+      setTimeout(() => setHttpStatus("idle"), 1500);
     } catch (err: unknown) {
-      const message = err instanceof Error ? err.message : "Request failed"
-      setMessages(prev => [...prev, {
-        id: generateId(), text: `Error: ${message}`,
-        sender: "agent", timestamp: formatTime(new Date()), status: "error"
-      }])
-      setHttpStatus("error")
-      setTimeout(() => setHttpStatus("idle"), 2000)
+      const message = err instanceof Error ? err.message : "Request failed";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          text: `Error: ${message}`,
+          sender: "agent",
+          timestamp: formatTime(new Date()),
+          status: "error",
+        },
+      ]);
+      setHttpStatus("error");
+      setTimeout(() => setHttpStatus("idle"), 2000);
     }
-  }
+  };
 
   const handleRagRerank = async (query: string): Promise<void> => {
-    setHttpStatus("searching")
+    setHttpStatus("searching");
     try {
-      const response = await import("../utils/api").then(m =>
-        m.default.post<import("../types").ApiResult<{
-          answer: string
-          citations: import("../types").Citation[]
-          chunksRetrieved: number
-          chunksReranked: number
-          tokensUsed: number
-          durationMs: number
-        }>>("/rag/query-with-rerank", { query, topK: 5 })
-      )
+      const response = await import("../utils/api").then((m) =>
+        m.default.post<
+          import("../types").ApiResult<{
+            answer: string;
+            citations: import("../types").Citation[];
+            chunksRetrieved: number;
+            chunksReranked: number;
+            tokensUsed: number;
+            durationMs: number;
+          }>
+        >("/rag/query-with-rerank", { query, topK: 5 }),
+      );
 
       if (!response.data.success || !response.data.data) {
-        throw new Error(response.data.error ?? "Reranked RAG failed")
+        throw new Error(response.data.error ?? "Reranked RAG failed");
       }
 
-      const result = response.data.data
-      setHttpStatus("done")
+      const result = response.data.data;
+      setHttpStatus("done");
 
-      setMessages(prev => [...prev, {
-        id:        generateId(),
-        text:      result.answer,
-        sender:    "agent" as const,
-        timestamp: formatTime(new Date()),
-        citations: result.citations,
-        status:    "done" as const,
-        metadata: {
-          chunksRetrieved: result.chunksRetrieved,
-          tokensUsed:      result.tokensUsed,
-          durationMs:      result.durationMs
-        }
-      }])
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          text: result.answer,
+          sender: "agent" as const,
+          timestamp: formatTime(new Date()),
+          citations: result.citations,
+          status: "done" as const,
+          metadata: {
+            chunksRetrieved: result.chunksRetrieved,
+            tokensUsed: result.tokensUsed,
+            durationMs: result.durationMs,
+          },
+        },
+      ]);
 
-      setTimeout(() => setHttpStatus("idle"), 1500)
+      setTimeout(() => setHttpStatus("idle"), 1500);
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : "Request failed"
-      setMessages(prev => [...prev, {
-        id: generateId(), text: `Error: ${msg}`,
-        sender: "agent" as const, timestamp: formatTime(new Date()), status: "error" as const
-      }])
-      setHttpStatus("error")
-      setTimeout(() => setHttpStatus("idle"), 2000)
+      const msg = err instanceof Error ? err.message : "Request failed";
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: generateId(),
+          text: `Error: ${msg}`,
+          sender: "agent" as const,
+          timestamp: formatTime(new Date()),
+          status: "error" as const,
+        },
+      ]);
+      setHttpStatus("error");
+      setTimeout(() => setHttpStatus("idle"), 2000);
     }
-  }
+  };
 
   const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>): void => {
     if (e.key === "Enter" && !e.shiftKey) {
-      e.preventDefault()
-      void handleSend()
+      e.preventDefault();
+      void handleSend();
     }
-  }
+  };
 
   // ── WebSocket connection status indicator ──────────────────────────────
   const wsIndicator = {
-    disconnected: { dot: "bg-red-400",    label: "Disconnected" },
-    connecting:   { dot: "bg-yellow-400 animate-pulse", label: "Connecting..." },
-    connected:    { dot: "bg-yellow-400 animate-pulse", label: "Authenticating..." },
-    authenticated:{ dot: "bg-green-400",  label: "WebSocket live" },
-    error:        { dot: "bg-red-400",    label: "WS error — using HTTP" }
-  }[ws.connectionState]
+    disconnected: { dot: "bg-red-400", label: "Disconnected" },
+    connecting: { dot: "bg-yellow-400 animate-pulse", label: "Connecting..." },
+    connected: {
+      dot: "bg-yellow-400 animate-pulse",
+      label: "Authenticating...",
+    },
+    authenticated: { dot: "bg-green-400", label: "WebSocket live" },
+    error: { dot: "bg-red-400", label: "WS error — select HTTP" },
+  }[ws.connectionState];
 
   return (
-    <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[700px]">
-
+    <div className="bg-white rounded-xl border border-slate-200 shadow-sm flex flex-col h-[700px] min-h-0">
       {/* ── Header ── */}
       <div className="flex items-center justify-between px-5 py-3 border-b border-slate-100">
         <div>
-          <h2 className="text-lg font-semibold text-slate-800">🤖 ResearchBot</h2>
+          <h2 className="text-lg font-semibold text-slate-800">
+            🤖 ResearchBot
+          </h2>
           <div className="flex items-center gap-2 mt-0.5">
             <span className={`w-1.5 h-1.5 rounded-full ${wsIndicator.dot}`} />
             <span className="text-xs text-slate-400">{wsIndicator.label}</span>
@@ -304,34 +336,38 @@ export default function AgentChat() {
       </div>
 
       {/* ── Mode Toggle ── */}
-      <div className="flex items-center gap-2 px-5 py-2 border-b border-slate-100">
+      <div className="flex flex-wrap shrink-0 items-center gap-2 px-5 py-2 border-b border-slate-100">
         <span className="text-xs font-medium text-slate-500">Mode:</span>
         <div className="flex gap-1 bg-slate-100 p-0.5 rounded-lg">
-          {(["ws-agent", "http-agent", "rag", "rag-rerank"] as ChatMode[]).map(mode => (
-            <button
-              key={mode}
-              onClick={() => setChatMode(mode)}
-              disabled={isDisabled}
-              className={`
+          {(["ws-agent", "http-agent", "rag", "rag-rerank"] as ChatMode[]).map(
+            (mode) => (
+              <button
+                key={mode}
+                onClick={() => setChatMode(mode)}
+                disabled={isDisabled}
+                className={`
                 px-2.5 py-1 rounded-md text-xs font-medium transition-colors
-                ${chatMode === mode
-                  ? "bg-white text-slate-800 shadow-sm"
-                  : "text-slate-500 hover:text-slate-700"
+                ${
+                  chatMode === mode
+                    ? "bg-white text-slate-800 shadow-sm"
+                    : "text-slate-500 hover:text-slate-700"
                 }
                 disabled:opacity-50 disabled:cursor-not-allowed
               `}
-            >
-              {mode === "ws-agent"    && "🔌 Agent (WS)"}
-              {mode === "http-agent"  && "🤖 Agent (HTTP)"}
-              {mode === "rag"         && "⚡ RAG"}
-              {mode === "rag-rerank"  && "🎯 RAG+Rerank"}
-            </button>
-          ))}
+              >
+                {mode === "ws-agent" && "🔌 Agent (WS)"}
+                {mode === "http-agent" && "🤖 Agent (HTTP)"}
+                {mode === "rag" && "⚡ RAG"}
+                {mode === "rag-rerank" && "🎯 RAG+Rerank"}
+              </button>
+            ),
+          )}
         </div>
         <span className="text-xs text-slate-400">
-          {chatMode === "ws-agent"   && "Real-time streaming · WebSocket"}
+          {chatMode === "ws-agent" && "Real-time streaming · WebSocket"}
           {chatMode === "http-agent" && "Multi-step reasoning · HTTP"}
-          {chatMode === "rag-rerank" && "Hybrid search + cross-encoder reranking"}
+          {chatMode === "rag-rerank" &&
+            "Hybrid search + cross-encoder reranking"}
         </span>
       </div>
 
@@ -343,16 +379,27 @@ export default function AgentChat() {
           </p>
           <div className="space-y-1 overflow-y-auto max-h-28">
             {ws.steps.map((step, i) => (
-              <div key={i} className="flex items-start gap-2 text-xs text-slate-600">
-                <span className="flex-shrink-0 font-mono text-slate-400">{step.stepNumber}.</span>
+              <div
+                key={i}
+                className="flex items-start gap-2 text-xs text-slate-600"
+              >
+                <span className="flex-shrink-0 font-mono text-slate-400">
+                  {i + 1}.
+                </span>
                 <span>
                   {step.toolUsed === "rag_search" && "🔍 "}
                   {step.toolUsed === "calculator" && "🧮 "}
-                  {!step.toolUsed && step.description.includes("Quality") && "📊 "}
-                  {!step.toolUsed && !step.description.includes("Quality") && "💭 "}
+                  {!step.toolUsed &&
+                    step.description.includes("Quality") &&
+                    "📊 "}
+                  {!step.toolUsed &&
+                    !step.description.includes("Quality") &&
+                    "💭 "}
                   {step.description}
                   {step.durationMs > 0 && (
-                    <span className="ml-1 text-slate-400">({step.durationMs}ms)</span>
+                    <span className="ml-1 text-slate-400">
+                      ({step.durationMs}ms)
+                    </span>
                   )}
                 </span>
               </div>
@@ -368,8 +415,8 @@ export default function AgentChat() {
       )}
 
       {/* ── Message list ── */}
-      <div className="flex-1 px-5 py-4 overflow-y-auto chat-scroll">
-        {messages.map(message => (
+      <div className="flex-1 min-h-0 px-5 py-4 overflow-y-auto chat-scroll">
+        {messages.map((message) => (
           <MessageCard key={message.id} message={message} />
         ))}
 
@@ -378,7 +425,7 @@ export default function AgentChat() {
           <div className="flex justify-start mb-4">
             <div className="px-4 py-3 bg-white border rounded-bl-sm shadow-sm border-slate-200 rounded-2xl">
               <div className="flex items-center gap-1">
-                {[0, 150, 300].map(delay => (
+                {[0, 150, 300].map((delay) => (
                   <div
                     key={delay}
                     className="w-2 h-2 rounded-full bg-slate-400 animate-bounce"
@@ -394,7 +441,7 @@ export default function AgentChat() {
       </div>
 
       {/* ── Error banner ── */}
-      {(ws.error ?? null) && (
+      {chatMode === "ws-agent" && ws.error && (
         <div className="p-2 mx-5 mb-2 border border-red-200 rounded-lg bg-red-50">
           <p className="text-xs text-red-700">{ws.error}</p>
         </div>
@@ -407,12 +454,13 @@ export default function AgentChat() {
             ref={inputRef}
             type="text"
             value={inputValue}
-            onChange={e => setInputValue(e.target.value)}
+            onChange={(e) => setInputValue(e.target.value)}
             onKeyDown={handleKeyDown}
             placeholder={
               isDisabled
                 ? "ResearchBot is working..."
-                : ws.connectionState !== "authenticated" && chatMode === "ws-agent"
+                : ws.connectionState !== "authenticated" &&
+                    chatMode === "ws-agent"
                   ? "Connecting to WebSocket..."
                   : "Ask a question about your documents..."
             }
@@ -423,7 +471,9 @@ export default function AgentChat() {
             <button
               onClick={handleVoiceToggle}
               disabled={ws.connectionState !== "authenticated"}
-              aria-label={voice.isCapturing ? "Stop microphone" : "Start microphone"}
+              aria-label={
+                voice.isCapturing ? "Stop microphone" : "Start microphone"
+              }
               title={
                 voice.isCapturing
                   ? "Stop microphone (ends the voice turn)"
@@ -431,9 +481,10 @@ export default function AgentChat() {
               }
               className={`
                 px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex-shrink-0 border
-                ${voice.isCapturing
-                  ? "bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
-                  : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+                ${
+                  voice.isCapturing
+                    ? "bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
+                    : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
                 }
                 disabled:opacity-50 disabled:cursor-not-allowed
               `}
@@ -443,21 +494,27 @@ export default function AgentChat() {
           )}
           <button
             onClick={() => void handleSend()}
-            disabled={isDisabled || !inputValue.trim()}
+            disabled={
+              isDisabled ||
+              !inputValue.trim() ||
+              (chatMode === "ws-agent" &&
+                ws.connectionState !== "authenticated")
+            }
             className="px-5 py-2.5 bg-blue-600 hover:bg-blue-700 disabled:bg-slate-200 disabled:text-slate-400 text-white font-medium rounded-xl text-sm transition-colors flex items-center gap-1.5 flex-shrink-0"
           >
             {isDisabled ? (
               <span className="w-4 h-4 border-2 rounded-full border-slate-400 border-t-transparent animate-spin" />
-            ) : "Send →"}
+            ) : (
+              "Send →"
+            )}
           </button>
         </div>
         <p className="text-xs text-slate-400 mt-1.5 text-center">
           {chatMode === "ws-agent"
             ? "WebSocket streaming · steps appear in real time"
-            : "Enter to send · answers grounded in your documents"
-          }
+            : "Enter to send · answers grounded in your documents"}
         </p>
       </div>
     </div>
-  )
+  );
 }
