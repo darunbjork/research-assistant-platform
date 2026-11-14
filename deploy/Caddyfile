@@ -25,7 +25,10 @@
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         X-Frame-Options "DENY"
-        Content-Security-Policy "default-src 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; frame-ancestors 'none'; base-uri 'self'"
+        # worker-src is explicit: the AudioWorklet module is same-origin
+        # (/worklets/*.js — Chrome gates worklet loads under script-src, so
+        # a blob: URL would require script-src blob:). blob: stays disallowed.
+        Content-Security-Policy "default-src 'self'; connect-src 'self' wss://{$DOMAIN}; img-src 'self' data:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; worker-src 'self'; frame-ancestors 'none'; base-uri 'self'"
         # Day 4: the mic is only ever granted to this origin; camera stays off.
         Permissions-Policy "microphone=(self), camera=()"
     }

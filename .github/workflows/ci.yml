@@ -89,11 +89,19 @@ jobs:
       # sequential scan with no error. Intentional drops need a human.
       - name: Guard — migrations must not drop indexes
         run: |
-          if grep -rin "DROP INDEX" prisma/migrations --include="*.sql"; then
-            echo "::error::DROP INDEX found in a migration. This usually means prisma migrate dev tried to drop document_chunks_embedding_hnsw_idx (Prisma cannot model HNSW — see src/__integration__/schema.test.ts). Dropping it silently degrades vector search to sequential scans. Stop, undo the migration, and involve a human."
-            exit 1
-          fi
-          echo "No DROP INDEX statements — OK"
+          # Case-insensitive AND multi-line safe: each file's whitespace is
+          # normalised first (newlines/tabs → spaces) so "DROP\nINDEX",
+          # "drop  index" and "DROP INDEX" are all caught — grep alone only
+          # sees one line at a time.
+          fail=0
+          while IFS= read -r file; do
+            if tr '\n\r\t' '   ' < "$file" | grep -qiE 'DROP[[:space:]]+INDEX'; then
+              echo "::error::Migration ${file} appears to DROP an index. This usually means prisma migrate dev tried to drop document_chunks_embedding_hnsw_idx (Prisma cannot model HNSW — see src/__integration__/schema.test.ts). Dropping it silently degrades vector search to sequential scans. Stop, undo the migration, and involve a human."
+              fail=1
+            fi
+          done < <(find prisma/migrations -name '*.sql' | sort)
+          if [ "$fail" -ne 0 ]; then exit 1; fi
+          echo "No DROP INDEX statements (case- and whitespace-insensitive) — OK"
 
       - name: Run database migrations
         run: npx prisma migrate deploy

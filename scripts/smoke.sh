@@ -161,4 +161,45 @@ if grep -q '# HELP\|# TYPE' "$BODY" 2>/dev/null; then
   fail "/metrics returned Prometheus text without a token (status ${HTTP_STATUS})"
 fi
 
+echo "8. WebSocket handshake with the real Origin header"
+# The WS server rejects any handshake whose Origin is not in CORS_ORIGINS
+# (ws.server.ts) by sending close code 1008 + the ASCII reason
+# "origin not allowed". The probe speaks plain HTTP/1.1 upgrade over the
+# https URL (some curl builds lack the wss:// protocol); curl never completes
+# the WS close handshake, so we assert on the bytes it received within a
+# short window instead of the exit code (0 on early EOF, 28 on --max-time —
+# both are fine either way).
+WS_URL="${BASE_URL}/ws/agent"
+WS_KEY="$(head -c 16 /dev/urandom | base64 | tr -d '\n')"
+ws_probe() {
+  local origin="$1" out="$2"
+  curl -sk -i --http1.1 --max-time 2 -o "$out" \
+    -H "Connection: Upgrade" -H "Upgrade: websocket" \
+    -H "Sec-WebSocket-Version: 13" -H "Sec-WebSocket-Key: ${WS_KEY}" \
+    -H "Origin: ${origin}" \
+    "${WS_URL}" >/dev/null 2>&1 || true
+  # LC_ALL=C: the WS close frame puts raw bytes on the same line as the
+  # ASCII reason, which UTF-8 locales refuse to match even with grep -a.
+  LC_ALL=C grep -aq "101 Switching Protocols" "$out" || {
+    echo "--- ws handshake output (Origin: ${origin}) ---" >&2
+    cat "$out" >&2
+    fail "WS handshake with Origin ${origin} did not switch protocols"
+  }
+}
+
+WS_GOOD="$TMP_DIR/ws-good.txt"
+WS_BAD="$TMP_DIR/ws-bad.txt"
+ws_probe "$BASE_URL" "$WS_GOOD"
+if LC_ALL=C grep -aq "origin not allowed" "$WS_GOOD"; then
+  echo "--- ws handshake output ---" >&2
+  cat "$WS_GOOD" >&2
+  fail "server rejected the real Origin ${BASE_URL} — add the exact scheme+host+port to CORS_ORIGINS"
+fi
+ws_probe "https://smoke-invalid-origin.example" "$WS_BAD"
+LC_ALL=C grep -aq "origin not allowed" "$WS_BAD" || {
+  echo "--- ws handshake output ---" >&2
+  cat "$WS_BAD" >&2
+  fail "server did not reject an unknown Origin — the WS origin allowlist is not enforced"
+}
+
 echo "SMOKE OK"
