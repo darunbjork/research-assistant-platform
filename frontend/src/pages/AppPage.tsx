@@ -1,72 +1,56 @@
 // frontend/src/pages/AppPage.tsx
 // Updated Day 14: includes SuggestedQueries and document count in nav.
 
-import { useState, useEffect, useCallback } from "react"
-import { useNavigate }      from "react-router-dom"
-import DocumentUpload       from "../components/DocumentUpload"
-import DocumentList         from "../components/DocumentList"
-import AgentChat            from "../components/AgentChat"
-import { listDocuments }    from "../utils/api"
-import { clearTokens }      from "../utils/auth"
-import type { DocumentSummary, IngestionResult } from "../types"
+import { useState, useEffect, useCallback } from "react";
+import { useNavigate } from "react-router-dom";
+import DocumentUpload from "../components/DocumentUpload";
+import DocumentList from "../components/DocumentList";
+import AgentChat from "../components/AgentChat";
+import { listDocuments } from "../utils/api";
+import { clearTokens } from "../utils/auth";
+import type { DocumentSummary } from "../types";
 
 export default function AppPage() {
-  const navigate = useNavigate()
+  const navigate = useNavigate();
 
-  const [documents,     setDocuments]     = useState<DocumentSummary[]>([])
-  const [isLoadingDocs, setIsLoadingDocs] = useState(true)
+  const [documents, setDocuments] = useState<DocumentSummary[]>([]);
+  const [isLoadingDocs, setIsLoadingDocs] = useState(true);
 
   const loadDocuments = useCallback(async (): Promise<void> => {
     try {
-      const docs = await listDocuments()
-      setDocuments(docs)
+      const docs = await listDocuments();
+      setDocuments(docs);
     } catch (err: unknown) {
-      console.error("Failed to load documents:", err)
+      console.error("Failed to load documents:", err);
     } finally {
-      setIsLoadingDocs(false)
+      setIsLoadingDocs(false);
     }
-  }, [])
+  }, []);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    void loadDocuments()
-  }, [loadDocuments])
+    void loadDocuments();
+  }, [loadDocuments]);
 
-  const handleIngestionSuccess = useCallback(
-    (result: IngestionResult): void => {
-      const newDoc: DocumentSummary = {
-        id:         result.documentId,
-        name:       result.name,
-        mimeType:   "text/plain",
-        sizeBytes:  0,
-        userId:     "",
-        createdAt:  new Date().toISOString(),
-        updatedAt:  new Date().toISOString(),
-        chunkCount: result.chunkCount
-      }
-      setDocuments(prev => [newDoc, ...prev])
-    },
-    []
-  )
+  const handleIngestionSuccess = useCallback((): void => {
+    setIsLoadingDocs(true);
+    void loadDocuments();
+  }, [loadDocuments]);
 
-  const handleDocumentDelete = useCallback(
-    (documentId: string): void => {
-      setDocuments(prev => prev.filter(doc => doc.id !== documentId))
-    },
-    []
-  )
+  const handleDocumentDelete = useCallback((documentId: string): void => {
+    setDocuments((prev) => prev.filter((doc) => doc.id !== documentId));
+  }, []);
 
   const handleLogout = (): void => {
-    clearTokens()
-    navigate("/login")
-  }
+    clearTokens();
+    navigate("/login");
+  };
 
   // Total chunks indexed across all documents
-  const totalChunks = documents.reduce((sum, doc) => sum + doc.chunkCount, 0)
+  const totalChunks = documents.reduce((sum, doc) => sum + doc.chunkCount, 0);
 
   return (
     <div className="min-h-screen bg-slate-50">
-
       {/* ── Navigation ── */}
       <nav className="sticky top-0 z-10 px-6 py-3 bg-white border-b border-slate-200">
         <div className="flex items-center justify-between mx-auto max-w-7xl">
@@ -81,27 +65,10 @@ export default function AppPage() {
           </div>
 
           <div className="flex items-center gap-4">
-            {/* Infrastructure status indicators */}
-            <div className="items-center hidden gap-3 text-xs md:flex text-slate-400">
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
-                pgvector
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
-                Redis cache
-              </span>
-              <span className="flex items-center gap-1">
-                <span className="w-1.5 h-1.5 bg-green-400 rounded-full" />
-                Gemini API
-              </span>
-            </div>
-
-            <div className="hidden w-px h-4 bg-slate-200 md:block" />
-
             <span className="text-xs text-slate-400">
               {documents.length} doc{documents.length !== 1 ? "s" : ""} ·{" "}
-              {totalChunks.toLocaleString()} chunk{totalChunks !== 1 ? "s" : ""} indexed
+              {totalChunks.toLocaleString()} chunk{totalChunks !== 1 ? "s" : ""}{" "}
+              indexed
             </span>
 
             <button
@@ -117,7 +84,6 @@ export default function AppPage() {
       {/* ── Main layout ── */}
       <main className="px-6 py-6 mx-auto max-w-7xl">
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
-
           {/* ── Left: Document management ── */}
           <div className="space-y-4 lg:col-span-1">
             <DocumentUpload onSuccess={handleIngestionSuccess} />
@@ -135,20 +101,38 @@ export default function AppPage() {
               </h3>
               <ol className="space-y-2 text-xs text-slate-500">
                 <li className="flex gap-2">
-                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-blue-600 bg-blue-100 rounded-full">1</span>
-                  <span><strong>Upload</strong> — text chunked into 512-char pieces</span>
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-blue-600 bg-blue-100 rounded-full">
+                    1
+                  </span>
+                  <span>
+                    <strong>Upload</strong> — text chunked into 512-char pieces
+                  </span>
                 </li>
                 <li className="flex gap-2">
-                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-purple-600 bg-purple-100 rounded-full">2</span>
-                  <span><strong>Embed</strong> — Gemini converts chunks to 768-dim vectors</span>
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-purple-600 bg-purple-100 rounded-full">
+                    2
+                  </span>
+                  <span>
+                    <strong>Embed</strong> — Gemini converts chunks to 768-dim
+                    vectors
+                  </span>
                 </li>
                 <li className="flex gap-2">
-                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-green-600 bg-green-100 rounded-full">3</span>
-                  <span><strong>Search</strong> — vector + keyword hybrid retrieval</span>
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-green-600 bg-green-100 rounded-full">
+                    3
+                  </span>
+                  <span>
+                    <strong>Search</strong> — vector + keyword hybrid retrieval
+                  </span>
                 </li>
                 <li className="flex gap-2">
-                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-orange-600 bg-orange-100 rounded-full">4</span>
-                  <span><strong>Generate</strong> — Gemini answers from retrieved chunks only</span>
+                  <span className="flex items-center justify-center flex-shrink-0 w-5 h-5 font-bold text-orange-600 bg-orange-100 rounded-full">
+                    4
+                  </span>
+                  <span>
+                    <strong>Generate</strong> — Gemini answers from retrieved
+                    chunks only
+                  </span>
                 </li>
               </ol>
             </div>
@@ -158,9 +142,8 @@ export default function AppPage() {
           <div className="lg:col-span-2">
             <AgentChat />
           </div>
-
         </div>
       </main>
     </div>
-  )
+  );
 }

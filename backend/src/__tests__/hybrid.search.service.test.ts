@@ -8,6 +8,7 @@
 // 4. The parallel execution path works correctly
 // 5. Edge cases: one list empty, both lists empty, complete overlap
 
+import { searchCache } from "../cache/index"
 import { PrismaClient } from "@prisma/client"
 import { EmbeddingService } from "../services/embedding.service"
 import { HybridSearchService } from "../services/hybrid.search.service"
@@ -92,6 +93,17 @@ describe("HybridSearchService", () => {
     } as unknown as jest.Mocked<Pick<PrismaClient, "$queryRaw">>
 
     service = new HybridSearchService(mockPrisma as unknown as PrismaClient, mockEmbedding)
+  })
+
+  it("passes minSimilarity to both cache lookup and storage", async () => {
+    const result = await service.search("query", {
+      userId: "user-123",
+      topK: 5,
+      documentIds: ["doc-001"],
+      minSimilarity: 0.8,
+    })
+    expect(searchCache.get).toHaveBeenCalledWith("query", "user-123", 5, ["doc-001"], 0.8)
+    expect(searchCache.set).toHaveBeenCalledWith("query", "user-123", 5, result, ["doc-001"], 0.8)
   })
 
   // ── Empty queries ──────────────────────────────────────────────────────

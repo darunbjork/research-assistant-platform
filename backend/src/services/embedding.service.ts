@@ -57,7 +57,7 @@ export class EmbeddingService {
       span.setAttribute("embedding.text_length", text.length)
 
       // Check cache first using existing helper
-      const cachedVector = await this.getFromCache(text)
+      const cachedVector = await this.getFromCache(text, taskType)
       if (cachedVector !== null) {
         span.setAttribute(RAG_ATTRS.CACHE_HIT, true)
         this.cacheHits++
@@ -88,7 +88,7 @@ export class EmbeddingService {
       span.setAttribute(LLM_ATTRS.OUTPUT_TOKENS, vector.length)
 
       // Store in cache
-      await this.setInCache(text, vector)
+      await this.setInCache(text, vector, taskType)
 
       logRagEvent("embed", "Embedding generated", {
         service: "EmbeddingService",
@@ -113,7 +113,7 @@ export class EmbeddingService {
       span.setAttribute("embedding.task_type", taskType)
 
       // Use existing cache helpers and batch splitting logic
-      const cacheKeys = texts.map(t => this.cacheKey(t))
+      const cacheKeys = texts.map(t => this.cacheKey(t, taskType))
       const cached = await Promise.all(cacheKeys.map(k => this.redisClient.get(k)))
 
       const results = new Array<number[]>(texts.length)
@@ -157,7 +157,7 @@ export class EmbeddingService {
             const vec = embeddings[batchIdx]
             if (vec !== undefined) {
               results[item.index] = vec
-              void this.setInCache(item.text, vec)
+              void this.setInCache(item.text, vec, taskType)
             }
           })
         }
@@ -240,14 +240,14 @@ export class EmbeddingService {
   }
 
   // ── Private: Cache helpers ───────────────────────────────────────────
-  private cacheKey(text: string): string {
+  private cacheKey(text: string, taskType: EmbeddingTaskType): string {
     const hash = crypto.createHash("sha256").update(text.trim()).digest("hex").slice(0, 32)
-    return `embedding:${GEMINI_EMBEDDING_MODEL}:${EMBEDDING_DIMENSIONS}:${hash}`
+    return `embedding:${GEMINI_EMBEDDING_MODEL}:${EMBEDDING_DIMENSIONS}:${taskType}:${hash}`
   }
 
-  private async getFromCache(text: string): Promise<number[] | null> {
+  private async getFromCache(text: string, taskType: EmbeddingTaskType): Promise<number[] | null> {
     try {
-      const key = this.cacheKey(text)
+      const key = this.cacheKey(text, taskType)
       const cached = await this.redisClient.get(key)
       if (cached === null) return null
       const parsed = JSON.parse(cached) as CachedEmbedding
@@ -258,9 +258,13 @@ export class EmbeddingService {
     }
   }
 
-  private async setInCache(text: string, vector: number[]): Promise<void> {
+  private async setInCache(
+    text: string,
+    vector: number[],
+    taskType: EmbeddingTaskType
+  ): Promise<void> {
     try {
-      const key = this.cacheKey(text)
+      const key = this.cacheKey(text, taskType)
       const payload: CachedEmbedding = {
         vector,
         model: GEMINI_EMBEDDING_MODEL,

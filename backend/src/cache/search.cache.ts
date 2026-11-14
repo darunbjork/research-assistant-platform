@@ -7,7 +7,7 @@
 // (pgvector cosine search + BM25 keyword search + RRF merge).
 //
 // CACHE KEY DESIGN:
-// Key: "search:{sha256(query + userId + topK + documentIds)}"
+// Key: "search:{sha256(query + userId + topK + documentIds + minSimilarity)}"
 //
 // WHY INCLUDE userId IN THE KEY:
 // Each user has their own documents. User A's search for "revenue"
@@ -18,13 +18,10 @@
 // WHY 5 MINUTE TTL:
 // Short enough that new document uploads are reflected quickly.
 // Long enough to benefit repeated queries during a session.
-// If a user uploads a document, their next search will miss the cache
-// and see the new chunks immediately (because topK or documentIds change).
+// Uploads and deletes explicitly invalidate that user's cached searches.
 //
 // CACHE INVALIDATION:
-// When a document is deleted: we clear all search cache entries for that user.
-// When a document is uploaded: the next search automatically misses cache
-// (because the new chunks change the results).
+// The ingestion worker and document-delete path clear the user's entries.
 
 import type Redis from "ioredis"
 import crypto from "crypto"
@@ -54,9 +51,10 @@ export class SearchCache {
     query: string,
     userId: string,
     topK: number,
-    documentIds: string[] = []
+    documentIds: string[] = [],
+    minSimilarity: number = 0
   ): Promise<HybridSearchResult[] | null> {
-    const key = this.buildKey(query, userId, topK, documentIds)
+    const key = this.buildKey(query, userId, topK, documentIds, minSimilarity)
 
     try {
       const cached = await this.redis.get(key)
@@ -88,9 +86,10 @@ export class SearchCache {
     userId: string,
     topK: number,
     results: HybridSearchResult[],
-    documentIds: string[] = []
+    documentIds: string[] = [],
+    minSimilarity: number = 0
   ): Promise<void> {
-    const key = this.buildKey(query, userId, topK, documentIds)
+    const key = this.buildKey(query, userId, topK, documentIds, minSimilarity)
 
     try {
       await this.redis.setex(key, CACHE_TTL_SECONDS, JSON.stringify(results))
@@ -162,15 +161,21 @@ export class SearchCache {
 
   // ── Private: Build Cache Key ──────────────────────────────────────────
   // Deterministic key based on all query parameters.
-  // Two queries that differ only in whitespace get different keys —
-  // this is intentional: "ML" and "  ML  " may return different results.
-  private buildKey(query: string, userId: string, topK: number, documentIds: string[]): string {
+  // Queries are normalized; every result-affecting search option is included.
+  private buildKey(
+    query: string,
+    userId: string,
+    topK: number,
+    documentIds: string[],
+    minSimilarity: number
+  ): string {
     // Normalise: lowercase, trim, sort documentIds for consistent key
     const normalised = JSON.stringify({
       q: query.toLowerCase().trim(),
       u: userId,
       k: topK,
       docs: [...documentIds].sort(),
+      minSimilarity,
     })
 
     const hash = crypto.createHash("sha256").update(normalised).digest("hex").slice(0, 24) // 96 bits — sufficient collision resistance

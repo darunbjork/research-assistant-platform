@@ -55,7 +55,7 @@ export class HybridSearchService {
 
       // ── Cache check ─────────────────────────────────────────────────
       if (userId) {
-        const cached = await searchCache.get(query, userId, topK, documentIds)
+        const cached = await searchCache.get(query, userId, topK, documentIds, minSimilarity)
         if (cached !== null) {
           span.setAttribute(RAG_ATTRS.CACHE_HIT, true)
           return cached
@@ -102,7 +102,7 @@ export class HybridSearchService {
 
       // ── Store in cache ──────────────────────────────────────────────
       if (userId) {
-        await searchCache.set(query, userId, topK, merged, documentIds)
+        await searchCache.set(query, userId, topK, merged, documentIds, minSimilarity)
       }
 
       span.setAttribute(RAG_ATTRS.CHUNKS_RETRIEVED, merged.length)

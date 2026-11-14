@@ -76,6 +76,15 @@ describe("SearchCache", () => {
     cache = new SearchCache(mockRedis as never)
   })
 
+  it("isolates results by minSimilarity and preserves default-zero hits", async () => {
+    await cache.set("query", "user-1", 10, [makeHybridResult("low")])
+    expect(await cache.get("query", "user-1", 10, [], 0.8)).toBeNull()
+    await cache.set("query", "user-1", 10, [makeHybridResult("high")], [], 0.8)
+    expect((await cache.get("query", "user-1", 10))?.[0]?.chunk.id).toBe("low")
+    expect((await cache.get("query", "user-1", 10, [], 0))?.[0]?.chunk.id).toBe("low")
+    expect((await cache.get("query", "user-1", 10, [], 0.8))?.[0]?.chunk.id).toBe("high")
+  })
+
   // ── get() — cache miss ─────────────────────────────────────────────────
   describe("get() — cache miss", () => {
     it("returns null when key does not exist", async () => {

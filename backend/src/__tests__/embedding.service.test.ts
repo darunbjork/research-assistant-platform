@@ -127,6 +127,33 @@ describe("EmbeddingService", () => {
     })
   })
 
+  describe("cache task isolation", () => {
+    it("keeps identical query and document text in separate caches", async () => {
+      fetchSpy
+        .mockResolvedValueOnce(makeMockGeminiResponse(1, 0.2))
+        .mockResolvedValueOnce(makeMockGeminiResponse(1, 0.8))
+      const document = await service.embedText("same text", "RETRIEVAL_DOCUMENT")
+      const query = await service.embedText("same text", "RETRIEVAL_QUERY")
+      expect(document[0]).toBe(0.2)
+      expect(query[0]).toBe(0.8)
+      expect(await service.embedText("same text", "RETRIEVAL_DOCUMENT")).toEqual(document)
+      expect(await service.embedText("same text", "RETRIEVAL_QUERY")).toEqual(query)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+    })
+
+    it("uses task-specific cache entries across batch and single calls", async () => {
+      fetchSpy
+        .mockResolvedValueOnce(makeMockGeminiResponse(1, 0.2))
+        .mockResolvedValueOnce(makeMockGeminiResponse(1, 0.8))
+      await service.embedBatch(["same text"], "RETRIEVAL_DOCUMENT")
+      const query = await service.embedBatch(["same text"], "RETRIEVAL_QUERY")
+      expect(query[0]?.[0]).toBe(0.8)
+      expect((await service.embedText("same text", "RETRIEVAL_DOCUMENT"))[0]).toBe(0.2)
+      expect((await service.embedBatch(["same text"], "RETRIEVAL_QUERY"))[0]?.[0]).toBe(0.8)
+      expect(fetchSpy).toHaveBeenCalledTimes(2)
+    })
+  })
+
   // ── embedBatch ────────────────────────────────────────────────────────
   describe("embedBatch()", () => {
     it("returns empty array for empty input", async () => {
