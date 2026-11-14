@@ -3,9 +3,12 @@
 //
 // Captures mic audio, converts it to 16 kHz PCM16 (little-endian) frames no
 // larger than the server's 4096-byte frame cap, and applies *silence gating*:
-// frames whose RMS energy is below the threshold are never sent. An
-// always-open mic streams ~6x the STT cost of a gated one (docs/cost.md §3),
-// and audio must stop entirely after voice_end — the caller does that by
+// while the gate is closed only the last VOICE_PRE_ROLL_MS of audio is
+// buffered, never sent — an always-open mic streams ~6x the STT cost of a
+// gated one (docs/cost.md §3). On speech onset the pre-roll is flushed first
+// so the first syllable is not cut, and audio keeps flowing for
+// VOICE_HANGOVER_MS after the voice drops so word tails are not clipped.
+// Audio must stop entirely after voice_end — the caller does that by
 // invoking stopCapture().
 //
 // The server still runs MOCK STT (VOICE_MOCK=true); nothing here reaches a
@@ -16,8 +19,30 @@ import { useCallback, useEffect, useRef, useState } from "react"
 export const VOICE_SAMPLE_RATE = 16000
 /** 2048 samples x 2 bytes = 4096 bytes — exactly the server frame cap. */
 export const VOICE_FRAME_SAMPLES = 2048
-/** RMS below this = silence; such frames are dropped (cost gate). */
+/** RMS below this = silence; such frames are gated (cost gate). */
 export const VOICE_SILENCE_THRESHOLD = 0.01
+/** Audio buffered while the gate is closed and flushed on speech onset. */
+export const VOICE_PRE_ROLL_MS = 250
+/** Audio still sent after the last above-threshold buffer (word tails). */
+export const VOICE_HANGOVER_MS = 500
+/** 250 ms of 16 kHz samples — the pre-roll ring's cap. */
+export const VOICE_PRE_ROLL_SAMPLES = Math.round((VOICE_PRE_ROLL_MS / 1000) * VOICE_SAMPLE_RATE)
+
+/**
+ * Append to the pre-roll ring, keeping only the newest VOICE_PRE_ROLL_SAMPLES
+ * (a 250 ms window at 16 kHz). Exported for the unit tests.
+ */
+export function pushPreRoll(
+  previous: Float32Array,
+  next: Float32Array
+): Float32Array<ArrayBuffer> {
+  const merged = new Float32Array(previous.length + next.length)
+  merged.set(previous)
+  merged.set(next, previous.length)
+  return merged.length > VOICE_PRE_ROLL_SAMPLES
+    ? merged.slice(merged.length - VOICE_PRE_ROLL_SAMPLES)
+    : merged
+}
 
 /** RMS energy of a float32 PCM buffer. */
 export function computeRms(samples: Float32Array): number {
@@ -132,27 +157,81 @@ export function useVoiceCapture(): UseVoiceCaptureReturn {
         const processor = ctx.createScriptProcessor(4096, 1, 1)
         processorRef.current = processor
 
+        // Gate state lives in the startCapture closure: a fresh startCapture
+        // always begins with an empty ring and a closed gate.
+        let gateOpen = false
+        let hangoverUntilMs = 0
+        let preRoll = new Float32Array(0)
+
+        const emit = (samples: Float32Array): void => {
+          for (let offset = 0; offset < samples.length; offset += VOICE_FRAME_SAMPLES) {
+            const end = Math.min(offset + VOICE_FRAME_SAMPLES, samples.length)
+            onFrame(floatToPcm16(samples.subarray(offset, end)))
+          }
+        }
+
         processor.onaudioprocess = (event: AudioProcessingEvent): void => {
           const input = event.inputBuffer.getChannelData(0)
+          const samples = resampleLinear(input, ctx.sampleRate, VOICE_SAMPLE_RATE)
+          const loud = computeRms(input) >= VOICE_SILENCE_THRESHOLD
+          const nowMs = Date.now()
 
-          // Silence gating — never send quiet frames (docs/cost.md §3).
-          if (computeRms(input) < VOICE_SILENCE_THRESHOLD) {
+          if (!gateOpen) {
+            if (!loud) {
+              // Gate closed + quiet: buffer (never send) so onset can flush
+              // the lead-in — this is what keeps the first syllable intact.
+              preRoll = pushPreRoll(preRoll, samples)
+              if (speakingRef.current) {
+                speakingRef.current = false
+                setIsSpeaking(false)
+              }
+              return
+            }
+            // Speech onset: flush the ring (NOT this buffer — it is added
+            // below) + this buffer as one stream, open the gate for the
+            // hangover window. The server's 2-second pacing burst absorbs
+            // this ≤250 ms flush (agent.ws.handler.ts).
+            const flush = new Float32Array(preRoll.length + samples.length)
+            flush.set(preRoll)
+            flush.set(samples, preRoll.length)
+            preRoll = new Float32Array(0)
+            emit(flush)
+            gateOpen = true
+            hangoverUntilMs = nowMs + VOICE_HANGOVER_MS
+            if (!speakingRef.current) {
+              speakingRef.current = true
+              setIsSpeaking(true)
+            }
+            return
+          }
+
+          // Gate open: stream everything so words are not clipped.
+          if (loud) {
+            emit(samples)
+            hangoverUntilMs = nowMs + VOICE_HANGOVER_MS
+            if (!speakingRef.current) {
+              speakingRef.current = true
+              setIsSpeaking(true)
+            }
+            return
+          }
+          if (nowMs < hangoverUntilMs) {
+            // Quiet, but still inside the hangover — send the tail.
+            emit(samples)
             if (speakingRef.current) {
               speakingRef.current = false
               setIsSpeaking(false)
             }
             return
           }
-
-          const samples = resampleLinear(input, ctx.sampleRate, VOICE_SAMPLE_RATE)
-          for (let offset = 0; offset < samples.length; offset += VOICE_FRAME_SAMPLES) {
-            const end = Math.min(offset + VOICE_FRAME_SAMPLES, samples.length)
-            onFrame(floatToPcm16(samples.subarray(offset, end)))
+          // Hangover expired: close the gate; this buffer seeds the next
+          // pre-roll instead of being sent.
+          gateOpen = false
+          if (speakingRef.current) {
+            speakingRef.current = false
+            setIsSpeaking(false)
           }
-          if (!speakingRef.current) {
-            speakingRef.current = true
-            setIsSpeaking(true)
-          }
+          preRoll = pushPreRoll(preRoll, samples)
         }
 
         source.connect(processor)

@@ -22,7 +22,12 @@ jest.mock("../utils/prisma", () => ({
   },
 }))
 
-const { saveVoiceTranscript, listVoiceTranscripts, purgeExpiredVoiceTranscripts } =
+const {
+  saveVoiceTranscript,
+  listVoiceTranscripts,
+  purgeExpiredVoiceTranscripts,
+  startTranscriptPurgeTimer,
+} =
   require("../services/voice.transcript.service") as typeof import("../services/voice.transcript.service")
 
 const row = {
@@ -181,6 +186,28 @@ describe("voice transcript service (Day 3b)", () => {
       mockDeleteMany.mockRejectedValueOnce(new Error("db down"))
 
       await expect(purgeExpiredVoiceTranscripts()).resolves.toBe(0)
+    })
+  })
+
+  // ── Daily in-process sweep (Day 4 follow-up) ────────────────────────────
+  describe("startTranscriptPurgeTimer", () => {
+    it("sweeps on the interval; stop() clears the timer (and unref'd handle)", () => {
+      jest.useFakeTimers()
+      try {
+        mockDeleteMany.mockResolvedValue({ count: 0 })
+
+        const stop = startTranscriptPurgeTimer(1000)
+        expect(mockDeleteMany).not.toHaveBeenCalled()
+
+        jest.advanceTimersByTime(1000)
+        expect(mockDeleteMany).toHaveBeenCalledTimes(1)
+
+        stop()
+        jest.advanceTimersByTime(10_000)
+        expect(mockDeleteMany).toHaveBeenCalledTimes(1) // cleared — no more sweeps
+      } finally {
+        jest.useRealTimers()
+      }
     })
   })
 })

@@ -132,8 +132,15 @@ re-flags this.
 - **Breaker error classification (locked for Day 5):** timeouts, 5xx and network errors count toward the threshold; other 4xx caller errors do **not**; a provider quota signal (Deepgram **402**, ElevenLabs `character_limit` refusal) **opens the breaker immediately** and surfaces `VOICE_BUDGET_REACHED` ("voice budget reached") instead of `PROVIDER_UNAVAILABLE` — retrying for 5 minutes cannot fix a spent cap.
 - Hard caps: 60 s utterance, 10 min session, 4 KB frames, 500-char transcripts (Day 1 types).
 - Raw audio never persisted; transcripts only, via new Prisma migration (Day 3).
-- **Voice transcript retention (Day 3b):** spoken content is personal data — kept **30 days**, purged on service startup and opportunistically after each save; user delete cascades all of a user's transcripts.
+- **Voice transcript retention (Day 3b + Day 4 follow-up):** spoken content is personal data — kept **30 days**, purged on service startup, opportunistically after each save, and by a daily in-process timer (unref'd, cleared on graceful shutdown); user delete cascades all of a user's transcripts. The global sweep is indexed on `createdAt` (migration `20261113000000_voice_transcripts_created_at_index`).
 - **Day 5 key hygiene:** the Deepgram key lives only in server env and travels in the `Authorization` header — never in URLs, log lines, or OTel span attributes (D8 lesson).
+- **Day 5 design (locked; Deepgram docs checked 2026-11-13):**
+  - Key **only** in the `Authorization` header of the Deepgram WS handshake — never in the URL/query, logs, or spans.
+  - `{"type":"KeepAlive"}` **text** frames every 3–5 s while the silence gate is closed — Deepgram closes with `NET-0001` after 10 s with no data.
+  - `{"type":"Finalize"}` on `voice_end` to flush interim results into a final transcript.
+  - Breaker classification (above): 5xx/timeout/network count, other 4xx don't, 402/quota opens immediately as `VOICE_BUDGET_REACHED`.
+  - All tests against a **fake Deepgram WS server** (local, no real network).
+  - **No real Deepgram call until §4 caps below are confirmed by Darun.** Day 5 ends with mock-only verification.
 - Outage runbook `docs/runbooks/voice-provider-outage.md` (Day 12).
 
 ## 6. Switching to real mode (only after §4 is checked)
