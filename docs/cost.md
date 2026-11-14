@@ -33,14 +33,26 @@ fail-closed, default 2,000 units/day). **Confirmed** additions **per agent turn*
 
 | Unit | Quantity per turn | Basis |
 | --- | --- | --- |
+| Voice turn start | 1 | every `voice_start` (`agent.ws.handler.ts` Day 3b — charged **before** any audio or provider stream) |
 | Agent turn (already exists) | 5 | charged today at `agent.ws.handler.ts` |
 | Spoken summary | 1 | one LLM call, 2–3 sentences (Day 6) |
-| STT | `ceil(utterance_seconds / 30)` | 8 s → 1 unit, 45 s → 2 |
+| STT | `ceil(utterance_seconds / 30)` | 8 s → 1 unit, 45 s → 2 (audio forwarded ÷ 32 000 B/s; remainder carried across utterances in the session) |
 | TTS | `ceil(summary_chars / 500)` | 250 chars → 1 unit (500 → 1, 501 → 2) |
 
-- Typical turn = 5 + 1 + 1 + 1 = **8 units**.
-- Worst legal turn (60 s utterance, 1,000-char summary) = 5 + 1 + 2 + 2 = **10 units**.
+- Typical turn = 1 + 5 + 1 + 1 + 1 = **9 units** (one `voice_start`, 8 s of
+  audio, 250-char summary).
+- Worst legal turn (60 s utterance, 1,000-char summary) = 1 + 5 + 1 + 2 + 2 =
+  **11 units**.
+- Each additional `voice_start` in the same turn (utterance restart) adds
+  **+1** unit before any audio flows; a new session adds nothing extra
+  beyond its `voice_start` (the session-slot limiter is a rate limit, not a
+  budget charge).
 - Day-7 progress lines reuse the TTS unit rate, capped at 2 lines/turn (≤ +2 units).
+- **Turns per day under the 800-unit voice sub-cap:** typical
+  `floor(800 / 9)` = **88 turns/day**; worst legal `floor(800 / 11)` =
+  **72 turns/day**. The next turn is refused fail-closed at whichever charge
+  (voice start, agent turn, STT, TTS) would cross the cap — no partial
+  provider call is ever started.
 
 **Voice sub-cap (confirmed): voice may consume at most 40 % of
 `GLOBAL_DAILY_LLM_CALLS_MAX` per UTC day** — default 2,000 ⇒ **800 voice
