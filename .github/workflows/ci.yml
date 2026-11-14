@@ -82,6 +82,19 @@ jobs:
         run: npx prettier --check "src/**/*.ts"
 
       # ── Step 7: Run Prisma migrations ────────────────────────────────
+      # Guard: a migration containing DROP INDEX is almost always a careless
+      # `prisma migrate dev` reacting to `migrate diff`'s false positive on
+      # the HNSW index (Prisma cannot model it). Dropping
+      # document_chunks_embedding_hnsw_idx degrades vector search to a
+      # sequential scan with no error. Intentional drops need a human.
+      - name: Guard — migrations must not drop indexes
+        run: |
+          if grep -rin "DROP INDEX" prisma/migrations --include="*.sql"; then
+            echo "::error::DROP INDEX found in a migration. This usually means prisma migrate dev tried to drop document_chunks_embedding_hnsw_idx (Prisma cannot model HNSW — see src/__integration__/schema.test.ts). Dropping it silently degrades vector search to sequential scans. Stop, undo the migration, and involve a human."
+            exit 1
+          fi
+          echo "No DROP INDEX statements — OK"
+
       - name: Run database migrations
         run: npx prisma migrate deploy
 

@@ -488,6 +488,22 @@ describe("voice session (Day 3a)", () => {
       expect(voiceErrors()).toHaveLength(0) // drops are silent, not errors
     })
 
+    it("tolerates the Day 4 client pre-roll burst (250 ms flushed at onset)", async () => {
+      await makeAuthenticated()
+      await startVoice()
+
+      // The Day 4 client flushes its 250 ms pre-roll ring the moment speech
+      // is detected: 8000 B (4096 + 3904) arrive instantly at t≈0. The
+      // pacing rule allows a 64 000 B burst, so none of it may be dropped.
+      sendAudio(4096)
+      sendAudio(3904)
+
+      const diag = handler.getVoiceDiagnostics()
+      expect(diag.bytesReceived).toBe(8000)
+      expect(diag.droppedFrames).toBe(0)
+      expect(voiceErrors()).toHaveLength(0)
+    })
+
     it("enforces the 60 s utterance cap by counting bytes", async () => {
       await makeAuthenticated()
       await startVoice()

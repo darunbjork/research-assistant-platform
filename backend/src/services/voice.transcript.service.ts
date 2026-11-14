@@ -135,3 +135,25 @@ export async function purgeExpiredVoiceTranscripts(
     return 0
   }
 }
+
+/** Daily cadence for the in-process retention sweep. */
+export const VOICE_TRANSCRIPT_PURGE_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+/**
+ * Daily in-process retention sweep. Startup + per-save sweeps alone would
+ * strand the transcripts of users who stop using voice until the next
+ * deploy; this timer closes that gap without a cron (ADR 0002: single VPS).
+ * The timer is unref'd — it never keeps the process alive — and the returned
+ * stop function is invoked by the graceful-shutdown sequence.
+ */
+export function startTranscriptPurgeTimer(
+  intervalMs: number = VOICE_TRANSCRIPT_PURGE_INTERVAL_MS
+): () => void {
+  const timer = setInterval(() => {
+    void purgeExpiredVoiceTranscripts()
+  }, intervalMs)
+  timer.unref()
+  return (): void => {
+    clearInterval(timer)
+  }
+}

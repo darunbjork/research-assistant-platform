@@ -83,6 +83,8 @@ model VoiceTranscript {
 
   @@index([userId, createdAt])
   @@index([sessionId])
+  // Global retention sweep (no userId filter) — see purgeExpiredVoiceTranscripts.
+  @@index([createdAt])
   @@map("voice_transcripts")
 }
 

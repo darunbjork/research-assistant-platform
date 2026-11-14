@@ -11,8 +11,11 @@ import {
   computeRms,
   floatToPcm16,
   resampleLinear,
+  pushPreRoll,
   VOICE_FRAME_SAMPLES,
-  VOICE_SILENCE_THRESHOLD
+  VOICE_SILENCE_THRESHOLD,
+  VOICE_PRE_ROLL_SAMPLES,
+  VOICE_HANGOVER_MS
 } from "./useVoiceCapture"
 
 // ── Browser double ────────────────────────────────────────────────────────
@@ -114,6 +117,14 @@ describe("voice capture helpers", () => {
     const input = new Float32Array([0, 1, 0, 1, 0, 1])
     const out = resampleLinear(input, 48000, 16000)
     expect(out.length).toBe(2)
+  })
+
+  it("pushPreRoll keeps only the newest 250 ms of samples", () => {
+    const ring = pushPreRoll(new Float32Array(4000).fill(1), new Float32Array(1000).fill(2))
+    expect(ring.length).toBe(VOICE_PRE_ROLL_SAMPLES)
+    expect(ring[0]).toBe(1) // oldest surviving sample (index 1000 of batch 1)
+    expect(ring[3000]).toBe(2) // newest batch starts here
+    expect(ring[3999]).toBe(2)
   })
 })
 
@@ -267,5 +278,91 @@ describe("useVoiceCapture", () => {
     expect(rendered.result.current.error).toBe("Permission denied")
     expect(rendered.result.current.isCapturing).toBe(false)
     expect(MockAudioContextInstances).toHaveLength(0)
+  })
+
+  // ── Pre-roll + hangover (Day 4 follow-up) ───────────────────────────────
+  it("flushes the quiet pre-roll on onset so the first syllable is not cut", async () => {
+    const { frames } = await startCapture()
+
+    // Two quiet buffers (below threshold) are buffered, never sent.
+    act(() => {
+      fireAudio(new Float32Array(1024).fill(0.005))
+    })
+    act(() => {
+      fireAudio(new Float32Array(1024).fill(0.005))
+    })
+    expect(frames).toHaveLength(0)
+
+    // Onset: ring (2048 samples) + current (512) flush as one stream.
+    act(() => {
+      fireAudio(new Float32Array(512).fill(0.5))
+    })
+
+    const totalSamples = frames.reduce((n, frame) => n + frame.length / 2, 0)
+    expect(totalSamples).toBe(2048 + 512)
+    const first = frames[0]
+    if (first === undefined) throw new Error("expected a frame")
+    const view = new DataView(first.buffer, first.byteOffset, first.byteLength)
+    // The frame opens with the pre-roll's quiet samples (0.005 → 164), i.e.
+    // audio the old gate would have thrown away.
+    expect(view.getInt16(0, true)).toBe(Math.round(0.005 * 0x7fff))
+  })
+
+  it("caps the pre-roll ring at 250 ms of samples", async () => {
+    const { frames } = await startCapture()
+
+    // 6 × 1024 = 6144 quiet samples — only the newest 4000 stay buffered.
+    for (let i = 0; i < 6; i++) {
+      act(() => {
+        fireAudio(new Float32Array(1024).fill(0.004))
+      })
+    }
+    expect(frames).toHaveLength(0)
+
+    act(() => {
+      fireAudio(new Float32Array(512).fill(0.5))
+    })
+
+    const totalSamples = frames.reduce((n, frame) => n + frame.length / 2, 0)
+    expect(totalSamples).toBe(VOICE_PRE_ROLL_SAMPLES + 512)
+  })
+
+  it("hangover: quiet audio keeps flowing for 500 ms, then the gate closes", async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(1_700_000_000_000)
+    try {
+      const { frames, result } = await startCapture()
+      const onsetMs = Date.now()
+
+      act(() => {
+        fireAudio(new Float32Array(512).fill(0.5)) // speech onset
+      })
+      expect(result.current.isSpeaking).toBe(true)
+      const afterOnset = frames.length
+      expect(afterOnset).toBeGreaterThan(0)
+
+      // 100 ms later: still inside the hangover — the quiet tail is sent.
+      vi.setSystemTime(onsetMs + 100)
+      act(() => {
+        fireAudio(new Float32Array(512))
+      })
+      expect(frames.length).toBeGreaterThan(afterOnset)
+      expect(result.current.isSpeaking).toBe(false)
+
+      // Past the hangover: quiet buffers close the gate and are only ringed.
+      vi.setSystemTime(onsetMs + VOICE_HANGOVER_MS + 100)
+      act(() => {
+        fireAudio(new Float32Array(512))
+      })
+      const afterClose = frames.length
+      vi.setSystemTime(onsetMs + VOICE_HANGOVER_MS + 200)
+      act(() => {
+        fireAudio(new Float32Array(512))
+      })
+      expect(frames.length).toBe(afterClose) // nothing more is sent
+      expect(result.current.isSpeaking).toBe(false)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 })

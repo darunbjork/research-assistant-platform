@@ -36,6 +36,8 @@ export interface ShutdownDeps {
   disconnectDatabase: () => Promise<void>
   quitRedis: () => Promise<void>
   shutdownTracing: () => Promise<void>
+  /** Clears in-process timers (e.g. the daily transcript purge). */
+  stopPeriodicTasks?: () => Promise<void>
   /** Injectable for tests; defaults to process.exit. */
   exit?: (code: number) => void
   /** Injectable for tests; defaults to SHUTDOWN_FALLBACK_MS. */
@@ -87,6 +89,12 @@ export function createShutdown(deps: ShutdownDeps): ShutdownRunner {
 
     // 4. Bull waits for active ingestion jobs to finish.
     await attempt("closeQueue", deps.closeQueue)
+
+    // 4b. Stop in-process timers (daily transcript purge) — nothing else
+    // uses them past this point.
+    if (deps.stopPeriodicTasks !== undefined) {
+      await attempt("stopPeriodicTasks", deps.stopPeriodicTasks)
+    }
 
     // 5. Disconnect dependencies.
     await attempt("disconnectDatabase", deps.disconnectDatabase)

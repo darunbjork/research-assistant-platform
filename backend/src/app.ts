@@ -13,7 +13,10 @@ import { prisma } from "./utils/prisma"
 import { ok, fail } from "./types"
 import { logStartup, logError } from "./utils/logger"
 import { requestLoggerMiddleware } from "./middleware/request-logger.middleware"
-import { purgeExpiredVoiceTranscripts } from "./services/voice.transcript.service"
+import {
+  purgeExpiredVoiceTranscripts,
+  startTranscriptPurgeTimer,
+} from "./services/voice.transcript.service"
 import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
 import authRouter from "./routes/auth.routes"
@@ -131,12 +134,18 @@ const httpServer = createServer(app)
 createWebSocketServer(httpServer) // attach WebSocket to same HTTP server
 
 // ── Graceful shutdown (task 5.5 / D13) ────────────────────────────────────
+// Day 4 follow-up: daily voice-transcript retention sweep (unref'd — never
+// holds the process open; cleared by the shutdown sequence below).
+const stopTranscriptPurge = startTranscriptPurgeTimer()
 const shutdown = createShutdown({
   httpServer,
   abortRunningAgents,
   closeAllWsClients,
   closeQueue: async (): Promise<void> => {
     await getIngestionQueue().close()
+  },
+  stopPeriodicTasks: async (): Promise<void> => {
+    stopTranscriptPurge()
   },
   disconnectDatabase: async (): Promise<void> => {
     await prisma.$disconnect()
