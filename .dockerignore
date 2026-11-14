@@ -1,0 +1,27 @@
+# The root context is used by deploy/web.Dockerfile.
+# Send only the frontend and the deployment files this image needs.
+**
+!frontend/
+!frontend/**
+!deploy/
+!deploy/Caddyfile
+!deploy/web.Dockerfile
+
+# Exclude local dependencies, generated output, and secrets even within frontend/.
+**/node_modules
+**/dist
+**/dist-ssr
+**/coverage
+**/logs
+**/*.log
+**/*.tsbuildinfo
+**/.vite
+**/.env
+**/.env.*
+**/.git
+**/.aws
+**/.ssh
+**/.npmrc
+**/.DS_Store
+**/.idea
+**/.vscode

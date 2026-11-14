@@ -30,6 +30,11 @@ type ToolConfig = {
   borderClass: string
 }
 
+const INTERNAL_CONFIG: ToolConfig = {
+  icon: "💭", label: "Progress", bgClass: "bg-slate-50",
+  textClass: "text-slate-700", borderClass: "border-slate-200"
+}
+
 const TOOL_CONFIG: Record<string, ToolConfig> = {
   rag_search: {
     icon:        "🔍",
@@ -65,11 +70,11 @@ function getToolConfig(toolUsed?: string, description?: string): ToolConfig {
   if (!toolUsed) {
     // Quality check steps have no toolUsed but contain "Quality check" in description
     if (description?.includes("Quality check")) {
-      return TOOL_CONFIG["quality_check"] ?? TOOL_CONFIG["internal"]!
+      return TOOL_CONFIG["quality_check"] ?? INTERNAL_CONFIG
     }
-    return TOOL_CONFIG["internal"]!
+    return INTERNAL_CONFIG
   }
-  return TOOL_CONFIG[toolUsed] ?? TOOL_CONFIG["internal"]!
+  return TOOL_CONFIG[toolUsed] ?? INTERNAL_CONFIG
 }
 
 function formatDuration(ms: number): string {
@@ -133,19 +138,19 @@ export default function AgentSteps({ steps, iterationCount, totalDurationMs }: P
       {/* ── Expanded steps list ── */}
       {isExpanded && (
         <div className="divide-y divide-slate-100">
-          {steps.map((step) => {
+          {steps.map((step, index) => {
             const config = getToolConfig(step.toolUsed, step.description)
 
             return (
               <div
-                key={step.stepNumber}
+                key={index}
                 className={`px-3 py-2.5 ${config.bgClass}`}
               >
                 <div className="flex items-start gap-2">
                   {/* Step number + tool icon */}
                   <div className="flex items-center gap-1.5 flex-shrink-0 mt-0.5">
                     <span className="w-4 font-mono text-xs text-right text-slate-400">
-                      {step.stepNumber}.
+                      {index + 1}.
                     </span>
                     <span className="text-sm">{config.icon}</span>
                   </div>
@@ -179,7 +184,7 @@ export default function AgentSteps({ steps, iterationCount, totalDurationMs }: P
               Agent finished in {iterationCount} iteration{iterationCount !== 1 ? "s" : ""}
             </span>
             <span className="text-xs font-medium text-slate-500">
-              ✅ Answer grounded in retrieved evidence
+              Review the sources to verify the answer
             </span>
           </div>
         </div>

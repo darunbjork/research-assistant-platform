@@ -170,7 +170,7 @@ function makeEvaluationResponse(score: number = 0.8): Response {
                 answerRelevance: score,
                 shouldRetry: score < 0.7,
                 retryReason: score < 0.7 ? "Low quality" : "",
-                suggestedQuery: score < 0.7 ? "better search query" : undefined,
+                suggestedQuery: undefined,
               }),
             },
           ],
@@ -199,7 +199,9 @@ describe("AgentService", () => {
     mockHybridSearch = makeMockHybridSearch()
     mockGeneration = makeMockGenerationService()
     service = new AgentService("fake-api-key", mockHybridSearch, mockGeneration)
-    fetchSpy = jest.spyOn(global, "fetch")
+    fetchSpy = jest
+      .spyOn(global, "fetch")
+      .mockRejectedValue(new Error("Unexpected Gemini request in test"))
   })
 
   afterEach(() => {
@@ -302,21 +304,17 @@ describe("AgentService", () => {
       // This test simulates 5 iterations of reasoning -> draft answer, followed by a final synthesis.
       // Total calls: 5 * (reasoning + draft) + final synthesis = 11 calls.
       const MAX_ITERATIONS = 5
-      let callCount = 0
       // Mocking fetch calls directly for this specific test
-      fetchSpy.mockImplementation(() => {
-        // Removed unused url, options
-        callCount++
-        // Reasoning calls (odd numbers up to 2*MAX_ITERATIONS - 1)
-        if (callCount % 2 === 1 && callCount <= 2 * MAX_ITERATIONS - 1) {
+      fetchSpy.mockImplementation((_url: unknown, options: RequestInit) => {
+        const request = JSON.parse(String(options.body)) as {
+          contents: Array<{ parts: Array<{ text: string }> }>
+        }
+        const prompt = request.contents[0]!.parts[0]!.text
+        if (prompt.includes("deciding the next action"))
           return Promise.resolve(makeRagSearchDecisionResponse())
-        }
-        // Draft answer calls (even numbers up to 2*MAX_ITERATIONS)
-        if (callCount % 2 === 0 && callCount <= 2 * MAX_ITERATIONS) {
-          return Promise.resolve(makeSynthesisResponse("Low quality draft"))
-        }
-        // Final synthesis call (after loop finishes)
-        return Promise.resolve(makeSynthesisResponse("Best effort answer."))
+        if (prompt.includes("quality evaluator"))
+          return Promise.resolve(makeEvaluationResponse(0.2))
+        return Promise.resolve(makeSynthesisResponse("Low quality draft"))
       })
 
       const result = await service.run("Keep searching forever", "user-123")
@@ -327,20 +325,16 @@ describe("AgentService", () => {
 
     it("still returns a result when max iterations reached", async () => {
       // This test simulates a sequence of reasoning -> draft -> reasoning -> draft ... -> final synthesis.
-      let callCount = 0
-      fetchSpy.mockImplementation(() => {
-        // Removed unused url, options
-        callCount++
-        // Reasoning calls (odd calls: 1, 3, 5, 7, 9)
-        if (callCount % 2 === 1 && callCount < 11) {
+      fetchSpy.mockImplementation((_url: unknown, options: RequestInit) => {
+        const request = JSON.parse(String(options.body)) as {
+          contents: Array<{ parts: Array<{ text: string }> }>
+        }
+        const prompt = request.contents[0]!.parts[0]!.text
+        if (prompt.includes("deciding the next action"))
           return Promise.resolve(makeRagSearchDecisionResponse())
-        }
-        // Draft answer calls (even calls: 2, 4, 6, 8, 10)
-        if (callCount % 2 === 0 && callCount < 12) {
-          return Promise.resolve(makeSynthesisResponse("Low quality draft"))
-        }
-        // Last call (11) is the final synthesis
-        return Promise.resolve(makeSynthesisResponse("Best effort answer."))
+        if (prompt.includes("quality evaluator"))
+          return Promise.resolve(makeEvaluationResponse(0.2))
+        return Promise.resolve(makeSynthesisResponse("Low quality draft"))
       })
 
       const result = await service.run("Keep searching", "user-123")
@@ -374,8 +368,6 @@ describe("AgentService", () => {
       // Iteration 2: DONE reasoning -> final synthesis
       fetchSpy
         .mockResolvedValueOnce(unknownToolResponse) // unknown tool reasoning (Iteration 1)
-        .mockResolvedValueOnce(makeSynthesisResponse("Draft: Attempted nonexistent tool.")) // draft answer (Iteration 1)
-        .mockResolvedValueOnce(makeEvaluationResponse(0.6)) // LLM evaluation (Iter 1, low score)
         .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: DONE (Iter 2)
         .mockResolvedValueOnce(makeSynthesisResponse("Handled gracefully.")) // final synthesis
 
@@ -387,7 +379,7 @@ describe("AgentService", () => {
 
   // ── run() — malformed JSON from LLM ────────────────────────────────────
   describe("run() — malformed LLM response", () => {
-    it("falls back to DONE when LLM returns non-JSON", async () => {
+    it("rejects malformed decisions without reporting success", async () => {
       const malformedResponse = new Response(
         JSON.stringify({
           candidates: [
@@ -410,11 +402,8 @@ describe("AgentService", () => {
         .mockResolvedValueOnce(malformedResponse)
         .mockResolvedValueOnce(makeSynthesisResponse("Fallback answer."))
 
-      const result = await service.run("test query", "user-123")
-
-      expect(result).toBeDefined()
-      expect(result.status).toBe("done")
-      expect(result.iterationCount).toBe(1) // Loop exits immediately after DONE
+      await expect(service.run("test query", "user-123")).rejects.toThrow("invalid tool decision")
+      expect(mockGeneration.generateWithFallback).not.toHaveBeenCalled()
     })
 
     // ── run() — result shape ───────────────────────────────────────────────
@@ -486,7 +475,6 @@ describe("AgentService", () => {
         fetchSpy
           .mockResolvedValueOnce(makeRagSearchDecisionResponse()) // reasoning: search
           .mockResolvedValueOnce(makeSynthesisResponse("Draft 1 from search.")) // draft answer 1
-          .mockResolvedValueOnce(makeSynthesisResponse("Draft 2 after quality check.")) // draft answer 2
           .mockResolvedValueOnce(makeEvaluationResponse(0.85)) // LLM evaluation
           .mockResolvedValueOnce(makeDoneDecisionResponse()) // reasoning: done
           .mockResolvedValueOnce(makeSynthesisResponse("Final answer.")) // synthesis
@@ -502,7 +490,6 @@ describe("AgentService", () => {
         fetchSpy
           .mockResolvedValueOnce(makeRagSearchDecisionResponse())
           .mockResolvedValueOnce(makeSynthesisResponse("Short draft 1."))
-          .mockResolvedValueOnce(makeSynthesisResponse("Short draft 2."))
           .mockResolvedValueOnce(makeEvaluationResponse(0.85)) // LLM evaluation
           .mockResolvedValueOnce(makeDoneDecisionResponse())
           .mockResolvedValueOnce(makeSynthesisResponse("Final."))
@@ -529,13 +516,6 @@ describe("AgentService", () => {
               "According to the document [Result 1], machine learning is a subset of AI."
             )
           )
-          .mockResolvedValueOnce(
-            makeSynthesisResponse(
-              // draft answer 2
-              "The text states that it enables learning from data [Result 1]. " +
-                "This is a comprehensive answer covering the full query."
-            )
-          )
           .mockResolvedValueOnce(makeEvaluationResponse(0.85)) // LLM evaluation
           .mockResolvedValueOnce(makeDoneDecisionResponse())
           .mockResolvedValueOnce(makeSynthesisResponse("Final answer."))
@@ -551,20 +531,16 @@ describe("AgentService", () => {
         // This test simulates 5 iterations of reasoning -> draft answer, followed by a final synthesis.
         // Total calls: 5 * (reasoning + draft) + final synthesis = 11 calls.
         const MAX_ITERATIONS = 5
-        let callCount = 0
-        fetchSpy.mockImplementation(() => {
-          // Removed unused url, options
-          callCount++
-          // Reasoning calls (odd numbers up to 2*MAX_ITERATIONS - 1)
-          if (callCount % 2 === 1 && callCount <= 2 * MAX_ITERATIONS - 1) {
+        fetchSpy.mockImplementation((_url: unknown, options: RequestInit) => {
+          const request = JSON.parse(String(options.body)) as {
+            contents: Array<{ parts: Array<{ text: string }> }>
+          }
+          const prompt = request.contents[0]!.parts[0]!.text
+          if (prompt.includes("deciding the next action"))
             return Promise.resolve(makeRagSearchDecisionResponse())
-          }
-          // Draft answer calls (even numbers up to 2*MAX_ITERATIONS)
-          if (callCount % 2 === 0 && callCount <= 2 * MAX_ITERATIONS) {
-            return Promise.resolve(makeSynthesisResponse("Low quality draft"))
-          }
-          // Final synthesis call (after loop finishes)
-          return Promise.resolve(makeSynthesisResponse("Best effort answer."))
+          if (prompt.includes("quality evaluator"))
+            return Promise.resolve(makeEvaluationResponse(0.2))
+          return Promise.resolve(makeSynthesisResponse("Low quality draft"))
         })
 
         const result = await service.run("An impossible query", "user-123")

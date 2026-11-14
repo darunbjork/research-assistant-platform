@@ -1,0 +1,2 @@
+# Preserve binary fixtures without text diffs or line-ending conversion.
+*.pdf binary

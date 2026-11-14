@@ -17,14 +17,14 @@ export class DocumentController {
   /** Shared queue path for POST /ingest (JSON) and POST /upload (multipart). */
   private async enqueueDocument(
     userId: string,
-    doc: { name: string; content: string; mimeType: string }
+    doc: { name: string; content: string; mimeType: string; sizeBytes?: number }
   ): Promise<{ jobId: string; name: string }> {
     const queue = getIngestionQueue()
     const job = await queue.add({
       name: doc.name,
       content: doc.content,
       mimeType: doc.mimeType,
-      sizeBytes: Buffer.byteLength(doc.content, "utf8"),
+      sizeBytes: doc.sizeBytes ?? Buffer.byteLength(doc.content, "utf8"),
       userId,
       requestId: `req-${Date.now()}`,
     })
@@ -104,6 +104,7 @@ export class DocumentController {
         name,
         content: text,
         mimeType: file.mimetype || "application/octet-stream",
+        sizeBytes: file.size,
       })
 
       res.status(202).json(

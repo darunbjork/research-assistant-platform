@@ -184,6 +184,7 @@ describe("POST /api/v1/documents/upload (multipart)", () => {
     expect(payload).toMatchObject({
       name: "report.pdf",
       mimeType: "application/pdf",
+      sizeBytes: pdf.length,
       userId: "user-upload",
     })
     expect(String(payload.content)).toContain("Quarterly research summary")
@@ -199,6 +200,7 @@ describe("POST /api/v1/documents/upload (multipart)", () => {
     const payload = (queueCalls[0]?.[0] ?? {}) as Record<string, unknown>
     expect(payload.content).toBe("plain research notes")
     expect(payload.name).toBe("notes.txt")
+    expect(payload.sizeBytes).toBe(Buffer.byteLength("plain research notes", "utf8"))
   })
 
   it("rejects a fake PDF with the wrong magic bytes (400)", async () => {

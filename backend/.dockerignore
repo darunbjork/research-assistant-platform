@@ -4,3 +4,15 @@ coverage
 .env*
 load-tests/reports
 *.md
+
+# Local state and runtime output are not build inputs.
+.git
+.aws
+.ssh
+.npmrc
+logs
+*.log
+*.tsbuildinfo
+.DS_Store
+.idea
+.vscode

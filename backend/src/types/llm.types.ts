@@ -63,6 +63,7 @@ export interface GeminiRequest {
 }
 
 export interface GenerationConfig {
+  responseMimeType?: "application/json" | "text/plain"
   temperature: number // 0 = deterministic, 1 = creative
   topP: number // nucleus sampling threshold
   maxOutputTokens: number // cap on response length

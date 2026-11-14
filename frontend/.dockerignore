@@ -8,3 +8,14 @@ dist
 .env.local
 coverage
 .DS_Store
+.env.*
+dist-ssr
+logs
+*.log
+*.tsbuildinfo
+.vite
+.aws
+.ssh
+.npmrc
+.idea
+.vscode

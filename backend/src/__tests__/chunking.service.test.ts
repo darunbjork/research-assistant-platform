@@ -180,12 +180,10 @@ describe("ChunkingService.chunkRecursive()", () => {
     })
   })
 
-  it("respects paragraph boundaries when paragraphs fit in maxChunkSize", () => {
-    // PARA_TEXT has 3 paragraphs separated by \n\n
-    // Each paragraph is small enough to be its own chunk
+  it("keeps short multi-paragraph documents together", () => {
     const chunks = service.chunkRecursive(PARA_TEXT, { maxChunkSize: 200, overlap: 0 })
-    // We should get at least 2 chunks (paragraph-aware splitting)
-    expect(chunks.length).toBeGreaterThanOrEqual(2)
+    expect(chunks).toHaveLength(1)
+    expect(chunks[0]?.content).toBe(PARA_TEXT.trim())
   })
 
   it("no chunk is empty", () => {
@@ -202,14 +200,17 @@ describe("ChunkingService.chunkRecursive()", () => {
     })
   })
 
-  it("respects paragraph boundaries when paragraphs fit in maxChunkSize", () => {
-    const chunks = service.chunkRecursive(PARA_TEXT, { maxChunkSize: 200, overlap: 0 })
-    // Three paragraphs → at least 3 chunks (each paragraph becomes its own chunk)
-    expect(chunks.length).toBeGreaterThanOrEqual(3)
-    // Each chunk should contain only one paragraph (no mixing of paragraphs)
-    chunks.forEach(chunk => {
-      expect(chunk.content).not.toContain("\n\n")
+  it("packs paragraphs within the limit without losing content", () => {
+    const paragraphs = Array.from({ length: 12 }, (_, i) =>
+      `Paragraph ${i}: ${"sample ".repeat(8)}`.trim()
+    )
+    const chunks = service.chunkRecursive(paragraphs.join("\n\n"), {
+      maxChunkSize: 200,
+      overlap: 0,
     })
+    expect(chunks.length).toBeLessThan(paragraphs.length)
+    expect(chunks.every(chunk => chunk.content.length <= 200)).toBe(true)
+    expect(chunks.map(chunk => chunk.content).join("\n\n")).toBe(paragraphs.join("\n\n"))
   })
 })
 

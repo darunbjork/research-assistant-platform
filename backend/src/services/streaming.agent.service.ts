@@ -1,3 +1,4 @@
+import { geminiText } from "../utils/gemini-response"
 // backend/src/services/streaming.agent.service.ts
 // The streaming version of AgentService.
 // Instead of returning a Promise<AgentResult>, it emits events
@@ -41,7 +42,8 @@ import { EvaluatorNode } from "../agents/nodes/evaluate.node"
 import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 import { logRagEvent, logError } from "../utils/logger"
 import { agentIterations } from "../utils/metrics"
-import { withTimeout, GEMINI_TIMEOUT_MS } from "../utils/abort"
+import { requestGemini } from "../utils/gemini-request"
+import { RateLimitError } from "../middleware/error.middleware"
 import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 
@@ -144,20 +146,16 @@ export class StreamingAgentService {
             sessionId,
           })
 
-          this.emit(onEvent, {
-            type: "error",
-            sessionId,
-            message: error instanceof Error ? error.message : "Reasoning failed",
-            code: "REASONING_ERROR",
-          })
-          break
+          throw error
         }
 
         // ── CHECK: DONE ───────────────────────────────────────────────
         if (decision.toolName === "DONE") {
           const doneStep: AgentStep = {
             stepNumber: state.iterationCount,
-            description: "Determined sufficient information gathered",
+            description: lastEval?.shouldRetry
+              ? "Search completed; evidence may be incomplete"
+              : "Determined sufficient information gathered",
             durationMs: 0,
             timestamp: new Date(),
           }
@@ -264,6 +262,8 @@ export class StreamingAgentService {
             },
             signal
           )
+
+          tokenUsage.total += lastEval.tokensUsed ?? 0
 
           state.qualityScore = lastEval.overallScore
 
@@ -448,7 +448,7 @@ export class StreamingAgentService {
               (tc, i) =>
                 `Step ${i + 1} — ${tc.toolName}\n` +
                 `Input: ${JSON.stringify(tc.input)}\n` +
-                `Output: ${tc.output.slice(0, 250)}`
+                `Output: ${tc.output}`
             )
             .join("\n\n")
 
@@ -483,13 +483,25 @@ Respond ONLY with valid JSON:
 
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, topP: 1.0, maxOutputTokens: 256 },
+      generationConfig: { temperature: 0.1, topP: 1.0, maxOutputTokens: 4096 },
     }
 
-    const response = await this.callGemini(requestBody, signal)
-    tokenUsage.total += response.usageMetadata.totalTokenCount
+    requestBody.generationConfig!.responseMimeType = "application/json"
 
-    return this.parseToolDecision(response.candidates[0]?.content.parts[0]?.text ?? "")
+    const response = await this.callGemini(requestBody, signal)
+    tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
+
+    const decision = this.parseToolDecision(geminiText(response))
+    const retryQuery = lastEval?.suggestedQuery?.trim()
+    if (
+      decision.toolName === "DONE" &&
+      lastEval?.shouldRetry &&
+      retryQuery &&
+      !state.toolCallHistory.some(tc => tc.input["query"] === retryQuery)
+    ) {
+      return { toolName: "rag_search", input: { query: retryQuery }, reason: lastEval.retryReason }
+    }
+    return decision
   }
 
   private async draftAnswer(
@@ -501,7 +513,7 @@ Respond ONLY with valid JSON:
 
     const evidence = state.toolCallHistory
       .filter(tc => tc.success)
-      .map((tc, i) => `[Evidence ${i + 1}] (${tc.toolName}): ${tc.output.slice(0, 400)}`)
+      .map((tc, i) => `[Evidence ${i + 1}] (${tc.toolName}): ${tc.output}`)
       .join("\n\n")
 
     const prompt = `Draft a concise answer using ONLY the evidence below.
@@ -513,16 +525,16 @@ Draft (2-4 sentences):`
 
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, topP: 1.0, maxOutputTokens: 256 },
+      generationConfig: { temperature: 0.1, topP: 1.0, maxOutputTokens: 4096 },
     }
 
     try {
       const response = await this.callGemini(requestBody, signal)
-      tokenUsage.total += response.usageMetadata.totalTokenCount
-      return response.candidates[0]?.content.parts[0]?.text ?? ""
+      tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
+      return geminiText(response)
     } catch (error: unknown) {
       // Aborts must stop the run — do not swallow them into an empty draft.
-      if (signal?.aborted) throw error
+      if (signal?.aborted || error instanceof RateLimitError) throw error
       return ""
     }
   }
@@ -558,14 +570,14 @@ RULES:
 
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, topP: 0.8, maxOutputTokens: 1024 },
+      generationConfig: { temperature: 0.1, topP: 0.8, maxOutputTokens: 4096 },
     }
 
     const response = await this.callGemini(requestBody, signal)
-    tokenUsage.total += response.usageMetadata.totalTokenCount
+    tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
     return {
-      answer: response.candidates[0]?.content.parts[0]?.text ?? "",
+      answer: geminiText(response),
       citations: this.extractCitationsFromHistory(state.toolCallHistory),
     }
   }
@@ -591,7 +603,7 @@ RULES:
         reason: typeof parsed.reason === "string" ? parsed.reason : "",
       }
     } catch {
-      return { toolName: "DONE", input: {}, reason: "Parse error" }
+      throw new Error("Gemini returned an invalid tool decision. Please try again.")
     }
   }
 
@@ -639,15 +651,6 @@ RULES:
     signal?: AbortSignal
   ): Promise<GeminiResponse> {
     const url = `${GEMINI_BASE_URL}/models/${GEMINI_MODEL}:generateContent`
-    const response = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "x-goog-api-key": this.apiKey },
-      body: JSON.stringify(requestBody),
-      signal: withTimeout(signal, GEMINI_TIMEOUT_MS),
-    })
-    if (!response.ok) {
-      throw new Error(`Gemini API error: ${response.status} ${response.statusText}`)
-    }
-    return response.json() as Promise<GeminiResponse>
+    return requestGemini(url, this.apiKey, requestBody, signal)
   }
 }

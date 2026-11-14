@@ -5,3 +5,33 @@
 # Local rehearsal override (alternate host ports; production uses ports 80/443)
 docker-compose.prod.rehearsal.yml
 
+# Dependencies at the root and in each application package
+node_modules/
+
+# Generated builds, test coverage, and runtime output
+dist/
+dist-ssr/
+coverage/
+logs/
+*.log
+*.tsbuildinfo
+.vite/
+
+# Local environment files; keep shareable templates available
+.env
+.env.*
+!.env.example
+!.env.production.example
+
+# Local root-level Prisma experiment (the apps use backend/ and frontend/)
+/package.json
+/package-lock.json
+
+# Local AI handoff; keep it out of commits and Docker build contexts.
+/docs/CLAUDE_PROJECT_HANDOFF.md
+
+# Local editor and OS state
+.idea/
+*.swp
+*.swo
+Thumbs.db

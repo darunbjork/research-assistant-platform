@@ -329,8 +329,8 @@ describe("GenerationService", () => {
       fetchSpy.mockResolvedValueOnce(makeMockGeminiGenerationResponse("answer"))
       const result = await service.generate("What is ML?", tenChunks)
 
-      // Citations are built from the FULL context, not just the limited context
-      expect(result.citations).toHaveLength(10)
+      // Citations must only include evidence actually sent to the model
+      expect(result.citations).toHaveLength(5)
 
       // The prompt only carries the first 5 sources
       const callBody = JSON.parse(
@@ -544,10 +544,9 @@ describe("GenerationService", () => {
         )
       )
 
-      // Service now returns a fallback answer instead of throwing
-      const result = await service.generate("What is ML?", [makeFakeChunkResult()])
-      expect(result.answer).toBe("(No response from Gemini)")
-      expect(result.tokensUsed).toBe(0)
+      await expect(service.generate("What is ML?", [makeFakeChunkResult()])).rejects.toThrow(
+        "no answer"
+      )
     })
   })
 
