@@ -11,8 +11,14 @@
 //      .env files (this script does not import dotenv or env.ts).
 //   2. Opens one real Deepgram streaming connection with the production
 //      client (DeepgramStream + buildListenUrl — raw PCM16 @ 16 kHz, the
-//      same bytes the AudioWorklet uploads) and sends the PCM payload of a
-//      10 s 16 kHz mono WAV (440 Hz tone) in 4096-byte frames.
+//      same bytes the AudioWorklet uploads) in 4096-byte frames:
+//        - default: the built-in payload — 10.000 s of a 440 Hz sine tone
+//          (16 kHz mono PCM16, 0.4 full scale). No speech, so an empty
+//          transcript is printed as-is and NOT an error.
+//        - with a path argument: a real 16 kHz mono PCM16 WAV file
+//          (RIFF/WAVE, format tag 1 — anything else fails fast). The file's
+//          `data` chunk is streamed raw and a NON-EMPTY transcript is
+//          asserted in this mode.
 //   3. Prints: final transcript, bytes sent, seconds charged (ceil(s/30)
 //      unit formula + the seconds behind it), and the expected nova-3 cost.
 //   4. Runs a bad-key case: a deliberately invalid key must be rejected at
@@ -24,10 +30,12 @@
 //
 // Usage (from backend/):
 //   DEEPGRAM_REAL_CHECK_OK=1 npx ts-node ../scripts/voice-real-check.ts
+//   DEEPGRAM_REAL_CHECK_OK=1 npx ts-node ../scripts/voice-real-check.ts /path/to/10s-speech.wav
 //
-// Expected cost of the good-key case: 10 s of nova-3 = $0.0077/min ×
+// Expected cost of the good-key case (10 s): nova-3 $0.0077/min ×
 // 10/60 ≈ $0.001283 (one STT unit under the 30-second charge formula).
 
+import fs from "fs"
 import {
   DeepgramStream,
   DeepgramHandshakeError,
@@ -89,13 +97,14 @@ function guarded(what: string): (error: unknown) => void {
 process.on("uncaughtException", guarded("uncaughtException"))
 process.on("unhandledRejection", guarded("unhandledRejection"))
 
-// ── 10 s WAV payload ───────────────────────────────────────────────────────
+// ── Audio payloads ─────────────────────────────────────────────────────────
 
 /**
- * The PCM samples of a 10 s 16 kHz mono 16-bit WAV (440 Hz sine) — exactly
- * what the browser's AudioWorklet would upload for a 10 s recording, and
- * what Deepgram's linear16 streaming endpoint expects (no WAV header on the
- * wire; the listen URL pins encoding=linear16, sample_rate=16000, channels=1).
+ * Default payload: the PCM samples of a 10 s 16 kHz mono 16-bit WAV holding
+ * a 440 Hz sine (0.4 full scale) — the wire format Deepgram's linear16
+ * endpoint expects (no WAV header sent; the listen URL pins
+ * encoding=linear16, sample_rate=16000, channels=1). It is a TONE, not
+ * speech: an empty transcript is expected in this mode.
  */
 function makeWavPcm(seconds: number): Buffer {
   const samples = VOICE_SAMPLE_RATE * seconds
@@ -105,6 +114,63 @@ function makeWavPcm(seconds: number): Buffer {
     buffer.writeInt16LE(sample, i * 2)
   }
   return buffer
+}
+
+/**
+ * Optional payload: parse a real WAV file and return its `data` chunk.
+ * The file must be exactly the production audio contract — RIFF/WAVE,
+ * format tag 1 (PCM), 16 000 Hz, 1 channel, 16 bits/sample — otherwise the
+ * check fails fast before any network use.
+ */
+function parseWavFile(path: string): Buffer {
+  if (!fs.existsSync(path)) {
+    fail(`WAV file not found: ${path}`)
+  }
+  const file = fs.readFileSync(path)
+  if (
+    file.length < 12 ||
+    file.toString("ascii", 0, 4) !== "RIFF" ||
+    file.toString("ascii", 8, 12) !== "WAVE"
+  ) {
+    fail(`not a RIFF/WAVE file: ${path}`)
+  }
+
+  let format: number | null = null
+  let channels: number | null = null
+  let sampleRate: number | null = null
+  let bitsPerSample: number | null = null
+  let data: Buffer | null = null
+
+  let offset = 12
+  while (offset + 8 <= file.length) {
+    const chunkId = file.toString("ascii", offset, offset + 4)
+    const chunkSize = file.readUInt32LE(offset + 4)
+    const body = offset + 8
+    if (body + chunkSize > file.length) {
+      fail(`truncated "${chunkId}" chunk in ${path}`)
+    }
+    if (chunkId === "fmt ") {
+      if (chunkSize < 16) fail(`malformed "fmt " chunk in ${path}`)
+      format = file.readUInt16LE(body)
+      channels = file.readUInt16LE(body + 2)
+      sampleRate = file.readUInt32LE(body + 4)
+      bitsPerSample = file.readUInt16LE(body + 14)
+    } else if (chunkId === "data") {
+      data = file.subarray(body, body + chunkSize)
+    }
+    offset = body + chunkSize + (chunkSize % 2) // chunks are word-aligned
+  }
+
+  if (format === null) fail(`no "fmt " chunk in ${path}`)
+  if (format !== 1) fail(`WAV format tag ${format} — need 1 (uncompressed PCM)`)
+  if (sampleRate !== VOICE_SAMPLE_RATE) {
+    fail(`WAV sample rate ${sampleRate} Hz — need ${VOICE_SAMPLE_RATE} Hz`)
+  }
+  if (channels !== 1) fail(`WAV channel count ${channels} — need 1 (mono)`)
+  if (bitsPerSample !== 16) fail(`WAV bit depth ${bitsPerSample} — need 16 (PCM16)`)
+  if (data === null || data.length === 0) fail(`no "data" chunk in ${path}`)
+  if (data.length % 2 !== 0) fail(`odd "data" size in ${path} — not whole PCM16 samples`)
+  return data
 }
 
 function sleep(ms: number): Promise<void> {
@@ -131,13 +197,29 @@ async function run(): Promise<void> {
   const baseUrl = process.env.DEEPGRAM_WS_URL ?? "wss://api.deepgram.com/v1/listen"
   const url = buildListenUrl(baseUrl, model)
 
-  say("── Real Deepgram check — 10 s WAV (good key) ──")
+  // Audio source: a WAV path argument → that file (speech expected);
+  // no argument → the built-in 440 Hz tone (no speech expected).
+  const wavPath = process.argv[2]
+  const wavMode = wavPath !== undefined && wavPath.length > 0
+  const pcm = wavMode && wavPath !== undefined ? parseWavFile(wavPath) : makeWavPcm(WAV_SECONDS)
+  const secondsOfAudio = pcm.length / PCM_BYTES_PER_SECOND
+
+  say("── Real Deepgram check (good key) ──")
   say(`model           : ${model}`)
   say(`endpoint        : ${url}`)
   say("key source      : process.env.DEEPGRAM_API_KEY (shell only; never printed)")
+  if (wavMode && wavPath !== undefined) {
+    say(
+      `audio source    : WAV file ${wavPath} (${pcm.length} B = ${secondsOfAudio.toFixed(3)} s PCM)`
+    )
+  } else {
+    say(
+      `audio source    : built-in tone — 440 Hz sine, ${WAV_SECONDS.toFixed(3)} s, ` +
+        "16 kHz mono PCM16, 0.4 full scale (NOT speech; empty transcript expected)"
+    )
+  }
 
-  // ── Good key: connect, stream 10 s, finalize ──
-  const pcm = makeWavPcm(WAV_SECONDS)
+  // ── Good key: connect, stream the payload, finalize ──
   let interimFinal: string | null = null
 
   const stream = new DeepgramStream({
@@ -171,9 +253,9 @@ async function run(): Promise<void> {
     bytesSent += chunk.length
     await sleep(FRAME_GAP_MS)
   }
-  if (bytesSent !== WAV_SECONDS * PCM_BYTES_PER_SECOND) {
+  if (bytesSent !== pcm.length) {
     stream.close()
-    fail(`internal: sent ${bytesSent} bytes, expected ${WAV_SECONDS * PCM_BYTES_PER_SECOND}.`)
+    fail(`internal: sent ${bytesSent} bytes, expected ${pcm.length}.`)
   }
 
   const flushed = await stream.finalize()
@@ -184,6 +266,9 @@ async function run(): Promise<void> {
     fail(
       "no final transcript after Finalize (timeout) — Deepgram accepted audio but never answered."
     )
+  }
+  if (wavMode && (transcript ?? "").trim().length === 0) {
+    fail("WAV mode requires a non-empty transcript — check that the file contains speech.")
   }
 
   // ── Report (the four required lines) ──
