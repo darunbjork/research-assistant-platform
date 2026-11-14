@@ -110,14 +110,14 @@ export function useVoiceCapture(): UseVoiceCaptureReturn {
 
   const streamRef = useRef<MediaStream | null>(null)
   const ctxRef = useRef<AudioContext | null>(null)
-  const processorRef = useRef<ScriptProcessorNode | null>(null)
+  const workletRef = useRef<AudioWorkletNode | null>(null)
   const speakingRef = useRef(false)
 
   const stopCapture = useCallback((): void => {
-    if (processorRef.current !== null) {
-      processorRef.current.onaudioprocess = null
-      processorRef.current.disconnect()
-      processorRef.current = null
+    if (workletRef.current !== null) {
+      workletRef.current.port.onmessage = null
+      workletRef.current.disconnect()
+      workletRef.current = null
     }
     const ctx = ctxRef.current
     ctxRef.current = null
@@ -151,11 +151,16 @@ export function useVoiceCapture(): UseVoiceCaptureReturn {
         if (ctx.state === "suspended") await ctx.resume()
 
         const source = ctx.createMediaStreamSource(stream)
-        // ScriptProcessorNode is deprecated in favour of AudioWorklet, but
-        // it is the only option that needs no separately-served module file;
-        // the output buffer is never written to, so nothing is audible.
-        const processor = ctx.createScriptProcessor(4096, 1, 1)
-        processorRef.current = processor
+
+        // AudioWorklet, not the deprecated ScriptProcessorNode: capture is
+        // batched on the audio rendering thread, so main-thread jank cannot
+        // glitch the mic. The processor is a static same-origin module
+        // (public/worklets/pcm-capture.js) — Chrome gates AudioWorklet loads
+        // under script-src, so a blob: URL would need script-src blob:;
+        // 'self' is already allowed by the Caddy CSP.
+        await ctx.audioWorklet.addModule(`${import.meta.env.BASE_URL}worklets/pcm-capture.js`)
+        const worklet = new AudioWorkletNode(ctx, "pcm-capture")
+        workletRef.current = worklet
 
         // Gate state lives in the startCapture closure: a fresh startCapture
         // always begins with an empty ring and a closed gate.
@@ -170,8 +175,8 @@ export function useVoiceCapture(): UseVoiceCaptureReturn {
           }
         }
 
-        processor.onaudioprocess = (event: AudioProcessingEvent): void => {
-          const input = event.inputBuffer.getChannelData(0)
+        worklet.port.onmessage = (event: MessageEvent<Float32Array>): void => {
+          const input = event.data
           const samples = resampleLinear(input, ctx.sampleRate, VOICE_SAMPLE_RATE)
           const loud = computeRms(input) >= VOICE_SILENCE_THRESHOLD
           const nowMs = Date.now()
@@ -234,10 +239,10 @@ export function useVoiceCapture(): UseVoiceCaptureReturn {
           preRoll = pushPreRoll(preRoll, samples)
         }
 
-        source.connect(processor)
-        // The processor must reach the destination for Chrome to pump
-        // audio callbacks; its output buffer stays silent.
-        processor.connect(ctx.destination)
+        source.connect(worklet)
+        // The node must reach the destination for the graph to be pulled;
+        // its output buffer is never written to, so nothing is audible.
+        worklet.connect(ctx.destination)
         setError(null)
         setIsCapturing(true)
       } catch (err: unknown) {

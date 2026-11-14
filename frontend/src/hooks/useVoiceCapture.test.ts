@@ -1,8 +1,8 @@
 // frontend/src/hooks/useVoiceCapture.test.ts
 // Day 4: mic capture must emit 16 kHz PCM16 frames, gate silence out
 // (cost control — docs/cost.md §3), and tear the mic down completely on
-// stopCapture(). Browser APIs (getUserMedia, AudioContext) are stubbed —
-// nothing touches real hardware.
+// stopCapture(). Browser APIs (getUserMedia, AudioContext, AudioWorkletNode)
+// are stubbed — nothing touches real hardware.
 
 import { act, cleanup, renderHook } from "@testing-library/react"
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
@@ -19,11 +19,18 @@ import {
 } from "./useVoiceCapture"
 
 // ── Browser double ────────────────────────────────────────────────────────
-class MockProcessor {
-  onaudioprocess: ((event: AudioProcessingEvent) => void) | null = null
-  bufferSize = 0
+class MockWorkletNode {
+  name: string
+  port = {
+    onmessage: null as ((event: MessageEvent<Float32Array>) => void) | null,
+    postMessage: vi.fn()
+  }
   connect = vi.fn()
   disconnect = vi.fn()
+
+  constructor(name: string) {
+    this.name = name
+  }
 }
 
 class MockAudioContext {
@@ -32,7 +39,9 @@ class MockAudioContext {
   sampleRate: number
   state = "running"
   destination = {}
-  processors: MockProcessor[] = []
+  audioWorklet = {
+    addModule: vi.fn(() => Promise.resolve())
+  }
   close = vi.fn(() => {
     this.state = "closed"
     return Promise.resolve()
@@ -43,13 +52,6 @@ class MockAudioContext {
     this.sampleRate = MockAudioContext.ignoreRequestedSampleRate
       ? 48000
       : (options?.sampleRate ?? 48000)
-  }
-
-  createScriptProcessor(bufferSize: number): MockProcessor {
-    const processor = new MockProcessor()
-    processor.bufferSize = bufferSize
-    this.processors.push(processor)
-    return processor
   }
 
   createMediaStreamSource(): { connect: ReturnType<typeof vi.fn> } {
@@ -69,16 +71,14 @@ function latestContext(): MockAudioContext {
 
 // Alias so latestContext can read the static list without importing cycles.
 const MockAudioContextInstances: MockAudioContext[] = []
+const MockWorkletNodes: MockWorkletNode[] = []
 
 function fireAudio(samples: Float32Array): void {
-  const ctx = latestContext()
-  const processor = ctx.processors[0]
-  if (processor?.onaudioprocess === null || processor === undefined) {
-    throw new Error("processor not wired")
+  const node = MockWorkletNodes.at(-1)
+  if (node === undefined || node.port.onmessage === null) {
+    throw new Error("worklet not wired")
   }
-  processor.onaudioprocess({
-    inputBuffer: { getChannelData: () => samples }
-  } as unknown as AudioProcessingEvent)
+  node.port.onmessage({ data: samples } as unknown as MessageEvent<Float32Array>)
 }
 
 async function startCapture(): Promise<{
@@ -131,6 +131,7 @@ describe("voice capture helpers", () => {
 describe("useVoiceCapture", () => {
   beforeEach(() => {
     MockAudioContextInstances.length = 0
+    MockWorkletNodes.length = 0
     MockAudioContext.ignoreRequestedSampleRate = false
     track.stop.mockClear()
     getUserMedia.mockReset()
@@ -139,6 +140,12 @@ describe("useVoiceCapture", () => {
       constructor(options?: { sampleRate?: number }) {
         super(options)
         MockAudioContextInstances.push(this)
+      }
+    })
+    vi.stubGlobal("AudioWorkletNode", class extends MockWorkletNode {
+      constructor(_ctx: AudioContext, name: string) {
+        super(name)
+        MockWorkletNodes.push(this)
       }
     })
     Object.defineProperty(window.navigator, "mediaDevices", {
@@ -158,6 +165,11 @@ describe("useVoiceCapture", () => {
     expect(getUserMedia).toHaveBeenCalledWith({ audio: true })
     expect(getUserMedia).toHaveBeenCalledTimes(1)
     expect(latestContext().sampleRate).toBe(16000)
+    // The worklet is a static same-origin module, not a blob: (see the
+    // addModule call in useVoiceCapture.ts for the CSP reasoning).
+    expect(latestContext().audioWorklet.addModule).toHaveBeenCalledWith(
+      "/worklets/pcm-capture.js"
+    )
     expect(result.current.isCapturing).toBe(true)
     expect(result.current.error).toBeNull()
   })
@@ -242,11 +254,11 @@ describe("useVoiceCapture", () => {
     expect(frames[0]?.length).toBe(3200)
   })
 
-  it("stopCapture stops the tracks, closes the context and unhooks the processor", async () => {
+  it("stopCapture stops the tracks, closes the context and unhooks the worklet", async () => {
     const { result } = await startCapture()
     const ctx = latestContext()
-    const processor = ctx.processors[0]
-    expect(processor).toBeDefined()
+    const node = MockWorkletNodes.at(-1)
+    expect(node).toBeDefined()
 
     act(() => {
       result.current.stopCapture()
@@ -254,7 +266,7 @@ describe("useVoiceCapture", () => {
 
     expect(track.stop).toHaveBeenCalledTimes(1)
     expect(ctx.close).toHaveBeenCalledTimes(1)
-    expect(processor?.onaudioprocess).toBeNull()
+    expect(node?.port.onmessage).toBeNull()
     expect(result.current.isCapturing).toBe(false)
     expect(result.current.isSpeaking).toBe(false)
   })
