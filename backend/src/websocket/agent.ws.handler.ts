@@ -48,10 +48,15 @@ const PCM_BYTES_PER_MS = (VOICE_SAMPLE_RATE * 2) / 1000
 // 60 s of that audio = 60 000 ms × 32 B = 1 920 000 bytes — the server-side
 // utterance cap, enforced by counting bytes (no clock dependency).
 const MAX_UTTERANCE_BYTES = VOICE_MAX_UTTERANCE_MS * PCM_BYTES_PER_MS
-// STT is billed in whole seconds of audio (bytes ÷ 32 000 B/s) — the voice
-// budget takes integer units, so a charge fires each time another whole
-// second of audio has been accepted for upstream forwarding (Day 5 rule 4).
+// STT charge formula (agreed with Darun 2026-11-14): 1 unit per 30 s of
+// audio — ceil(seconds / 30), where seconds = bytes forwarded upstream ÷
+// PCM_BYTES_PER_SECOND. STT_BYTES_PER_UNIT is the byte form (960 000 B);
+// charging ceil(forwardedBytes / STT_BYTES_PER_UNIT) keeps sub-30 s
+// remainders on the session so short utterances are neither over-charged
+// (each < 30 s of audio does not buy its own unit across utterances) nor
+// under-charged (fractional seconds are never floored away first).
 const PCM_BYTES_PER_SECOND = PCM_BYTES_PER_MS * 1000
+const STT_BYTES_PER_UNIT = 30 * PCM_BYTES_PER_SECOND
 // Pacing grace: a sender may run 2 s of audio ahead of real time (network
 // jitter, bursty capture). Anything beyond that is dropped, not queued —
 // Deepgram bills audio *streamed*, so an always-open mic must not be able
@@ -65,6 +70,15 @@ interface VoiceSession {
   utteranceOpen: boolean
   bytesReceived: number // this utterance only
   droppedFrames: number // this utterance only
+  /**
+   * Bytes actually forwarded upstream this session — the charge basis.
+   * Session-scoped so sub-unit remainders carry across utterances; frames
+   * rejected before forwarding (oversized, paced out, over the caps) and
+   * frames stopped by a refused charge never enter it.
+   */
+  sttForwardedBytes: number
+  /** STT units already charged this session: ceil(bytes / STT_BYTES_PER_UNIT). */
+  sttChargedUnits: number
 }
 
 // ── Service Instances ─────────────────────────────────────────────────────
@@ -103,10 +117,6 @@ export class AgentWsHandler {
   private voiceSession: VoiceSession | null = null
   /** Day 5: Deepgram upstream for the current utterance (real mode only). */
   private deepgram: DeepgramStream | null = null
-  /** Bytes accepted for upstream forwarding this utterance (charge basis). */
-  private sttForwardedBytes = 0
-  /** Whole seconds of audio already charged to the voice budget. */
-  private sttChargedSeconds = 0
   /** voice_start timestamp — transcript_final latency is measured from it. */
   private utteranceStartedAtMs = 0
   /**
@@ -533,13 +543,12 @@ export class AgentWsHandler {
         return
       }
     }
-    this.sttForwardedBytes = 0
-    this.sttChargedSeconds = 0
     this.utteranceStartedAtMs = Date.now()
 
     if (isRestart && existing !== null) {
       // New utterance inside the same session: reset the per-utterance
-      // counters, keep the session clock so the 10-minute cap still holds.
+      // counters, keep the session clock AND the STT charge state (the
+      // carried byte remainder must survive across utterances).
       existing.utteranceOpen = true
       existing.bytesReceived = 0
       existing.droppedFrames = 0
@@ -552,6 +561,8 @@ export class AgentWsHandler {
       utteranceOpen: true,
       bytesReceived: 0,
       droppedFrames: 0,
+      sttForwardedBytes: 0,
+      sttChargedUnits: 0,
     }
     logRagEvent("agent_step", "Voice session started", {
       service: "AgentWsHandler",
@@ -845,9 +856,16 @@ export class AgentWsHandler {
 
     session.bytesReceived += bytes.length
 
-    // Day 5 (real mode): charge the voice budget by whole seconds of audio
-    // accepted for upstream forwarding (bytes ÷ 32 000 B/s), then forward.
-    // Dropped frames (pacing/caps above) are never charged and never sent.
+    // Day 5 (real mode): charge the voice budget 1 unit per 30 s of audio
+    // accepted for upstream forwarding — ceil(total forwarded ÷ 960 000 B).
+    // The total is session-scoped: sub-unit byte remainders carry across
+    // utterances, so a short utterance never buys a second unit for audio
+    // the session already paid for, and fractional seconds are never floored
+    // away (an 8 s utterance charges exactly 1 unit). Rejected frames
+    // (oversized, paced out, over the caps — all handled above) never reach
+    // this accumulator. The charge happens BEFORE the frame is sent: a
+    // refused charge stops the utterance with the boundary-crossing frame
+    // still unsent, so Deepgram's bill can never exceed charged units.
     if (!env.VOICE_MOCK) {
       const stream = this.deepgram
       if (stream === null) {
@@ -857,12 +875,13 @@ export class AgentWsHandler {
         return
       }
 
-      this.sttForwardedBytes += bytes.length
-      const wholeSeconds = Math.floor(this.sttForwardedBytes / PCM_BYTES_PER_SECOND)
-      const toCharge = wholeSeconds - this.sttChargedSeconds
+      const dueUnits = Math.ceil((session.sttForwardedBytes + bytes.length) / STT_BYTES_PER_UNIT)
+      const toCharge = dueUnits - session.sttChargedUnits
       if (toCharge > 0) {
         if (!(await consumeVoiceBudget(toCharge))) {
           // Fail closed mid-utterance: refuse the spend, stop the stream.
+          // Counters stay put — the same unit would be retried against a
+          // budget that keeps refusing, and the frame below is never sent.
           session.utteranceOpen = false
           this.closeUpstream()
           this.sendVoiceError(
@@ -872,9 +891,10 @@ export class AgentWsHandler {
           )
           return
         }
-        this.sttChargedSeconds = wholeSeconds
+        session.sttChargedUnits = dueUnits
       }
 
+      session.sttForwardedBytes += bytes.length
       stream.sendAudio(bytes)
     }
   }
@@ -886,6 +906,8 @@ export class AgentWsHandler {
     startedAtMs: number
     bytesReceived: number
     droppedFrames: number
+    sttForwardedBytes: number
+    sttChargedUnits: number
   } {
     const session = this.voiceSession
     if (session === null) {
@@ -895,6 +917,8 @@ export class AgentWsHandler {
         startedAtMs: 0,
         bytesReceived: 0,
         droppedFrames: 0,
+        sttForwardedBytes: 0,
+        sttChargedUnits: 0,
       }
     }
     return {
@@ -903,6 +927,8 @@ export class AgentWsHandler {
       startedAtMs: session.startedAtMs,
       bytesReceived: session.bytesReceived,
       droppedFrames: session.droppedFrames,
+      sttForwardedBytes: session.sttForwardedBytes,
+      sttChargedUnits: session.sttChargedUnits,
     }
   }
 
