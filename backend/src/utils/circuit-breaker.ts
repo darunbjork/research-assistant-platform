@@ -63,6 +63,11 @@ export class CircuitBreaker {
     return this.failures
   }
 
+  /** True when a call would be attempted (state not fully open). */
+  isAvailable(): boolean {
+    return this.state !== "open"
+  }
+
   /**
    * Run `fn` through the breaker. Rethrows the original error on failure
    * (callers log/handle their own provider errors); only the refusal to
@@ -93,6 +98,43 @@ export class CircuitBreaker {
     } finally {
       this.trialInFlight = false
     }
+  }
+
+  /**
+   * Record one failure outside exec() — event-driven provider paths (Day 5
+   * Deepgram handshake/stream failures arrive as WebSocket events, not as a
+   * promise the breaker can wrap). Same semantics as exec's failure branch.
+   */
+  recordFailure(): void {
+    this.onFailure()
+  }
+
+  /**
+   * Record a success outside exec() (e.g. a handshake that connected).
+   * Resets the consecutive-failure count and closes an open circuit.
+   */
+  recordSuccess(): void {
+    this.onSuccess()
+  }
+
+  /**
+   * Force the circuit OPEN now — used for provider quota signals (Deepgram
+   * HTTP 402) where one response proves the cap is spent: fail fast instead
+   * of burning the remaining failure budget on a condition that will not
+   * heal within the cooldown (cost.md §5, Day 5 rule 3).
+   */
+  tripOpen(): void {
+    this.failures = Math.max(this.failures, this.failureThreshold)
+    if (this.openedAt === null) {
+      this.openedAt = this.now()
+    }
+  }
+
+  /** Test-only: return to a pristine closed state (mirrors resetShutdownForTests). */
+  resetForTests(): void {
+    this.failures = 0
+    this.openedAt = null
+    this.trialInFlight = false
   }
 
   private onSuccess(): void {

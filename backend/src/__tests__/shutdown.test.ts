@@ -118,6 +118,28 @@ describe("graceful shutdown (task 5.5 / D13)", () => {
     expect(mod.isShuttingDown()).toBe(true)
   })
 
+  it("closes voice upstreams between agent abort and WS client close (Day 5)", async () => {
+    const mod = loadModule()
+    const fixture = makeFixture()
+    fixture.deps.closeVoiceUpstreams = (): void => {
+      fixture.calls.push("closeVoiceUpstreams")
+    }
+
+    await mod.createShutdown(fixture.deps).shutdown()
+
+    expect(fixture.calls).toEqual([
+      "httpServer.close",
+      "abortRunningAgents",
+      "closeVoiceUpstreams",
+      "closeAllWsClients",
+      "closeQueue",
+      "disconnectDatabase",
+      "quitRedis",
+      "shutdownTracing",
+      "exit:0",
+    ])
+  })
+
   it("sets the shutting-down flag before httpServer.close() (health flips to 503 first)", async () => {
     const mod = loadModule()
     const fixture = makeFixture()

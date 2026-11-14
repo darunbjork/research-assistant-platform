@@ -27,6 +27,7 @@ import { swaggerSpec } from "./utils/swagger"
 import { checkRedisHealth, redis } from "./utils/redis"
 import { createWebSocketServer, closeAllWsClients } from "./websocket/ws.server"
 import { abortRunningAgents } from "./websocket/agent.ws.handler"
+import { closeAllVoiceUpstreams } from "./services/deepgram.stream"
 import { createShutdown, registerShutdown, isShuttingDown } from "./lifecycle/shutdown"
 import { getIngestionQueue } from "./queue/index"
 import { shutdownTracing } from "./telemetry/tracer"
@@ -141,6 +142,9 @@ const shutdown = createShutdown({
   httpServer,
   abortRunningAgents,
   closeAllWsClients,
+  // Day 5: CloseStream + close every live Deepgram upstream before the
+  // WS clients that own them go away.
+  closeVoiceUpstreams: closeAllVoiceUpstreams,
   closeQueue: async (): Promise<void> => {
     await getIngestionQueue().close()
   },

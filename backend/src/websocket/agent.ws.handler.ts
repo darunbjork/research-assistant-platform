@@ -24,6 +24,16 @@ import { consumeGlobalBudget, consumeVoiceBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
 import { env } from "../config/env"
+import {
+  DeepgramStream,
+  DeepgramHandshakeError,
+  buildListenUrl,
+  classifyHandshakeStatus,
+  registerUpstream,
+  unregisterUpstream,
+} from "../services/deepgram.stream"
+import { sttBreaker } from "../services/stt.service"
+import { saveVoiceTranscript } from "../services/voice.transcript.service"
 
 // ── Hardening constants (task 2.8) ────────────────────────────────────────
 // No successful auth within this window ⇒ close the connection.
@@ -38,6 +48,10 @@ const PCM_BYTES_PER_MS = (VOICE_SAMPLE_RATE * 2) / 1000
 // 60 s of that audio = 60 000 ms × 32 B = 1 920 000 bytes — the server-side
 // utterance cap, enforced by counting bytes (no clock dependency).
 const MAX_UTTERANCE_BYTES = VOICE_MAX_UTTERANCE_MS * PCM_BYTES_PER_MS
+// STT is billed in whole seconds of audio (bytes ÷ 32 000 B/s) — the voice
+// budget takes integer units, so a charge fires each time another whole
+// second of audio has been accepted for upstream forwarding (Day 5 rule 4).
+const PCM_BYTES_PER_SECOND = PCM_BYTES_PER_MS * 1000
 // Pacing grace: a sender may run 2 s of audio ahead of real time (network
 // jitter, bursty capture). Anything beyond that is dropped, not queued —
 // Deepgram bills audio *streamed*, so an always-open mic must not be able
@@ -87,6 +101,20 @@ export class AgentWsHandler {
   private authTimer: ReturnType<typeof setTimeout> | null = null
   /** Active voice session (Day 3a); null until the first voice_start. */
   private voiceSession: VoiceSession | null = null
+  /** Day 5: Deepgram upstream for the current utterance (real mode only). */
+  private deepgram: DeepgramStream | null = null
+  /** Bytes accepted for upstream forwarding this utterance (charge basis). */
+  private sttForwardedBytes = 0
+  /** Whole seconds of audio already charged to the voice budget. */
+  private sttChargedSeconds = 0
+  /** voice_start timestamp — transcript_final latency is measured from it. */
+  private utteranceStartedAtMs = 0
+  /**
+   * Serialises binary frame handling: pacing/caps stay synchronous in the
+   * chain, and the async per-second budget charge can never race a later
+   * frame (frames are processed strictly in arrival order).
+   */
+  private audioChain: Promise<void> = Promise.resolve()
 
   constructor(private readonly ws: WebSocket) {
     // Auth timeout: a connection that never authenticates is closed (4001)
@@ -119,7 +147,16 @@ export class AgentWsHandler {
     this.ws.on("message", (raw: Buffer | string, isBinary: boolean) => {
       if (isBinary) {
         const bytes = Buffer.isBuffer(raw) ? raw : Buffer.from(raw)
-        this.handleAudioFrame(bytes)
+        // Day 5: the real-mode path charges the voice budget per whole
+        // second forwarded — async — so frames queue in arrival order.
+        this.audioChain = this.audioChain
+          .then(() => this.handleAudioFrame(bytes))
+          .catch((error: unknown) => {
+            logError("Voice frame handling failed", error, {
+              service: "AgentWsHandler",
+              userId: this.userId ?? "unauthenticated",
+            })
+          })
         return
       }
       void this.handleMessage(raw.toString())
@@ -130,6 +167,8 @@ export class AgentWsHandler {
       this.clearAuthTimer()
       // Client went away — cancel any in-flight agent run (task 2.9).
       this.runController?.abort()
+      // Day 5 rule 2: client close → CloseStream then close on the upstream.
+      this.closeUpstream()
       logRagEvent("agent_step", "WebSocket connection closed", {
         service: "AgentWsHandler",
         userId: this.userId ?? "unauthenticated",
@@ -177,7 +216,7 @@ export class AgentWsHandler {
         break
 
       case "voice_end":
-        this.handleVoiceEnd(message.sessionId)
+        await this.handleVoiceEnd(message.sessionId)
         break
 
       case "barge_in":
@@ -447,6 +486,8 @@ export class AgentWsHandler {
       const ageMs = Date.now() - existing.startedAtMs
       if (ageMs > VOICE_MAX_SESSION_MS) {
         this.voiceSession = null
+        // Day 5 rule 2: session cap → CloseStream then close.
+        this.closeUpstream()
         this.sendVoiceError(
           "SESSION_LIMIT",
           `Voice session exceeded ${VOICE_MAX_SESSION_MS / 60_000} minutes.`,
@@ -483,6 +524,19 @@ export class AgentWsHandler {
       return
     }
 
+    // Day 5 (real mode): open the Deepgram upstream BEFORE the utterance
+    // accepts a single byte of audio. A failed handshake has already sent
+    // its own voice_error — the utterance never starts.
+    if (!env.VOICE_MOCK) {
+      const opened = await this.openUpstream(sessionId)
+      if (!opened) {
+        return
+      }
+    }
+    this.sttForwardedBytes = 0
+    this.sttChargedSeconds = 0
+    this.utteranceStartedAtMs = Date.now()
+
     if (isRestart && existing !== null) {
       // New utterance inside the same session: reset the per-utterance
       // counters, keep the session clock so the 10-minute cap still holds.
@@ -507,7 +561,7 @@ export class AgentWsHandler {
   }
 
   /** voice_end: close the utterance; the 10-minute session survives. */
-  private handleVoiceEnd(sessionId: string): void {
+  private async handleVoiceEnd(sessionId: string): Promise<void> {
     const session = this.voiceSession
     if (session === null || session.sessionId !== sessionId || !session.utteranceOpen) {
       this.sendVoiceError("NO_VOICE_SESSION", "voice_end without an open utterance.", sessionId)
@@ -520,6 +574,22 @@ export class AgentWsHandler {
       userId: this.userId ?? "unauthenticated",
       bytesReceived: session.bytesReceived,
     })
+
+    // Day 5 rule 2: voice_end → Finalize (flush), wait for the final
+    // transcript, then CloseStream then close. The final itself arrives via
+    // the stream's onFinal callback (transcript_final + persist).
+    const stream = this.deepgram
+    if (stream !== null) {
+      try {
+        await stream.finalize()
+      } catch (error: unknown) {
+        logError("Voice finalize failed", error, {
+          service: "AgentWsHandler",
+          sessionId,
+        })
+      }
+      this.closeUpstream()
+    }
   }
 
   /**
@@ -538,6 +608,173 @@ export class AgentWsHandler {
     }
   }
 
+  // ── Deepgram upstream (Day 5) ───────────────────────────────────────────
+
+  /**
+   * Open the upstream for this utterance (real mode only). Order matters:
+   *   1. breaker must be available (fail fast when open)
+   *   2. connect with the classified handshake
+   *   3. only then claim the per-user slot — a failed handshake never
+   *      displaces a working stream from another connection
+   * A displaced stream is CloseStream+closed and its owner is told to tear
+   * down (Day 5 rule 2: one live upstream per user).
+   */
+  private async openUpstream(sessionId: string): Promise<boolean> {
+    const userId = this.userId
+    if (userId === null) return false
+
+    if (!sttBreaker.isAvailable()) {
+      this.sendVoiceError(
+        "PROVIDER_UNAVAILABLE",
+        "Speech provider unavailable — please retry shortly.",
+        sessionId
+      )
+      return false
+    }
+
+    // Close any leftover stream this connection still owns (e.g. a failed
+    // finalize) before registering the new one — self-displacement would
+    // otherwise tear down our own session.
+    if (this.deepgram !== null) {
+      unregisterUpstream(userId, this.deepgram)
+      this.deepgram.close()
+      this.deepgram = null
+    }
+
+    const stream = new DeepgramStream({
+      url: buildListenUrl(env.DEEPGRAM_WS_URL, env.DEEPGRAM_MODEL),
+      apiKey: env.DEEPGRAM_API_KEY ?? "",
+      sessionId,
+      onFinal: (text, fromFinalize) => {
+        const latencyMs = Math.max(0, Date.now() - this.utteranceStartedAtMs)
+        this.send({ type: "transcript_final", sessionId, text, latencyMs })
+        logRagEvent("agent_step", "Voice final transcript received", {
+          service: "AgentWsHandler",
+          sessionId,
+          userId,
+          latencyMs,
+          fromFinalize,
+        })
+        void saveVoiceTranscript({ userId, sessionId, text, latencyMs }).catch((error: unknown) => {
+          logError("Saving voice transcript failed", error, {
+            service: "AgentWsHandler",
+            sessionId,
+          })
+        })
+      },
+      onFailure: failure => {
+        if (failure.action === "count") {
+          sttBreaker.recordFailure()
+        }
+        if (this.deepgram === stream) {
+          this.deepgram = null
+        }
+        unregisterUpstream(userId, stream)
+        const session = this.voiceSession
+        if (session !== null && session.sessionId === sessionId) {
+          session.utteranceOpen = false
+        }
+        const providerDown = failure.action === "count" && !sttBreaker.isAvailable()
+        this.sendVoiceError(
+          providerDown ? "PROVIDER_UNAVAILABLE" : "STT_FAILED",
+          failure.message,
+          sessionId
+        )
+      },
+    })
+
+    try {
+      await stream.connect()
+    } catch (error: unknown) {
+      stream.close()
+      const status = error instanceof DeepgramHandshakeError ? error.status : null
+      const outcome = classifyHandshakeStatus(status)
+      logError("Deepgram handshake failed", error, {
+        service: "AgentWsHandler",
+        sessionId,
+        handshakeStatus: status ?? "network",
+        outcome,
+      })
+      if (outcome === "quota") {
+        // 402: the provider cap is spent — open now, surface the budget
+        // code (never PROVIDER_UNAVAILABLE — this is not an outage).
+        sttBreaker.tripOpen()
+        this.sendVoiceError(
+          "VOICE_BUDGET_REACHED",
+          "Speech provider quota reached — voice resumes when the cap resets.",
+          sessionId
+        )
+      } else if (outcome === "ignore") {
+        // 401/429/other 4xx: client-side condition — breaker untouched.
+        this.sendVoiceError(
+          "STT_FAILED",
+          status === 401
+            ? "Speech provider rejected the server credentials."
+            : status === 429
+              ? "Speech provider rate-limited the connection — try again shortly."
+              : `Speech provider refused the connection (HTTP ${status ?? "unknown"}).`,
+          sessionId
+        )
+      } else {
+        sttBreaker.recordFailure()
+        const providerDown = !sttBreaker.isAvailable()
+        this.sendVoiceError(
+          providerDown ? "PROVIDER_UNAVAILABLE" : "STT_FAILED",
+          providerDown
+            ? "Speech provider unavailable — please retry shortly."
+            : "Could not connect to the speech provider.",
+          sessionId
+        )
+      }
+      return false
+    }
+
+    // Connected: claim the per-user slot (single-threaded — no await here,
+    // so registration and displacement are atomic).
+    const displaced = registerUpstream(userId, {
+      stream,
+      superseded: () => this.handleSuperseded(sessionId),
+    })
+    if (displaced !== null) {
+      displaced.stream.close()
+      displaced.superseded()
+    }
+    this.deepgram = stream
+    sttBreaker.recordSuccess()
+    logRagEvent("agent_step", "Deepgram stream opened", {
+      service: "AgentWsHandler",
+      sessionId,
+      userId,
+    })
+    return true
+  }
+
+  /** A newer connection from this user took over — drop our voice state. */
+  private handleSuperseded(sessionId: string): void {
+    this.deepgram = null
+    this.voiceSession = null
+    this.sendVoiceError(
+      "NO_VOICE_SESSION",
+      "Voice session superseded by a newer connection.",
+      sessionId
+    )
+  }
+
+  /**
+   * Close path for every non-fatal teardown (client close, voice_end,
+   * session/utterance caps, supersede, shutdown): CloseStream then close.
+   * Idempotent — clears our reference first so re-entry is a no-op.
+   */
+  private closeUpstream(): void {
+    const stream = this.deepgram
+    if (stream === null) return
+    this.deepgram = null
+    if (this.userId !== null) {
+      unregisterUpstream(this.userId, stream)
+    }
+    stream.close()
+  }
+
   /**
    * Binary audio frame. Order matters (Day 3a spec):
    *   1. reject before auth completes   2. require an open utterance
@@ -546,7 +783,7 @@ export class AgentWsHandler {
    * The utterance cap counts BYTES (32 000 B/s), not wall time, so it holds
    * regardless of how the client spaces frames.
    */
-  private handleAudioFrame(bytes: Buffer): void {
+  private async handleAudioFrame(bytes: Buffer): Promise<void> {
     if (this.userId === null) {
       this.sendVoiceError("NOT_AUTHENTICATED", "Authenticate before sending audio.")
       return
@@ -570,6 +807,8 @@ export class AgentWsHandler {
 
     if (nowMs - session.startedAtMs > VOICE_MAX_SESSION_MS) {
       this.voiceSession = null
+      // Day 5 rule 2: session cap → CloseStream then close.
+      this.closeUpstream()
       this.sendVoiceError(
         "SESSION_LIMIT",
         `Voice session exceeded ${VOICE_MAX_SESSION_MS / 60_000} minutes.`
@@ -595,6 +834,8 @@ export class AgentWsHandler {
       // Utterance over: stop accepting audio until the next voice_start;
       // the session itself survives (client may start a fresh utterance).
       session.utteranceOpen = false
+      // Day 5: the stream lived for this utterance — close it too.
+      this.closeUpstream()
       this.sendVoiceError(
         "UTTERANCE_TOO_LONG",
         `Utterance exceeds ${VOICE_MAX_UTTERANCE_MS / 1000} seconds of audio.`
@@ -603,6 +844,39 @@ export class AgentWsHandler {
     }
 
     session.bytesReceived += bytes.length
+
+    // Day 5 (real mode): charge the voice budget by whole seconds of audio
+    // accepted for upstream forwarding (bytes ÷ 32 000 B/s), then forward.
+    // Dropped frames (pacing/caps above) are never charged and never sent.
+    if (!env.VOICE_MOCK) {
+      const stream = this.deepgram
+      if (stream === null) {
+        // Invariant: a live utterance in real mode owns a live upstream.
+        session.utteranceOpen = false
+        this.sendVoiceError("STT_FAILED", "Speech stream is not connected.", session.sessionId)
+        return
+      }
+
+      this.sttForwardedBytes += bytes.length
+      const wholeSeconds = Math.floor(this.sttForwardedBytes / PCM_BYTES_PER_SECOND)
+      const toCharge = wholeSeconds - this.sttChargedSeconds
+      if (toCharge > 0) {
+        if (!(await consumeVoiceBudget(toCharge))) {
+          // Fail closed mid-utterance: refuse the spend, stop the stream.
+          session.utteranceOpen = false
+          this.closeUpstream()
+          this.sendVoiceError(
+            "VOICE_CAPACITY_REACHED",
+            "Voice budget reached mid-utterance.",
+            session.sessionId
+          )
+          return
+        }
+        this.sttChargedSeconds = wholeSeconds
+      }
+
+      stream.sendAudio(bytes)
+    }
   }
 
   /** Voice counters for diagnostics and Day 11 metrics. */

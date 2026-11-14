@@ -32,6 +32,12 @@ export interface ShutdownDeps {
   httpServer: Pick<Server, "close">
   abortRunningAgents: () => void
   closeAllWsClients: () => void
+  /**
+   * Day 5: CloseStream + close every live Deepgram upstream — runs after
+   * agent runs abort and BEFORE WS clients close, so the provider sees a
+   * clean close while the sockets that own the streams are still up.
+   */
+  closeVoiceUpstreams?: () => void
   closeQueue: () => Promise<void>
   disconnectDatabase: () => Promise<void>
   quitRedis: () => Promise<void>
@@ -83,8 +89,13 @@ export function createShutdown(deps: ShutdownDeps): ShutdownRunner {
     //    upgraded WS sockets would delay the callback until step 3 closes them).
     deps.httpServer.close()
 
-    // 3. Abort in-flight agent runs, then say goodbye to every WS client.
+    // 3. Abort in-flight agent runs, close every Deepgram upstream
+    //    (CloseStream then close — Day 5), then say goodbye to every WS
+    //    client.
     deps.abortRunningAgents()
+    if (deps.closeVoiceUpstreams !== undefined) {
+      deps.closeVoiceUpstreams()
+    }
     deps.closeAllWsClients()
 
     // 4. Bull waits for active ingestion jobs to finish.

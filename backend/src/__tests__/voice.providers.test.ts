@@ -61,8 +61,8 @@ describe("createSttService / createTtsService", () => {
     expect(createTtsService(true)).toBeInstanceOf(MockTtsService)
   })
 
-  it("real mode fails loudly until Day 5 (STT) / Day 8 (TTS)", () => {
-    expect(() => createSttService(false)).toThrow("voice Day 5")
+  it("real mode keeps batch STT out (streaming since Day 5) and TTS until Day 8", () => {
+    expect(() => createSttService(false)).toThrow("deepgram.stream.ts")
     expect(() => createTtsService(false)).toThrow("voice Day 8")
   })
 

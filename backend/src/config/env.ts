@@ -91,6 +91,12 @@ export const envSchema = z
     ),
     DEEPGRAM_API_KEY: z.preprocess(emptyToUndefined, z.string().min(10).optional()),
     DEEPGRAM_MODEL: z.preprocess(emptyToUndefined, z.string().min(1).default("nova-3")),
+    // Full listen endpoint — overridable so the Day 5 fake-server tests can
+    // point the real client at ws://127.0.0.1 without any special casing.
+    DEEPGRAM_WS_URL: z.preprocess(
+      emptyToUndefined,
+      z.string().url().default("wss://api.deepgram.com/v1/listen")
+    ),
     ELEVENLABS_API_KEY: z.preprocess(emptyToUndefined, z.string().min(10).optional()),
     ELEVENLABS_MODEL_ID: z.preprocess(
       emptyToUndefined,

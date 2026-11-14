@@ -13,6 +13,11 @@
     }
     # /metrics is intentionally NOT routed: reachable only on the internal Docker network.
 
+    # Day 5: the AudioWorklet module has a FIXED name but is replaced on
+    # every deploy — never let a browser treat it as immutable. no-cache
+    # means revalidate (etag/last-modified) on every use.
+    header /worklets/* Cache-Control "no-cache"
+
     # SPA: static files, fall back to index.html for client-side routes.
     handle {
         root * /srv
