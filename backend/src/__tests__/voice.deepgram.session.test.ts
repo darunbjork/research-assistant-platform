@@ -5,10 +5,12 @@
 // no real key, no billing. Covers the handler-level requirements:
 //   - voice_start → upstream open → audio forwarded → voice_end → Finalize
 //     → transcript_final (delivered once) + persisted
-//   - STT charged by bytes forwarded, converted to seconds (32 000 B/s),
-//     through consumeVoiceBudget
+//   - STT charged 1 unit per 30 s of audio (ceil(seconds / 30), seconds =
+//     forwarded bytes ÷ 32 000) through consumeVoiceBudget, with sub-unit
+//     byte remainders carried across utterances in the same session
+//   - rejected/oversized/paced-out frames never enter the charge basis
 //   - budget refusal mid-utterance fails closed (VOICE_CAPACITY_REACHED,
-//     CloseStream, no further forwarding)
+//     CloseStream, the refused frame is never forwarded)
 //   - HTTP 402 → VOICE_BUDGET_REACHED + breaker opens → next start fails
 //     fast with PROVIDER_UNAVAILABLE (4xx handshake never counted)
 //   - takeover: a second connection closes the old upstream and the old
@@ -331,8 +333,9 @@ describe("voice session + Deepgram upstream (Day 5)", () => {
     expect(handler.getVoiceDiagnostics().utteranceOpen).toBe(false)
   })
 
-  it("charges STT by bytes forwarded, converted to seconds (32 000 B/s)", async () => {
-    const { ws } = await makeHandler()
+  it("charges 1 unit per 30 s (ceil(s/30)), carrying remainders across utterances", async () => {
+    onConnection = connection => respondWithFinal(connection, "ok")
+    const { handler, ws } = await makeHandler()
     await startVoice(ws)
     await waitFor(() => connections.length === 1)
 
@@ -340,18 +343,106 @@ describe("voice session + Deepgram upstream (Day 5)", () => {
     expect(mockRedisEval).toHaveBeenCalledTimes(1)
     expect(mockRedisEval.mock.calls[0]?.[4]).toBe("1")
 
-    // 7 × 4096 + 3328 = 32 000 B = exactly one whole second → +1 unit.
-    for (let i = 0; i < 7; i++) {
-      sendAudio(ws, 4_096)
+    // Pace the system clock instead of waiting real time: each chunk
+    // advances Date.now by its own duration, so the pacing gate accepts
+    // every frame (the arrival rate matches real time).
+    const base = Date.now()
+    let offsetMs = 0
+    const spy = jest.spyOn(Date, "now").mockImplementation(() => base + offsetMs)
+    const sendBytes = async (byteLength: number): Promise<number> => {
+      let sent = 0
+      while (sent < byteLength) {
+        const chunk = Math.min(4_096, byteLength - sent)
+        offsetMs += Math.ceil(chunk / 32) // chunk duration in ms
+        sendAudio(ws, chunk)
+        await flush()
+        sent += chunk
+      }
+      return sent
     }
-    sendAudio(ws, 3_328)
-    await waitFor(() => connections[0]?.binaries.length === 8)
 
-    await waitFor(() => mockRedisEval.mock.calls.length === 2)
-    expect(mockRedisEval.mock.calls[1]?.[4]).toBe("1")
-    // Byte-exact: one charge for one whole second, not per frame.
-    expect(mockRedisEval).toHaveBeenCalledTimes(2)
+    try {
+      // 8 s of audio = 256 000 B → ceil(8/30) = 1 unit — not 8, not 0.
+      await sendBytes(8 * 32_000)
+      expect(mockRedisEval).toHaveBeenCalledTimes(2)
+      expect(mockRedisEval.mock.calls[1]?.[4]).toBe("1")
+
+      // Push the carried total past 30 s (960 000 B): the 2nd unit is due.
+      // 960 001 B total =30.00003 s → ceil = 2 units charged overall.
+      await sendBytes(960_001 - 8 * 32_000)
+      expect(mockRedisEval).toHaveBeenCalledTimes(3)
+      expect(mockRedisEval.mock.calls[2]?.[4]).toBe("1")
+      expect(handler.getVoiceDiagnostics().sttChargedUnits).toBe(2)
+      expect(handler.getVoiceDiagnostics().sttForwardedBytes).toBe(960_001)
+    } finally {
+      spy.mockRestore()
+    }
+
+    // Close the utterance and start a short one in the SAME session: the
+    // carried remainder (960 001 B → 2 units) survives, so 8 s more (total
+    // 38 s) is still ceil(38/30) = 2 units — no over-charge.
+    ws.emit("message", JSON.stringify({ type: "voice_end", sessionId: "v1" }))
+    await waitFor(() => parsed(ws).some(m => m.type === "transcript_final"))
+    await startVoice(ws)
+    await waitFor(() => connections.length === 2)
+
+    // Restart charged its own voice turn (1 unit); no STT unit yet.
+    expect(mockRedisEval).toHaveBeenCalledTimes(4)
+    expect(mockRedisEval.mock.calls[3]?.[4]).toBe("1")
+
+    const base2 = Date.now()
+    const offset2 = { ms: 0 }
+    const spySecond = jest.spyOn(Date, "now").mockImplementation(() => base2 + offset2.ms)
+    try {
+      const before = mockRedisEval.mock.calls.length
+      const target = 8 * 32_000
+      let sent = 0
+      while (sent < target) {
+        const chunk = Math.min(4_096, target - sent)
+        offset2.ms += Math.ceil(chunk / 32)
+        sendAudio(ws, chunk)
+        await flush()
+        sent += chunk
+      }
+      // Remainder carried: still 2 units total, zero new STT charges.
+      expect(mockRedisEval.mock.calls.length).toBe(before)
+      expect(handler.getVoiceDiagnostics().sttChargedUnits).toBe(2)
+      expect(handler.getVoiceDiagnostics().sttForwardedBytes).toBe(960_001 + target)
+    } finally {
+      spySecond.mockRestore()
+    }
     expect(voiceErrors(ws)).toHaveLength(0)
+  })
+
+  it("never charges frames that are rejected or paced out", async () => {
+    const { handler, ws } = await makeHandler()
+    await startVoice(ws)
+    await waitFor(() => connections.length === 1)
+
+    // Oversized frame: rejected before any charge or forwarding.
+    sendAudio(ws, 4_097)
+    await flush()
+    await flush()
+    expect(handler.getVoiceDiagnostics().sttForwardedBytes).toBe(0)
+    expect(mockRedisEval).toHaveBeenCalledTimes(1) // only the voice_start turn
+
+    // A same-tick burst beyond the pacing window: the excess is dropped.
+    for (let i = 0; i < 40; i++) {
+      sendAudio(ws, 4_096) // 163 840 B total; ~2 s burst allows ~64 000 B
+    }
+    for (let i = 0; i < 30; i++) {
+      await flush()
+    }
+    const diag = handler.getVoiceDiagnostics()
+    expect(diag.droppedFrames).toBeGreaterThan(0)
+    expect(diag.bytesReceived).toBeLessThan(40 * 4_096)
+    // Dropped bytes never enter the charge basis: forwarded == accepted.
+    expect(diag.sttForwardedBytes).toBe(diag.bytesReceived)
+    expect(diag.sttChargedUnits).toBe(1) // first accepted frame opens unit 1
+    expect(mockRedisEval).toHaveBeenCalledTimes(2)
+    expect(mockRedisEval.mock.calls[1]?.[4]).toBe("1")
+    // The only error is the expected rejection of the oversized frame.
+    expect(voiceErrors(ws).map(e => e.code)).toEqual(["FRAME_TOO_LARGE"])
   })
 
   it("fails closed when the mid-utterance budget charge is refused", async () => {
@@ -361,17 +452,17 @@ describe("voice session + Deepgram upstream (Day 5)", () => {
     const connection = connections[0]
 
     // voice_start already charged (fallback allowed). The NEXT eval — the
-    // first per-second charge — is refused.
+    // first 30-second unit charge, due on the first forwarded frame — is
+    // refused.
     mockRedisEval.mockImplementationOnce(async (): Promise<unknown> => [-1, -1])
 
-    // 8 × 4096 B = 32 768 B ≥ one whole second → the per-second charge
-    // fires on the 8th frame and is refused.
-    for (let i = 0; i < 8; i++) {
-      sendAudio(ws, 4_096)
-    }
+    // First accepted frame → ceil(4096 / 960 000) = 1 unit due → refused.
+    sendAudio(ws, 4_096)
     await waitFor(() => voiceErrors(ws).length > 0)
 
     expect(voiceErrors(ws)[0]).toMatchObject({ code: "VOICE_CAPACITY_REACHED" })
+    // The boundary-crossing frame was never sent (charge precedes send).
+    expect(connection?.binaries).toHaveLength(0)
     // Upstream closed (CloseStream then close) and the utterance is over.
     await waitFor(() => connection?.texts.includes('{"type":"CloseStream"}') === true)
     expect(handler.getVoiceDiagnostics().utteranceOpen).toBe(false)
