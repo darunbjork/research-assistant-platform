@@ -174,6 +174,7 @@ describe("voice session (Day 3a)", () => {
     it("rejects binary frames before auth completes", async () => {
       ws = makeHandler()
       sendAudio(100)
+      await flush()
 
       expect(voiceErrors()).toHaveLength(1)
       expect(voiceErrors()[0]).toMatchObject({ code: "NOT_AUTHENTICATED" })
@@ -186,6 +187,7 @@ describe("voice session (Day 3a)", () => {
       const before = voiceErrors().length
 
       sendAudio(100)
+      await flush()
 
       expect(voiceErrors()).toHaveLength(before)
       const diag = handler.getVoiceDiagnostics()
@@ -351,6 +353,7 @@ describe("voice session (Day 3a)", () => {
       await makeAuthenticated()
       await startVoice()
       sendAudio(64)
+      await flush()
       ws.emit("message", JSON.stringify({ type: "voice_end", sessionId: "v1" }))
 
       const diag = handler.getVoiceDiagnostics()
@@ -364,6 +367,7 @@ describe("voice session (Day 3a)", () => {
       await startVoice()
       ws.emit("message", JSON.stringify({ type: "voice_end", sessionId: "v1" }))
       sendAudio(64)
+      await flush()
 
       expect(voiceErrors()[0]).toMatchObject({ code: "NO_VOICE_SESSION" })
     })
@@ -468,6 +472,7 @@ describe("voice session (Day 3a)", () => {
       await startVoice()
 
       sendAudio(4097)
+      await flush()
 
       expect(voiceErrors()[0]).toMatchObject({ code: "FRAME_TOO_LARGE" })
       expect(handler.getVoiceDiagnostics().bytesReceived).toBe(0)
@@ -481,6 +486,7 @@ describe("voice session (Day 3a)", () => {
       for (let i = 0; i < 16; i++) {
         sendAudio(4096)
       }
+      await flush()
 
       const diag = handler.getVoiceDiagnostics()
       expect(diag.bytesReceived).toBe(15 * 4096) // 61 440 counted
@@ -497,6 +503,7 @@ describe("voice session (Day 3a)", () => {
       // pacing rule allows a 64 000 B burst, so none of it may be dropped.
       sendAudio(4096)
       sendAudio(3904)
+      await flush()
 
       const diag = handler.getVoiceDiagnostics()
       expect(diag.bytesReceived).toBe(8000)
@@ -517,6 +524,7 @@ describe("voice session (Day 3a)", () => {
         jest.setSystemTime(start + neededMs)
         sendAudio(4096)
       }
+      await flush()
 
       expect(voiceErrors()).toHaveLength(1)
       expect(voiceErrors()[0]).toMatchObject({ code: "UTTERANCE_TOO_LONG" })
@@ -543,6 +551,7 @@ describe("voice session (Day 3a)", () => {
 
       jest.setSystemTime(1_700_000_000_000 + 10 * 60_000 + 1_000)
       sendAudio(32)
+      await flush()
 
       expect(voiceErrors()[0]).toMatchObject({ code: "SESSION_LIMIT" })
       expect(handler.getVoiceDiagnostics().sessionId).toBeNull()

@@ -139,13 +139,14 @@ re-flags this.
   - `{"type":"KeepAlive"}` **text** frames every 3–5 s while the silence gate is closed — Deepgram closes with `NET-0001` after 10 s with no data.
   - `{"type":"Finalize"}` on `voice_end` to flush interim results into a final transcript.
   - The **upstream socket is closed** on every exit path — client disconnect, `voice_end`, session cap (60 s utterance / 10 min session), and service shutdown — each path tested against the fake WS server.
-  - **Exactly one upstream stream per user** at a time (a second `voice_start` is refused, not fanned out).
+  - **Exactly one upstream stream per user** at a time: a new voice connection from the same user **closes the old upstream** (CloseStream then close) and the old connection is told `NO_VOICE_SESSION` — never two live streams billing in parallel.
   - Outbound bytes are **buffered under a hard cap** while the provider is backlogged; past the cap the call fails closed rather than growing memory.
   - **Interim transcripts are never logged and never persisted** — only the final transcript reaches logs/spans/DB (subject to §3/retention above).
   - Breaker classification (above): 5xx/timeout/network count, other 4xx don't, 402/quota opens immediately as `VOICE_BUDGET_REACHED`.
   - All tests against a **fake Deepgram WS server** (local, no real network).
   - **No real Deepgram call until §4 caps below are confirmed by Darun.** Day 5 ends with mock-only verification.
   - After Day 5: **one scripted real call** — a 10 s WAV via a one-off script with a dedicated capped key — as a separate go from Darun, before any browser use.
+  - **Status:** implemented (mock-only verification green — fake-server suite + handler suite; `/worklets/*` served `Cache-Control: no-cache`). Real call still gated on the §4 confirmation above.
 - Outage runbook `docs/runbooks/voice-provider-outage.md` (Day 12).
 
 ## 6. Switching to real mode (only after §4 is checked)

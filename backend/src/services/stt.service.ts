@@ -1,10 +1,11 @@
 // backend/src/services/stt.service.ts
 //
-// Speech-to-text provider boundary (voice curriculum Day 2). Callers (WS
-// voice handling, Day 3) depend only on the SttService interface; the
+// Speech-to-text provider boundary (voice curriculum Day 2). The
 // deterministic mock keeps VOICE_MOCK=true (the default) completely offline
-// and unbilled, and the real Deepgram client (Day 5) slots in behind the
-// same interface without touching callers.
+// and unbilled. Day 5 landed the real client as a STREAMING session in
+// deepgram.stream.ts (Deepgram WebSocket, one stream per utterance) — this
+// batch interface stays as the offline/mock transcription boundary; the
+// streaming client is what the WS handler opens when VOICE_MOCK=false.
 
 import { VOICE_SAMPLE_RATE } from "../types/voice.types"
 import { CircuitBreaker } from "../utils/circuit-breaker"
@@ -41,13 +42,13 @@ export class MockSttService implements SttService {
 export const sttBreaker = new CircuitBreaker("deepgram-stt")
 
 /**
- * Build the STT service for a mode. Real mode throws until the Deepgram
- * client lands on Day 5 — env.ts already forces the key to exist when
- * VOICE_MOCK=false, but the client itself is not written yet.
+ * Build the STT service for a mode. Batch real-mode transcription is not
+ * used — VOICE_MOCK=false streams through deepgram.stream.ts (opened by the
+ * WS handler); this factory keeps the mock path for offline callers.
  */
 export function createSttService(voiceMock: boolean, breaker?: CircuitBreaker): SttService {
   if (!voiceMock) {
-    throw new Error("Real Deepgram STT is not implemented yet (voice Day 5)")
+    throw new Error("Batch STT is unused in real mode — voice streams via deepgram.stream.ts")
   }
   const inner = new MockSttService()
   if (!breaker) return inner

@@ -178,4 +178,57 @@ describe("CircuitBreaker", () => {
         expect(breaker.state).toBe("open")
       })
   })
+
+  // ── Event-driven API (Day 5: Deepgram handshake/stream events) ──────────
+
+  it("recordFailure counts outside exec and trips at the threshold", () => {
+    const breaker = makeBreaker(2, 1000)
+    breaker.recordFailure()
+    expect(breaker.state).toBe("closed")
+    expect(breaker.consecutiveFailures).toBe(1)
+    breaker.recordFailure()
+    expect(breaker.state).toBe("open")
+  })
+
+  it("recordSuccess resets failures outside exec", () => {
+    const breaker = makeBreaker(3, 1000)
+    breaker.recordFailure()
+    breaker.recordFailure()
+    breaker.recordSuccess()
+    expect(breaker.consecutiveFailures).toBe(0)
+    expect(breaker.state).toBe("closed")
+  })
+
+  it("tripOpen opens immediately without reaching the threshold", () => {
+    const breaker = makeBreaker(5, 1000)
+    breaker.recordFailure()
+    breaker.tripOpen()
+    expect(breaker.state).toBe("open")
+    expect(breaker.consecutiveFailures).toBe(5)
+
+    // Half-open after the cooldown; a successful trial closes it.
+    now = 1000
+    expect(breaker.state).toBe("half_open")
+    breaker.recordSuccess()
+    expect(breaker.state).toBe("closed")
+    expect(breaker.consecutiveFailures).toBe(0)
+  })
+
+  it("tripOpen on an already-open circuit keeps the existing cooldown", () => {
+    const breaker = makeBreaker(1, 1000)
+    breaker.tripOpen()
+    now = 500
+    breaker.tripOpen() // second 402 must not restart the 5-minute window
+    now = 1000
+    expect(breaker.state).toBe("half_open")
+  })
+
+  it("resetForTests returns to a pristine closed state", () => {
+    const breaker = makeBreaker(1, 1000)
+    breaker.tripOpen()
+    expect(breaker.state).toBe("open")
+    breaker.resetForTests()
+    expect(breaker.state).toBe("closed")
+    expect(breaker.consecutiveFailures).toBe(0)
+  })
 })
