@@ -10,7 +10,3 @@ export interface AgentRunParams {
   onEvent?: AgentEventCallback
   transport: "http" | "ws"
 }
-
-export interface ToolContext {
-  signal?: AbortSignal
-}

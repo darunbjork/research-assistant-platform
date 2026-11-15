@@ -77,7 +77,11 @@ describe.each(["http", "websocket"])("%s agent regressions", transport => {
     ).toContain("EXTRACTED_TEXT_PROOF")
     expect(result.tokensUsed).toBe(340)
     expect(result.status).toBe("done")
-    expect(search).toHaveBeenCalledWith("extracted", expect.objectContaining({ userId: "user" }))
+    expect(search).toHaveBeenCalledWith(
+      "extracted",
+      expect.objectContaining({ userId: "user" }),
+      undefined
+    )
   })
 
   it("honours an unused suggested search when the model prematurely says DONE", async () => {
@@ -98,7 +102,8 @@ describe.each(["http", "websocket"])("%s agent regressions", transport => {
     expect(search).toHaveBeenCalledTimes(2)
     expect(search).toHaveBeenLastCalledWith(
       "extraction proof",
-      expect.objectContaining({ userId: "user" })
+      expect.objectContaining({ userId: "user" }),
+      undefined
     )
   })
 

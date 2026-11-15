@@ -41,7 +41,7 @@ export function createRagTool(hybridSearchService: HybridSearchService, userId: 
       "Input: { query: 'your search query' }. " +
       "Returns: relevant document chunks with source citations.",
 
-    execute: async (input: Record<string, string>): Promise<string> => {
+    execute: async (input: Record<string, string>, ctx): Promise<string> => {
       const query = input["query"]
 
       if (typeof query !== "string" || query.trim() === "") {
@@ -50,10 +50,14 @@ export function createRagTool(hybridSearchService: HybridSearchService, userId: 
 
       const start = Date.now()
 
-      const results = await hybridSearchService.search(query.trim(), {
-        topK: 5,
-        userId,
-      })
+      const results = await hybridSearchService.search(
+        query.trim(),
+        {
+          topK: 5,
+          userId,
+        },
+        ctx.signal
+      )
 
       logRagEvent("retrieve", "RAG tool executed", {
         service: "RagTool",

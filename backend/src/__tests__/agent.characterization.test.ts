@@ -364,29 +364,19 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     }).toMatchSnapshot("S9")
   })
 
-  // S10: 429 raised inside rag_search (stub throws RateLimitError) → current (wrong) behaviour recorded (V9)
-  test("S10 RateLimitError inside rag_search recorded as-is (V9 current behavior)", async () => {
+  // S10 (Phase 5): 429 raised inside rag_search propagates as RateLimitError (V9 fixed)
+  test("S10 RateLimitError inside rag_search propagates (Phase 5)", async () => {
     const query = "rl in tool"
-    const script: ScriptedResponse[] = [
-      decision("rag_search", { query: "x" }),
-      decision("DONE", {}, "stop"),
-      textResponse("Final after swallowed RL.", 60),
-    ]
+    const script: ScriptedResponse[] = [decision("rag_search", { query: "x" })]
     const h = await runHttp(script, makeStubHybridSearch({ error: rlError("Gemini quota") }), query)
     const w = await runWs(script, makeStubHybridSearch({ error: rlError("Gemini quota") }), query)
-    expect(h.error).toBeUndefined()
-    expect(w.error).toBeUndefined()
-    const hn = normalizeResult(h.result!)
-    const wn = normalizeResult(w.result!)
-    expectEqualOrExplain(hn, wn, "S10")
-    expect(kinds(h.script)).toEqual([
-      "generateContent:reason",
-      "generateContent:reason",
-      "generateContent:synthesis",
-    ])
+    expect(h.error).toBeInstanceOf(RateLimitError)
+    expect(w.error).toBeInstanceOf(RateLimitError)
+    expect(normErr(h.error)).toBe(normErr(w.error))
+    expect(kinds(h.script)).toEqual(["generateContent:reason"])
     expect(kinds(w.script)).toEqual(kinds(h.script))
     expect({
-      http: hn,
+      httpError: normErr(h.error),
       fetchKinds: kinds(h.script),
       wsEvents: normalizeEvents(w.events),
     }).toMatchSnapshot("S10")
@@ -435,34 +425,44 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     }).toMatchSnapshot("S11")
   })
 
-  // S12: abort while rag_search is running → current behaviour recorded (V10)
-  // Stub throws AbortError while signal aborted; tool catch currently swallows it (V9/V10).
-  test("S12 abort while rag_search running recorded as-is (V10 current behavior)", async () => {
+  // S12 (Phase 5): abort while rag_search running → aborted result, signal passed to tool (V9/V10 fixed)
+  test("S12 abort while rag_search running returns aborted and passes signal (Phase 5)", async () => {
     const query = "abort in tool"
-    const ac = new AbortController()
-    ac.abort()
     const abortErr = Object.assign(new Error("aborted"), { name: "AbortError" })
-    const script: ScriptedResponse[] = [
-      decision("rag_search", { query: "x" }),
-      decision("DONE", {}, "stop"),
-      textResponse("Final after swallowed abort.", 60),
-    ]
-    const h = await runHttp(script, makeStubHybridSearch({ error: abortErr }), query, ac.signal)
+    const ac = new AbortController()
+    const search = makeStubHybridSearch({
+      impl: async () => {
+        ac.abort()
+        throw abortErr
+      },
+    })
+    const script: ScriptedResponse[] = [decision("rag_search", { query: "x" })]
+    const h = await runHttp(script, search, query, ac.signal)
     const ac2 = new AbortController()
-    ac2.abort()
-    const w = await runWs(script, makeStubHybridSearch({ error: abortErr }), query, ac2.signal)
-    const hSnap = h.error ? { httpError: normErr(h.error) } : { http: normalizeResult(h.result!) }
-    const wSnap = w.error ? { wsError: normErr(w.error) } : { ws: normalizeResult(w.result!) }
-    if (h.error || w.error) {
-      expect(normErr(h.error)).toBe(normErr(w.error))
-    } else {
-      expectEqualOrExplain(normalizeResult(h.result!), normalizeResult(w.result!), "S12")
-    }
+    const search2 = makeStubHybridSearch({
+      impl: async () => {
+        ac2.abort()
+        throw abortErr
+      },
+    })
+    const w = await runWs(script, search2, query, ac2.signal)
+    expect(h.error).toBeUndefined()
+    expect(w.error).toBeUndefined()
+    const hn = normalizeResult(h.result!)
+    const wn = normalizeResult(w.result!)
+    expect(h.result!.status).toBe("aborted")
+    expectEqualOrExplain(hn, wn, "S12")
+    expect(kinds(h.script)).toEqual(["generateContent:reason"])
+    expect(kinds(w.script)).toEqual(kinds(h.script))
+    const hCall = search.search.mock.calls[0] as unknown[] | undefined
+    const wCall = search2.search.mock.calls[0] as unknown[] | undefined
+    const hSignal = hCall?.[2] as AbortSignal | undefined
+    const wSignal = wCall?.[2] as AbortSignal | undefined
+    expect(hSignal?.aborted).toBe(true)
+    expect(wSignal?.aborted).toBe(true)
     expect({
-      ...hSnap,
-      ...wSnap,
+      http: hn,
       fetchKinds: kinds(h.script),
-      wsFetchKinds: kinds(w.script),
       wsEvents: normalizeEvents(w.events),
     }).toMatchSnapshot("S12")
   })

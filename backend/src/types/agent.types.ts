@@ -65,11 +65,15 @@ export interface ToolDecision {
 // ── Tool Interface ────────────────────────────────────────────────────────
 // Every tool in the registry must implement this interface.
 
+export interface ToolContext {
+  signal?: AbortSignal
+}
+
 export interface AgentTool {
   name: string
   description: string // shown to the LLM — quality of this description
   // directly affects how well the agent chooses tools
-  execute: (input: Record<string, string>) => Promise<string>
+  execute: (input: Record<string, string>, ctx: ToolContext) => Promise<string>
 }
 
 // ── Agent Step (for frontend display) ─────────────────────────────────────

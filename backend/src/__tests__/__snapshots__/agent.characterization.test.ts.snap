@@ -941,37 +941,12 @@ exports[`agent characterization (HTTP vs WS, pre-refactor) S9 429 during reasoni
 }
 `;
 
-exports[`agent characterization (HTTP vs WS, pre-refactor) S10 RateLimitError inside rag_search recorded as-is (V9 current behavior): S10 1`] = `
+exports[`agent characterization (HTTP vs WS, pre-refactor) S10 RateLimitError inside rag_search propagates (Phase 5): S10 1`] = `
 {
   "fetchKinds": [
     "generateContent:reason",
-    "generateContent:reason",
-    "generateContent:synthesis",
   ],
-  "http": {
-    "citations": [],
-    "durationMs": 0,
-    "finalAnswer": "Final after swallowed RL.",
-    "iterationCount": 2,
-    "sessionId": "<session>",
-    "status": "done",
-    "steps": [
-      {
-        "description": "Searching documents: "x"",
-        "durationMs": 0,
-        "stepNumber": 1,
-        "timestamp": "<ts>",
-        "toolUsed": "rag_search",
-      },
-      {
-        "description": "Determined sufficient information gathered",
-        "durationMs": 0,
-        "stepNumber": 2,
-        "timestamp": "<ts>",
-      },
-    ],
-    "tokensUsed": 260,
-  },
+  "httpError": "AppError:Gemini quota",
   "wsEvents": [
     {
       "status": "thinking",
@@ -980,30 +955,6 @@ exports[`agent characterization (HTTP vs WS, pre-refactor) S10 RateLimitError in
     {
       "status": "searching",
       "type": "status",
-    },
-    {
-      "step": {
-        "description": "Searching documents: "x"",
-        "stepNumber": 1,
-        "toolUsed": "rag_search",
-      },
-      "type": "step",
-    },
-    {
-      "step": {
-        "description": "Determined sufficient information gathered",
-        "stepNumber": 2,
-        "toolUsed": undefined,
-      },
-      "type": "step",
-    },
-    {
-      "status": "generating",
-      "type": "status",
-    },
-    {
-      "status": "done",
-      "type": "complete",
     },
   ],
 }
@@ -1062,28 +1013,20 @@ exports[`agent characterization (HTTP vs WS, pre-refactor) S11 abort after itera
 }
 `;
 
-exports[`agent characterization (HTTP vs WS, pre-refactor) S12 abort while rag_search running recorded as-is (V10 current behavior): S12 1`] = `
+exports[`agent characterization (HTTP vs WS, pre-refactor) S12 abort while rag_search running returns aborted and passes signal (Phase 5): S12 1`] = `
 {
-  "fetchKinds": [],
+  "fetchKinds": [
+    "generateContent:reason",
+  ],
   "http": {
     "citations": [],
     "durationMs": 0,
     "finalAnswer": "",
-    "iterationCount": 0,
+    "iterationCount": 1,
     "sessionId": "<session>",
     "status": "aborted",
     "steps": [],
-    "tokensUsed": 0,
-  },
-  "ws": {
-    "citations": [],
-    "durationMs": 0,
-    "finalAnswer": "",
-    "iterationCount": 0,
-    "sessionId": "<session>",
-    "status": "aborted",
-    "steps": [],
-    "tokensUsed": 0,
+    "tokensUsed": 100,
   },
   "wsEvents": [
     {
@@ -1091,11 +1034,14 @@ exports[`agent characterization (HTTP vs WS, pre-refactor) S12 abort while rag_s
       "type": "status",
     },
     {
+      "status": "searching",
+      "type": "status",
+    },
+    {
       "status": "aborted",
       "type": "status",
     },
   ],
-  "wsFetchKinds": [],
 }
 `;
 
