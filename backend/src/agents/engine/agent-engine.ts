@@ -56,7 +56,7 @@ export class AgentEngine {
   }
 
   async run(params: AgentRunParams): Promise<AgentResult> {
-    const { query: userQuery, userId, sessionId, signal, onEvent } = params
+    const { query: userQuery, userId, sessionId, signal, onEvent, transport } = params
     return withSpan(this.tracer, "agent.run", async span => {
       const startedAt = new Date()
       const steps: AgentStep[] = []
@@ -66,18 +66,24 @@ export class AgentEngine {
       span.setAttribute(RAG_ATTRS.QUERY, userQuery.slice(0, 200))
       span.setAttribute("agent.session_id", sessionId)
       span.setAttribute("agent.user_id", userId)
+      span.setAttribute("agent.transport", transport)
 
-      this.emit(onEvent, {
-        type: "status",
-        status: "thinking",
-        sessionId,
-        message: "Analysing your question...",
-      })
+      this.emit(
+        onEvent,
+        {
+          type: "status",
+          status: "thinking",
+          sessionId,
+          message: "Analysing your question...",
+        },
+        transport
+      )
 
       logRagEvent("agent_step", "Streaming agent session started", {
-        service: "StreamingAgentService",
+        service: "AgentEngine",
         sessionId,
         userId,
+        transport,
       })
 
       const state: AgentState = {
@@ -119,8 +125,9 @@ export class AgentEngine {
               break
             }
             logError("Streaming agent reasoning failed", error, {
-              service: "StreamingAgentService",
+              service: "AgentEngine",
               sessionId,
+              transport,
             })
             throw error
           }
@@ -135,7 +142,7 @@ export class AgentEngine {
               timestamp: new Date(),
             }
             steps.push(doneStep)
-            this.emit(onEvent, { type: "step", sessionId, step: doneStep })
+            this.emit(onEvent, { type: "step", sessionId, step: doneStep }, transport)
             state.isComplete = true
             break
           }
@@ -143,18 +150,23 @@ export class AgentEngine {
           const tool = toolRegistry[decision.toolName]
           if (tool === undefined) {
             logRagEvent("agent_step", `Unknown tool: ${decision.toolName}`, {
-              service: "StreamingAgentService",
+              service: "AgentEngine",
               sessionId,
+              transport,
             })
             continue
           }
 
-          this.emit(onEvent, {
-            type: "status",
-            status: statusForTool(decision.toolName),
-            sessionId,
-            message: describeStep(decision),
-          })
+          this.emit(
+            onEvent,
+            {
+              type: "status",
+              status: statusForTool(decision.toolName),
+              sessionId,
+              message: describeStep(decision),
+            },
+            transport
+          )
 
           const toolStart = Date.now()
           let toolOutput = ""
@@ -176,8 +188,9 @@ export class AgentEngine {
             toolError = error instanceof Error ? error.message : "Tool execution failed"
             toolOutput = `Tool error: ${toolError}`
             logError(`Tool ${decision.toolName} failed`, error, {
-              service: "StreamingAgentService",
+              service: "AgentEngine",
               sessionId,
+              transport,
             })
           }
 
@@ -203,16 +216,20 @@ export class AgentEngine {
             timestamp: new Date(),
           }
           steps.push(step)
-          this.emit(onEvent, { type: "step", sessionId, step })
+          this.emit(onEvent, { type: "step", sessionId, step }, transport)
 
           if (toolSuccess && state.toolCallHistory.length > 0) {
             state.status = "evaluating"
-            this.emit(onEvent, {
-              type: "status",
-              status: "evaluating",
-              sessionId,
-              message: "Checking answer quality...",
-            })
+            this.emit(
+              onEvent,
+              {
+                type: "status",
+                status: "evaluating",
+                sessionId,
+                message: "Checking answer quality...",
+              },
+              transport
+            )
 
             state.draftAnswer = await this.draftAnswer(state, tokenUsage, signal)
 
@@ -230,14 +247,18 @@ export class AgentEngine {
             tokenUsage.total += lastEval.tokensUsed ?? 0
             state.qualityScore = lastEval.overallScore
 
-            this.emit(onEvent, {
-              type: "quality",
-              sessionId,
-              score: lastEval.overallScore,
-              shouldRetry: lastEval.shouldRetry,
-              retryReason: lastEval.retryReason,
-              suggestedQuery: lastEval.suggestedQuery,
-            })
+            this.emit(
+              onEvent,
+              {
+                type: "quality",
+                sessionId,
+                score: lastEval.overallScore,
+                shouldRetry: lastEval.shouldRetry,
+                retryReason: lastEval.retryReason,
+                suggestedQuery: lastEval.suggestedQuery,
+              },
+              transport
+            )
 
             const evalStep: AgentStep = {
               stepNumber: state.iterationCount,
@@ -248,11 +269,12 @@ export class AgentEngine {
               timestamp: new Date(),
             }
             steps.push(evalStep)
-            this.emit(onEvent, { type: "step", sessionId, step: evalStep })
+            this.emit(onEvent, { type: "step", sessionId, step: evalStep }, transport)
 
             logRagEvent("agent_step", "Self-evaluation complete", {
-              service: "StreamingAgentService",
+              service: "AgentEngine",
               sessionId,
+              transport,
               similarity: lastEval.overallScore,
             })
 
@@ -261,49 +283,34 @@ export class AgentEngine {
               break
             }
 
-            this.emit(onEvent, {
-              type: "status",
-              status: "thinking",
-              sessionId,
-              message: "Quality below threshold — searching again...",
-            })
+            this.emit(
+              onEvent,
+              {
+                type: "status",
+                status: "thinking",
+                sessionId,
+                message: "Quality below threshold — searching again...",
+              },
+              transport
+            )
           }
         }
 
         if (signal?.aborted) {
-          state.status = "aborted"
-          state.completedAt = new Date()
-          const abortedResult: AgentResult = {
-            sessionId,
-            finalAnswer: state.finalAnswer,
-            citations: state.citations,
-            steps,
-            iterationCount: state.iterationCount,
-            status: "aborted",
-            tokensUsed: tokenUsage.total,
-            durationMs: Date.now() - startedAt.getTime(),
-          }
-          this.emit(onEvent, {
-            type: "status",
-            status: "aborted",
-            sessionId,
-            message: "Request cancelled",
-          })
-          logRagEvent("agent_step", "Streaming agent session aborted", {
-            service: "StreamingAgentService",
-            sessionId,
-            iterationCount: state.iterationCount,
-          })
-          return abortedResult
+          return this.buildAbortedResult(state, steps, tokenUsage, startedAt, onEvent, transport)
         }
 
         state.status = "generating"
-        this.emit(onEvent, {
-          type: "status",
-          status: "generating",
-          sessionId,
-          message: "Writing your answer...",
-        })
+        this.emit(
+          onEvent,
+          {
+            type: "status",
+            status: "generating",
+            sessionId,
+            message: "Writing your answer...",
+          },
+          transport
+        )
 
         const { answer, citations } = await this.synthesiseFinalAnswer(state, tokenUsage, signal)
         state.finalAnswer = answer
@@ -327,11 +334,12 @@ export class AgentEngine {
           durationMs: totalDurationMs,
         }
 
-        this.emit(onEvent, { type: "complete", sessionId, result: finalResult })
+        this.emit(onEvent, { type: "complete", sessionId, result: finalResult }, transport)
 
         logRagEvent("agent_step", "Streaming agent session complete", {
-          service: "StreamingAgentService",
+          service: "AgentEngine",
           sessionId,
+          transport,
           iterationCount: state.iterationCount,
           durationMs: totalDurationMs,
         })
@@ -339,30 +347,7 @@ export class AgentEngine {
         return finalResult
       } catch (error: unknown) {
         if (signal?.aborted) {
-          state.status = "aborted"
-          state.completedAt = new Date()
-          const abortedResult: AgentResult = {
-            sessionId,
-            finalAnswer: state.finalAnswer,
-            citations: state.citations,
-            steps,
-            iterationCount: state.iterationCount,
-            status: "aborted",
-            tokensUsed: tokenUsage.total,
-            durationMs: Date.now() - startedAt.getTime(),
-          }
-          this.emit(onEvent, {
-            type: "status",
-            status: "aborted",
-            sessionId,
-            message: "Request cancelled",
-          })
-          logRagEvent("agent_step", "Streaming agent session aborted", {
-            service: "StreamingAgentService",
-            sessionId,
-            iterationCount: state.iterationCount,
-          })
-          return abortedResult
+          return this.buildAbortedResult(state, steps, tokenUsage, startedAt, onEvent, transport)
         }
         throw error
       } finally {
@@ -371,12 +356,55 @@ export class AgentEngine {
     })
   }
 
-  private emit(onEvent: AgentEventCallback | undefined, message: ServerMessage): void {
+  private buildAbortedResult(
+    state: AgentState,
+    steps: AgentStep[],
+    tokenUsage: TokenUsage,
+    startedAt: Date,
+    onEvent: AgentEventCallback | undefined,
+    transport: AgentRunParams["transport"]
+  ): AgentResult {
+    state.status = "aborted"
+    state.completedAt = new Date()
+    const abortedResult: AgentResult = {
+      sessionId: state.sessionId,
+      finalAnswer: state.finalAnswer,
+      citations: state.citations,
+      steps,
+      iterationCount: state.iterationCount,
+      status: "aborted",
+      tokensUsed: tokenUsage.total,
+      durationMs: Date.now() - startedAt.getTime(),
+    }
+    this.emit(
+      onEvent,
+      {
+        type: "status",
+        status: "aborted",
+        sessionId: state.sessionId,
+        message: "Request cancelled",
+      },
+      transport
+    )
+    logRagEvent("agent_step", "Streaming agent session aborted", {
+      service: "AgentEngine",
+      sessionId: state.sessionId,
+      transport,
+      iterationCount: state.iterationCount,
+    })
+    return abortedResult
+  }
+
+  private emit(
+    onEvent: AgentEventCallback | undefined,
+    message: ServerMessage,
+    transport: AgentRunParams["transport"]
+  ): void {
     if (onEvent === undefined) return
     try {
       onEvent(message)
     } catch (error: unknown) {
-      logError("Event callback threw", error, { service: "StreamingAgentService" })
+      logError("Event callback threw", error, { service: "AgentEngine", transport })
     }
   }
 

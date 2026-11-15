@@ -24,6 +24,7 @@ export class AgentService {
       userId,
       sessionId: crypto.randomUUID(),
       signal,
+      transport: "http",
     })
   }
 }

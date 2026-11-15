@@ -27,6 +27,13 @@ export class StreamingAgentService {
     onEvent: AgentEventCallback,
     signal?: AbortSignal
   ): Promise<AgentResult> {
-    return this.engine.run({ query: userQuery, userId, sessionId, onEvent, signal })
+    return this.engine.run({
+      query: userQuery,
+      userId,
+      sessionId,
+      onEvent,
+      signal,
+      transport: "ws",
+    })
   }
 }
