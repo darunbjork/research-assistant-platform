@@ -218,7 +218,7 @@ export class AgentWsHandler {
         break
 
       case "start":
-        await this.handleStart(message.query, message.sessionId)
+        await this.handleStart(message.query, message.sessionId, "text")
         break
 
       case "voice_start":
@@ -292,7 +292,11 @@ export class AgentWsHandler {
   }
 
   // ── Handle Agent Start ─────────────────────────────────────────────────
-  private async handleStart(query: string, sessionId: string): Promise<void> {
+  private async handleStart(
+    query: string,
+    sessionId: string,
+    origin: "text" | "voice"
+  ): Promise<void> {
     // Must be authenticated first
     if (this.userId === null) {
       this.send({
@@ -360,11 +364,10 @@ export class AgentWsHandler {
       return
     }
 
-    // Daily budget: an agent run costs 5 units. Fails closed. A run on a
-    // connection that owns an active VOICE session is voice spend, so it
-    // charges the 40% voice sub-cap (both counters, atomic) — otherwise
-    // voice-triggered runs would bypass the sub-cap entirely.
-    const viaVoice = this.voiceSession !== null
+    // Daily budget: an agent run costs 5 units. Fails closed. Voice-origin
+    // runs charge the 40% voice sub-cap (both counters, atomic); text-origin
+    // runs always charge the global budget even if a voice session is open.
+    const viaVoice = origin === "voice"
     const budgetCharged = viaVoice ? await consumeVoiceBudget(5) : await consumeGlobalBudget(5)
     if (!budgetCharged) {
       this.send({
@@ -656,15 +659,16 @@ export class AgentWsHandler {
       url: buildListenUrl(env.DEEPGRAM_WS_URL, env.DEEPGRAM_MODEL),
       apiKey: env.DEEPGRAM_API_KEY ?? "",
       sessionId,
-      onFinal: (text, fromFinalize) => {
+      onFinal: (text, meta) => {
         const latencyMs = Math.max(0, Date.now() - this.utteranceStartedAtMs)
-        this.send({ type: "transcript_final", sessionId, text, latencyMs })
+        const complete = meta.reason === "finalized"
+        this.send({ type: "transcript_final", sessionId, text, latencyMs, complete })
         logRagEvent("agent_step", "Voice final transcript received", {
           service: "AgentWsHandler",
           sessionId,
           userId,
           latencyMs,
-          fromFinalize,
+          reason: meta.reason,
         })
         void saveVoiceTranscript({ userId, sessionId, text, latencyMs }).catch((error: unknown) => {
           logError("Saving voice transcript failed", error, {
@@ -672,6 +676,21 @@ export class AgentWsHandler {
             sessionId,
           })
         })
+        if (complete) {
+          void this.handleStart(text, sessionId, "voice").catch((error: unknown) => {
+            logError("Voice-origin agent start failed", error, {
+              service: "AgentWsHandler",
+              sessionId,
+              userId,
+            })
+          })
+        } else {
+          this.sendVoiceError(
+            "TRANSCRIPT_INCOMPLETE",
+            "I didn't catch all of that — please try again.",
+            sessionId
+          )
+        }
       },
       onFailure: failure => {
         if (failure.action === "count") {
