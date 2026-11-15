@@ -1,6 +1,10 @@
 import type { AgentState } from "../types/agent.types"
 import type { ToolRegistry } from "../agents/tools/index"
-import { buildDraftPrompt, buildReasoningPrompt, buildSynthesisPrompt } from "../agents/engine/prompts"
+import {
+  buildDraftPrompt,
+  buildReasoningPrompt,
+  buildSynthesisPrompt,
+} from "../agents/engine/prompts"
 import type { EvaluationResult } from "../agents/nodes/evaluate.node"
 
 function makeState(): AgentState {

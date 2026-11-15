@@ -41,7 +41,8 @@ function classifyFetch(url: string, init?: RequestInit): FetchKind {
     text = ""
   }
   const t = text.toLowerCase()
-  if (text.includes("quality evaluator for an AI research assistant")) return "generateContent:evaluate"
+  if (text.includes("quality evaluator for an AI research assistant"))
+    return "generateContent:evaluate"
   if (text.includes("deciding the next action")) return "generateContent:reason"
   if (t.includes("draft a concise answer") || t.includes("draft answer (2-4 sentences)")) {
     return "generateContent:draft"
@@ -57,34 +58,46 @@ function classifyFetch(url: string, init?: RequestInit): FetchKind {
 export function scriptGemini(responses: ScriptedResponse[]): GeminiScriptHandle {
   let index = 0
   const records: ScriptRecord[] = []
-  const spy = jest.spyOn(global, "fetch").mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
-    const bodyText = typeof init?.body === "string" ? init.body : ""
-    const kind = classifyFetch(url, init)
-    records.push({ kind, url, bodyText })
+  const spy = jest
+    .spyOn(global, "fetch")
+    .mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url =
+        typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url
+      const bodyText = typeof init?.body === "string" ? init.body : ""
+      const kind = classifyFetch(url, init)
+      records.push({ kind, url, bodyText })
 
-    const scripted = responses[index++]
-    if (!scripted) {
-      throw new Error(`Unexpected Gemini/fetch call #${index} (${kind}) to ${url}`)
-    }
+      const scripted = responses[index++]
+      if (!scripted) {
+        throw new Error(`Unexpected Gemini/fetch call #${index} (${kind}) to ${url}`)
+      }
 
-    if (scripted.kind === "throw") {
-      throw scripted.error
-    }
+      if (scripted.kind === "throw") {
+        throw scripted.error
+      }
 
-    if (scripted.kind === "httpError") {
-      const headers = new Headers({ "Content-Type": "application/json", ...(scripted.headers ?? {}) })
-      return new Response(JSON.stringify(scripted.body ?? { error: { message: "error", code: scripted.status } }), {
-        status: scripted.status,
-        statusText: scripted.status === 429 ? "Too Many Requests" : "Error",
-        headers,
+      if (scripted.kind === "httpError") {
+        const headers = new Headers({
+          "Content-Type": "application/json",
+          ...(scripted.headers ?? {}),
+        })
+        return new Response(
+          JSON.stringify(scripted.body ?? { error: { message: "error", code: scripted.status } }),
+          {
+            status: scripted.status,
+            statusText: scripted.status === 429 ? "Too Many Requests" : "Error",
+            headers,
+          }
+        )
+      }
+
+      const status = scripted.status ?? 200
+      const headers = new Headers({
+        "Content-Type": "application/json",
+        ...(scripted.headers ?? {}),
       })
-    }
-
-    const status = scripted.status ?? 200
-    const headers = new Headers({ "Content-Type": "application/json", ...(scripted.headers ?? {}) })
-    return new Response(JSON.stringify(scripted.body), { status, headers })
-  })
+      return new Response(JSON.stringify(scripted.body), { status, headers })
+    })
 
   return {
     records,
@@ -111,7 +124,11 @@ export function makeGeminiJson(text: string, totalTokens = 100): unknown {
   }
 }
 
-export function decision(toolName: string, input: Record<string, string> = {}, reason = "test"): ScriptedResponse {
+export function decision(
+  toolName: string,
+  input: Record<string, string> = {},
+  reason = "test"
+): ScriptedResponse {
   return { kind: "json", body: makeGeminiJson(JSON.stringify({ toolName, input, reason })) }
 }
 
@@ -150,7 +167,13 @@ export function http429(retryAfterSeconds = 0): ScriptedResponse {
 }
 
 export function makeHybridResult(
-  overrides: Partial<{ content: string; source: string; rrfScore: number; pageNumber: number | null; id: string }> = {}
+  overrides: Partial<{
+    content: string
+    source: string
+    rrfScore: number
+    pageNumber: number | null
+    id: string
+  }> = {}
 ): HybridSearchResult {
   return {
     chunk: {
@@ -190,7 +213,9 @@ export function makeStubHybridSearch(options: StubSearchOptions = {}): {
   return { search, calls }
 }
 
-export function makeStubGenerationService(fallbackAnswer = "I don't have enough information in the provided documents."): {
+export function makeStubGenerationService(
+  fallbackAnswer = "I don't have enough information in the provided documents."
+): {
   generateWithFallback: jest.Mock
   generate: jest.Mock
   estimatePromptTokens: jest.Mock

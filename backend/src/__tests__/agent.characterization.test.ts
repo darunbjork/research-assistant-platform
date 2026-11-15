@@ -25,7 +25,10 @@ jest.setTimeout(10000)
 
 const FIXED_SESSION = "session-fixed"
 
-function makeServices(searchStub: { search: jest.Mock }): { hybrid: HybridSearchService; generation: GenerationService } {
+function makeServices(searchStub: { search: jest.Mock }): {
+  hybrid: HybridSearchService
+  generation: GenerationService
+} {
   const hybrid = searchStub as unknown as HybridSearchService
   const generation = makeStubGenerationService() as unknown as GenerationService
   return { hybrid, generation }
@@ -55,7 +58,12 @@ async function runWs(
   search: ReturnType<typeof makeStubHybridSearch>,
   query: string,
   signal?: AbortSignal
-): Promise<{ result?: AgentResult; error?: unknown; events: ServerMessage[]; script: GeminiScriptHandle }> {
+): Promise<{
+  result?: AgentResult
+  error?: unknown
+  events: ServerMessage[]
+  script: GeminiScriptHandle
+}> {
   const { hybrid, generation } = makeServices(search)
   const events: ServerMessage[] = []
   const onEvent = (m: ServerMessage): void => {
@@ -103,7 +111,9 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       textResponse("Final answer about alpha.", 120),
     ]
     const mk = (): ReturnType<typeof makeStubHybridSearch> =>
-      makeStubHybridSearch({ results: [makeHybridResult({ content: "alpha evidence", source: "a.txt", rrfScore: 0.9 })] })
+      makeStubHybridSearch({
+        results: [makeHybridResult({ content: "alpha evidence", source: "a.txt", rrfScore: 0.9 })],
+      })
     const h = await runHttp(script, mk(), query)
     const w = await runWs(script, mk(), query)
     if (h.error || w.error) throw h.error ?? w.error
@@ -117,7 +127,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       "generateContent:synthesis",
     ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S1")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S1")
   })
 
   // S2: low quality with suggested query → second search with that query → done
@@ -126,7 +140,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     const script: ScriptedResponse[] = [
       decision("rag_search", { query: "beta" }),
       textResponse("draft one", 50),
-      evalResponse(0.4, { shouldRetry: true, retryReason: "need better query", suggestedQuery: "beta details" }),
+      evalResponse(0.4, {
+        shouldRetry: true,
+        retryReason: "need better query",
+        suggestedQuery: "beta details",
+      }),
       decision("rag_search", { query: "beta details" }),
       textResponse("draft two", 50),
       evalResponse(0.9, { shouldRetry: false }),
@@ -148,7 +166,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       "generateContent:synthesis",
     ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S2")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S2")
   })
 
   // S3: model says DONE too early while unused suggested query exists → override → search
@@ -157,7 +179,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     const script: ScriptedResponse[] = [
       decision("rag_search", { query: "gamma" }),
       textResponse("draft one", 50),
-      evalResponse(0.4, { shouldRetry: true, retryReason: "try again", suggestedQuery: "gamma refined" }),
+      evalResponse(0.4, {
+        shouldRetry: true,
+        retryReason: "try again",
+        suggestedQuery: "gamma refined",
+      }),
       decision("DONE", {}, "done too early"),
       textResponse("draft two", 50),
       evalResponse(0.9, { shouldRetry: false }),
@@ -179,7 +205,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       "generateContent:synthesis",
     ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S3")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S3")
   })
 
   // S4: DONE with no tool calls at all → deterministic no-information fallback
@@ -194,7 +224,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     expectEqualOrExplain(hn, wn, "S4")
     expect(kinds(h.script)).toEqual(["generateContent:reason"])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S4")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S4")
   })
 
   // S5: calculator path
@@ -219,7 +253,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       "generateContent:synthesis",
     ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S5")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S5")
   })
 
   // S6: MAX_ITERATIONS (5) reached
@@ -231,7 +269,9 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     for (let i = 1; i <= 5; i++) {
       script.push(decision("rag_search", { query: `q${i}` }))
       script.push(textResponse("draft", 30))
-      script.push(evalResponse(0.4, { shouldRetry: true, retryReason: "low", suggestedQuery: `q${i + 1}` }))
+      script.push(
+        evalResponse(0.4, { shouldRetry: true, retryReason: "low", suggestedQuery: `q${i + 1}` })
+      )
     }
     script.push(textResponse("Final after max.", 60))
     const h = await runHttp(script, makeStubHybridSearch(), query)
@@ -246,7 +286,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       .concat(["generateContent:synthesis"])
     expect(kinds(h.script)).toEqual(expectedKinds)
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S6")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S6")
   })
 
   // S7: malformed decision JSON → error
@@ -260,7 +304,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     expect(normErr(h.error)).toBe(normErr(w.error))
     expect(kinds(h.script)).toEqual(["generateContent:reason"])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ httpError: normErr(h.error), fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S7")
+    expect({
+      httpError: normErr(h.error),
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S7")
   })
 
   // S8: rag_search throws generic Error → failed step recorded, loop continues (V9 keeps this for non-abort/non-429)
@@ -271,15 +319,27 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
       decision("DONE", {}, "give up"),
       textResponse("Final despite error.", 60),
     ]
-    const h = await runHttp(script, makeStubHybridSearch({ error: new Error("search boom") }), query)
+    const h = await runHttp(
+      script,
+      makeStubHybridSearch({ error: new Error("search boom") }),
+      query
+    )
     const w = await runWs(script, makeStubHybridSearch({ error: new Error("search boom") }), query)
     if (h.error || w.error) throw h.error ?? w.error
     const hn = normalizeResult(h.result!)
     const wn = normalizeResult(w.result!)
     expectEqualOrExplain(hn, wn, "S8")
-    expect(kinds(h.script)).toEqual(["generateContent:reason", "generateContent:reason", "generateContent:synthesis"])
+    expect(kinds(h.script)).toEqual([
+      "generateContent:reason",
+      "generateContent:reason",
+      "generateContent:synthesis",
+    ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S8")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S8")
   })
 
   // S9: 429 during reasoning → RateLimitError propagates, no further calls (Retry-After: 0, no real sleep)
@@ -291,9 +351,17 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     expect(h.error).toBeInstanceOf(RateLimitError)
     expect(w.error).toBeInstanceOf(RateLimitError)
     expect(normErr(h.error)).toBe(normErr(w.error))
-    expect(kinds(h.script)).toEqual(["generateContent:reason", "generateContent:reason", "generateContent:reason"])
+    expect(kinds(h.script)).toEqual([
+      "generateContent:reason",
+      "generateContent:reason",
+      "generateContent:reason",
+    ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ httpError: normErr(h.error), fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S9")
+    expect({
+      httpError: normErr(h.error),
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S9")
   })
 
   // S10: 429 raised inside rag_search (stub throws RateLimitError) → current (wrong) behaviour recorded (V9)
@@ -311,9 +379,17 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     const hn = normalizeResult(h.result!)
     const wn = normalizeResult(w.result!)
     expectEqualOrExplain(hn, wn, "S10")
-    expect(kinds(h.script)).toEqual(["generateContent:reason", "generateContent:reason", "generateContent:synthesis"])
+    expect(kinds(h.script)).toEqual([
+      "generateContent:reason",
+      "generateContent:reason",
+      "generateContent:synthesis",
+    ])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S10")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S10")
   })
 
   // S11: abort after iteration 1 tool execution completes → aborted result, no further fetch calls.
@@ -352,7 +428,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     expect((h.result as AgentResult).status).toBe("aborted")
     expect(kinds(h.script)).toEqual(["generateContent:reason", "generateContent:draft"])
     expect(kinds(w.script)).toEqual(kinds(h.script))
-    expect({ http: hn, fetchKinds: kinds(h.script), wsEvents: normalizeEvents(w.events) }).toMatchSnapshot("S11")
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S11")
   })
 
   // S12: abort while rag_search is running → current behaviour recorded (V10)
@@ -393,7 +473,11 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     const query = "draft fail"
     const maxTokensDraftBody = {
       candidates: [
-        { content: { parts: [{ text: "partial" }], role: "model" }, finishReason: "MAX_TOKENS", safetyRatings: [] },
+        {
+          content: { parts: [{ text: "partial" }], role: "model" },
+          finishReason: "MAX_TOKENS",
+          safetyRatings: [],
+        },
       ],
       usageMetadata: { totalTokenCount: 10 },
     }
