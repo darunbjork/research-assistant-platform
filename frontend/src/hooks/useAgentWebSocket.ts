@@ -43,6 +43,13 @@ interface WsVoiceErrorMsg {
   code?: string;
   message: string;
 }
+interface WsTranscriptFinalMsg {
+  type: "transcript_final";
+  sessionId: string;
+  text: string;
+  latencyMs: number;
+  complete: boolean;
+}
 interface WsPongMsg {
   type: "pong";
 }
@@ -56,6 +63,7 @@ type ServerMsg =
   | WsCompleteMsg
   | WsErrorMsg
   | WsVoiceErrorMsg
+  | WsTranscriptFinalMsg
   | WsPongMsg;
 
 // ── Connection States ─────────────────────────────────────────────────────
@@ -65,6 +73,13 @@ export type WsConnectionState =
   | "connected"
   | "authenticated"
   | "error";
+
+export interface TranscriptFinal {
+  sessionId: string;
+  text: string;
+  complete: boolean;
+  latencyMs: number;
+}
 
 // ── Hook Return Type ──────────────────────────────────────────────────────
 export interface UseAgentWebSocketReturn {
@@ -79,6 +94,8 @@ export interface UseAgentWebSocketReturn {
   error: string | null;
   /** Last voice-layer refusal (quota, session, budget…) — null when none. */
   voiceError: string | null;
+  /** Final voice transcript from the server (voice turns). */
+  transcriptFinal: TranscriptFinal | null;
   isRunning: boolean;
   startQuery: (query: string) => void;
   disconnect: () => void;
@@ -114,6 +131,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
   const [qualityScore, setQualityScore] = useState<number | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [voiceError, setVoiceError] = useState<string | null>(null);
+  const [transcriptFinal, setTranscriptFinal] = useState<TranscriptFinal | null>(null);
   const [isRunning, setIsRunning] = useState(false);
 
   const wsRef = useRef<WebSocket | null>(null);
@@ -209,6 +227,27 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
           } else {
             setError(message.message);
             setCurrentMessage("Voice error");
+            if (message.code === "TRANSCRIPT_INCOMPLETE") {
+              // Voice transcript arrived incomplete — do not await an agent run.
+              setIsRunning(false);
+            }
+          }
+          break;
+
+        case "transcript_final":
+          setTranscriptFinal({
+            sessionId: message.sessionId,
+            text: message.text,
+            complete: message.complete,
+            latencyMs: message.latencyMs,
+          });
+          if (message.complete) {
+            // Server starts the agent for finalized voice transcripts.
+            resetQueryState();
+            setIsRunning(true);
+            setCurrentMessage("Starting...");
+          } else {
+            setIsRunning(false);
           }
           break;
 
@@ -413,6 +452,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     qualityScore,
     error,
     voiceError,
+    transcriptFinal,
     isRunning,
     startQuery,
     disconnect,

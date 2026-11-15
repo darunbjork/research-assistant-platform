@@ -65,21 +65,32 @@ jest.mock("../services/deepgram.stream", () => {
       capturedOnFinal = opts.onFinal
     }
   }
-  const active = new Map<string, DeepgramStream>()
+  const active = new Map<string, { stream: DeepgramStream; superseded: () => void }>()
   return {
     DeepgramStream,
     buildListenUrl: () => "ws://fake",
     classifyHandshakeStatus: () => "count",
     DeepgramHandshakeError: class extends Error { status: number | null = null },
-    registerUpstream: (userId: string, s: DeepgramStream) => active.set(userId, s),
-    unregisterUpstream: (userId: string) => active.delete(userId),
-    closeAllVoiceUpstreams: () => { for (const s of active.values()) s.close(); active.clear() },
+    registerUpstream: (userId: string, reg: { stream: DeepgramStream; superseded: () => void }) => {
+      const displaced = active.get(userId) ?? null
+      active.set(userId, reg)
+      return displaced
+    },
+    unregisterUpstream: (userId: string, stream: DeepgramStream) => {
+      const cur = active.get(userId)
+      if (cur?.stream === stream) active.delete(userId)
+    },
+    closeAllVoiceUpstreams: () => {
+      for (const reg of active.values()) reg.stream.close()
+      active.clear()
+    },
   }
 })
 jest.mock("../services/stt.service", () => ({
   sttBreaker: {
     state: "closed",
     consecutiveFailures: 0,
+    isAvailable: () => true,
     canAttempt: () => true,
     recordFailure: jest.fn(),
     recordSuccess: jest.fn(),
@@ -88,6 +99,7 @@ jest.mock("../services/stt.service", () => ({
 }))
 
 import { AgentWsHandler } from "../websocket/agent.ws.handler"
+import { closeAllVoiceUpstreams } from "../services/deepgram.stream"
 
 type Listener = (...args: unknown[]) => void
 class FakeWebSocket {
@@ -123,6 +135,7 @@ async function setup(): Promise<FakeWebSocket> {
 describe("voice transcript_final reasons (Step 3)", () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    closeAllVoiceUpstreams()
     capturedOnFinal = null
     mockRedisEval.mockImplementation(async (): Promise<unknown> => [1, 1])
   })

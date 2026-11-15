@@ -115,6 +115,25 @@ export default function AgentChat() {
     ]);
   }, [ws.result, chatMode]);
 
+  // ── Voice transcript (Day 5b): show finalized/incomplete transcript as user turn ──
+  const lastTranscriptRef = useRef<typeof ws.transcriptFinal>(null);
+
+  useEffect(() => {
+    const transcript = ws.transcriptFinal;
+    if (!transcript || transcript === lastTranscriptRef.current || chatMode !== "ws-agent")
+      return;
+    lastTranscriptRef.current = transcript;
+    setMessages((prev) => [
+      ...prev,
+      {
+        id: generateId(),
+        text: `🎤 (voice) ${transcript.text}`,
+        sender: "user",
+        timestamp: formatTime(new Date()),
+      },
+    ]);
+  }, [ws.transcriptFinal, chatMode]);
+
   // ── Determine active status ────────────────────────────────────────────
   const activeStatus: AgentStatus =
     chatMode === "ws-agent" ? ws.agentStatus : httpStatus;
