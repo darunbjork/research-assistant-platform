@@ -438,14 +438,16 @@ describe("voice session (Day 3a)", () => {
       expect(mockRedis.eval).toHaveBeenCalledTimes(1) // voice_start cost 1
 
       // Simulate server-triggered voice-origin agent start (as on finalized transcript).
-      await (handler as unknown as { handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void> }).handleStart(
-        "transcribed query",
-        "s1",
-        "voice"
-      )
+      await (
+        handler as unknown as {
+          handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
+        }
+      ).handleStart("transcribed query", "s1", "voice")
 
       expect(mockRedis.eval).toHaveBeenCalledTimes(2)
-      const agentRunCall = ((mockRedis.eval as jest.Mock).mock.calls[1] as unknown[] | undefined)?.[4]
+      const agentRunCall = (
+        (mockRedis.eval as jest.Mock).mock.calls[1] as unknown[] | undefined
+      )?.[4]
       expect(agentRunCall).toBe("5")
       expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
       expect(errors()).toHaveLength(0)
@@ -456,11 +458,11 @@ describe("voice session (Day 3a)", () => {
       await startVoice()
       ;(mockRedis.eval as jest.Mock).mockResolvedValueOnce([-1, -1]) // agent run refused
 
-      await (handler as unknown as { handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void> }).handleStart(
-        "budgeted out",
-        "s3",
-        "voice"
-      )
+      await (
+        handler as unknown as {
+          handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
+        }
+      ).handleStart("budgeted out", "s3", "voice")
 
       expect(errors()).toMatchObject([{ code: "CAPACITY_REACHED" }])
       expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
@@ -616,7 +618,7 @@ describe("voice session (Day 3a)", () => {
           _onEvent: unknown,
           signal?: AbortSignal
         ): Promise<undefined> =>
-          await new Promise<undefined>((resolve) => {
+          await new Promise<undefined>(resolve => {
             const timer = setTimeout(() => {
               if (!signal?.aborted) {
                 geminiCalls += 1
@@ -636,9 +638,11 @@ describe("voice session (Day 3a)", () => {
       )
 
       // Utterance finalized → server-triggered voice-origin agent run starts.
-      const runPromise = (handler as unknown as {
-        handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
-      }).handleStart("final transcript", "s-abort", "voice")
+      const runPromise = (
+        handler as unknown as {
+          handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
+        }
+      ).handleStart("final transcript", "s-abort", "voice")
 
       await flush()
       expect(mockStreamingRun).toHaveBeenCalledTimes(1)
@@ -646,7 +650,7 @@ describe("voice session (Day 3a)", () => {
       // Socket closes during the agent run.
       ws.emit("close", 1006, Buffer.alloc(0))
       await flush()
-      await new Promise((r) => setTimeout(r, 80))
+      await new Promise(r => setTimeout(r, 80))
       await runPromise
 
       expect(sawAbort).toBe(true)
