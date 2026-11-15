@@ -11,6 +11,16 @@ From `cd backend && npm run test:coverage`:
 - Tests: 749 passed, 749 total
 - Coverage: `agent.service.ts` 96.96% stmts / 79.34% branch / 100% funcs / 96.92% lines (348,388,537,554,611-613); `streaming.agent.service.ts` 95.6% / 73.33% / 100% / 96.64% (174-178,538,641-645)
 
+
+## Repo-wide coverage totals (floor, from `npx jest --coverage --coverageReporters=text-summary`)
+
+> Note: this coverage run reported 2 failed suites / 4 failed tests in unrelated `text-extraction.service` tests (environment/parser variance), 49 passed suites / 745 passed tests; totals below are from the generated `coverage/coverage-summary.json` and are the **repo-wide floor** (statements/branches/functions/lines), not per-file agent numbers.
+
+- Statements: **60.96%** (1498/2457)
+- Branches: **52.01%** (528/1015)
+- Functions: **59.23%** (231/390)
+- Lines: **61.20%** (1458/2382)
+
 ## Divergence map confirmation
 
 | # | Status | Evidence (current line numbers) | Notes |
@@ -48,3 +58,6 @@ Count: 2 entry points + 8 test files + 2 scripts (matches expectation).
 - `frontend/src` has no dependency on `stream-` citation prefix.
 - HTTP and WS both currently emit/return success status `"done"`; V6 not observed as a behavioral difference but must be locked by characterization snapshots.
 - `search` already supports an abort signal end-to-end except the tool boundary (V10).
+
+## Characterization notes (Phase 1, pending)
+- To be filled after characterization run.
