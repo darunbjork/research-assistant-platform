@@ -1,0 +1,1158 @@
+// Jest Snapshot v1, https://jestjs.io/docs/snapshot-testing
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S1 rag_search then quality >= 0.7 then done: S1 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "a.txt",
+        "excerpt": "alpha evidence",
+        "pageNumber": undefined,
+        "relevanceScore": 0.9,
+      },
+    ],
+    "durationMs": 0,
+    "finalAnswer": "Final answer about alpha.",
+    "iterationCount": 1,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "alpha"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 83% — sufficient ✓",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 350,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "alpha"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "",
+      "scoreBucket": "high",
+      "shouldRetry": false,
+      "suggestedQuery": undefined,
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 83% — sufficient ✓",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S2 low quality retry with suggested query then done: S2 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+    ],
+    "durationMs": 0,
+    "finalAnswer": "Final beta answer.",
+    "iterationCount": 2,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "beta"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 45% — retrying (need better query)",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+      },
+      {
+        "description": "Searching documents: "beta details"",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 77% — sufficient ✓",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 480,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "beta"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "need better query",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "beta details",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 45% — retrying (need better query)",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "beta details"",
+        "stepNumber": 2,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "",
+      "scoreBucket": "high",
+      "shouldRetry": false,
+      "suggestedQuery": undefined,
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 77% — sufficient ✓",
+        "stepNumber": 2,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S3 DONE overridden by unused suggested query: S3 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+    ],
+    "durationMs": 0,
+    "finalAnswer": "Final gamma.",
+    "iterationCount": 2,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "gamma"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 45% — retrying (try again)",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+      },
+      {
+        "description": "Searching documents: "gamma refined"",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 77% — sufficient ✓",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 480,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "gamma"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "try again",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "gamma refined",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 45% — retrying (try again)",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "gamma refined"",
+        "stepNumber": 2,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "",
+      "scoreBucket": "high",
+      "shouldRetry": false,
+      "suggestedQuery": undefined,
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 77% — sufficient ✓",
+        "stepNumber": 2,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S4 DONE with no tool calls uses fallback: S4 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+  ],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "I don't have enough information in the provided documents.",
+    "iterationCount": 1,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Determined sufficient information gathered",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 100,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Determined sufficient information gathered",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S5 calculator path: S5 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "The result is 4.",
+    "iterationCount": 1,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Calculating: 2+2",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "calculator",
+      },
+      {
+        "description": "Quality check: 78% — sufficient ✓",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 230,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "calculating",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Calculating: 2+2",
+        "stepNumber": 1,
+        "toolUsed": "calculator",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "",
+      "scoreBucket": "high",
+      "shouldRetry": false,
+      "suggestedQuery": undefined,
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 78% — sufficient ✓",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S6 max iterations reached: S6 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:evaluate",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+      {
+        "chunkId": "<chunk>",
+        "documentId": "<doc>",
+        "documentName": "doc.txt",
+        "excerpt": "Relevant evidence content about the query.",
+        "pageNumber": undefined,
+        "relevanceScore": 0.03,
+      },
+    ],
+    "durationMs": 0,
+    "finalAnswer": "Final after max.",
+    "iterationCount": 5,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "q1"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 45% — retrying (low)",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+      },
+      {
+        "description": "Searching documents: "q2"",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 47% — retrying (low)",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+      },
+      {
+        "description": "Searching documents: "q3"",
+        "durationMs": 0,
+        "stepNumber": 3,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 49% — retrying (low)",
+        "durationMs": 0,
+        "stepNumber": 3,
+        "timestamp": "<ts>",
+      },
+      {
+        "description": "Searching documents: "q4"",
+        "durationMs": 0,
+        "stepNumber": 4,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 49% — retrying (low)",
+        "durationMs": 0,
+        "stepNumber": 4,
+        "timestamp": "<ts>",
+      },
+      {
+        "description": "Searching documents: "q5"",
+        "durationMs": 0,
+        "stepNumber": 5,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Quality check: 49% — retrying (low)",
+        "durationMs": 0,
+        "stepNumber": 5,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 960,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "q1"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "low",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "q2",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 45% — retrying (low)",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "q2"",
+        "stepNumber": 2,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "low",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "q3",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 47% — retrying (low)",
+        "stepNumber": 2,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "q3"",
+        "stepNumber": 3,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "low",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "q4",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 49% — retrying (low)",
+        "stepNumber": 3,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "q4"",
+        "stepNumber": 4,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "low",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "q5",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 49% — retrying (low)",
+        "stepNumber": 4,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "q5"",
+        "stepNumber": 5,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "low",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": "q6",
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 49% — retrying (low)",
+        "stepNumber": 5,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S7 malformed decision JSON throws: S7 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+  ],
+  "httpError": "Error:Gemini returned an invalid tool decision. Please try again.",
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S8 rag_search generic error continues loop: S8 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:reason",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "Final despite error.",
+    "iterationCount": 2,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "x"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Determined sufficient information gathered",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 260,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "x"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "step": {
+        "description": "Determined sufficient information gathered",
+        "stepNumber": 2,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S9 429 during reasoning propagates RateLimitError: S9 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:reason",
+    "generateContent:reason",
+  ],
+  "httpError": "AppError:Gemini's rate or quota limit was reached. Try again in 1 seconds. If it continues, check the project's Gemini API quota.",
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S10 RateLimitError inside rag_search recorded as-is (V9 current behavior): S10 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:reason",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "Final after swallowed RL.",
+    "iterationCount": 2,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "x"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Determined sufficient information gathered",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 260,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "x"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "step": {
+        "description": "Determined sufficient information gathered",
+        "stepNumber": 2,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S11 abort after iteration 1 tool execution: S11 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+  ],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "",
+    "iterationCount": 1,
+    "sessionId": "<session>",
+    "status": "aborted",
+    "steps": [
+      {
+        "description": "Searching documents: "x"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+    ],
+    "tokensUsed": 100,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "x"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "status": "aborted",
+      "type": "status",
+    },
+  ],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S12 abort while rag_search running recorded as-is (V10 current behavior): S12 1`] = `
+{
+  "fetchKinds": [],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "",
+    "iterationCount": 0,
+    "sessionId": "<session>",
+    "status": "aborted",
+    "steps": [],
+    "tokensUsed": 0,
+  },
+  "ws": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "",
+    "iterationCount": 0,
+    "sessionId": "<session>",
+    "status": "aborted",
+    "steps": [],
+    "tokensUsed": 0,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "aborted",
+      "type": "status",
+    },
+  ],
+  "wsFetchKinds": [],
+}
+`;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S13 MAX_TOKENS draft response current behavior: S13 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:reason",
+  ],
+  "httpError": "Error:Gemini returned an invalid tool decision. Please try again.",
+  "wsError": "Error:Gemini returned an invalid tool decision. Please try again.",
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "x"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "status": "evaluating",
+      "type": "status",
+    },
+    {
+      "retryReason": "Draft answer may not be well grounded in the retrieved evidence",
+      "scoreBucket": "low",
+      "shouldRetry": true,
+      "suggestedQuery": undefined,
+      "type": "quality",
+    },
+    {
+      "step": {
+        "description": "Quality check: 22% — retrying (Draft answer may not be well grounded in the retrieved evidence)",
+        "stepNumber": 1,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+  ],
+  "wsFetchKinds": [
+    "generateContent:reason",
+    "generateContent:draft",
+    "generateContent:reason",
+  ],
+}
+`;
