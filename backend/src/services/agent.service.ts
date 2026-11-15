@@ -23,6 +23,8 @@ import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 import { getTracer } from "../telemetry/tracer"
 import { parseToolDecision } from "../agents/engine/decision"
+import { extractCitationsFromHistory } from "../agents/engine/citations"
+import { describeStep, statusForTool } from "../agents/engine/steps"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
 const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
@@ -145,7 +147,7 @@ export class AgentService {
             continue
           }
 
-          this.updateStatusForTool(state, decision.toolName)
+          state.status = statusForTool(decision.toolName)
 
           const toolStart = Date.now()
           let toolOutput = ""
@@ -189,7 +191,7 @@ export class AgentService {
 
           steps.push({
             stepNumber: state.iterationCount,
-            description: this.describeStep(decision),
+            description: describeStep(decision),
             toolUsed: decision.toolName,
             durationMs: toolDurationMs,
             timestamp: new Date(),
@@ -527,59 +529,9 @@ RULES:
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
     const answer = geminiText(response)
-    const citations = this.extractCitationsFromHistory(state.toolCallHistory)
+    const citations = extractCitationsFromHistory(state.toolCallHistory)
 
     return { answer, citations }
-  }
-
-  private updateStatusForTool(state: AgentState, toolName: string): void {
-    if (toolName === "rag_search") state.status = "searching"
-    else if (toolName === "calculator") state.status = "calculating"
-    else state.status = "searching"
-  }
-
-  private extractCitationsFromHistory(toolCalls: ToolCall[]): Citation[] {
-    const citations: Citation[] = []
-
-    toolCalls
-      .filter((tc: ToolCall) => tc.toolName === "rag_search" && tc.success)
-      .forEach((tc: ToolCall) => {
-        const sourcePattern =
-          /\[Result \d+\] \(source: ([^,)]+)(?:, page (\d+))?, relevance: ([\d.]+)\)\n([\s\S]*?)(?=---|\[Result|$)/g
-
-        let match = sourcePattern.exec(tc.output)
-        while (match !== null) {
-          const [, sourceName, pageStr, scoreStr, content] = match
-
-          if (sourceName && content) {
-            citations.push({
-              chunkId: `agent-${Date.now()}-${citations.length}`,
-              documentId: "agent-retrieved",
-              documentName: sourceName.trim(),
-              pageNumber: pageStr ? parseInt(pageStr, 10) : undefined,
-              excerpt: content.trim().slice(0, 200),
-              relevanceScore: parseFloat(scoreStr ?? "0"),
-            })
-          }
-
-          match = sourcePattern.exec(tc.output)
-        }
-      })
-
-    return citations
-  }
-
-  private describeStep(decision: ToolDecision): string {
-    switch (decision.toolName) {
-      case "rag_search":
-        return `Searching documents: "${decision.input["query"] ?? ""}"`
-      case "calculator":
-        return `Calculating: ${decision.input["expression"] ?? ""}`
-      case "web_search":
-        return `Searching the web: "${decision.input["query"] ?? ""}"`
-      default:
-        return `Running tool: ${decision.toolName}`
-    }
   }
 
   private async callGemini(

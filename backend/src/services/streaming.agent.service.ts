@@ -47,6 +47,8 @@ import { RateLimitError } from "../middleware/error.middleware"
 import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 import { parseToolDecision } from "../agents/engine/decision"
+import { extractCitationsFromHistory } from "../agents/engine/citations"
+import { describeStep, statusForTool } from "../agents/engine/steps"
 import type { AgentEventCallback } from "../agents/engine/types"
 
 // ── Constants ──────────────────────────────────────────────────────────────
@@ -178,18 +180,11 @@ export class StreamingAgentService {
         }
 
         // Emit status for the tool that is about to run
-        const toolStatus =
-          decision.toolName === "rag_search"
-            ? "searching"
-            : decision.toolName === "calculator"
-              ? "calculating"
-              : "searching"
-
         this.emit(onEvent, {
           type: "status",
-          status: toolStatus,
+          status: statusForTool(decision.toolName),
           sessionId,
-          message: this.describeStep(decision),
+          message: describeStep(decision),
         })
 
         const toolStart = Date.now()
@@ -227,7 +222,7 @@ export class StreamingAgentService {
 
         const step: AgentStep = {
           stepNumber: state.iterationCount,
-          description: this.describeStep(decision),
+          description: describeStep(decision),
           toolUsed: decision.toolName,
           durationMs: toolDurationMs,
           timestamp: new Date(),
@@ -577,46 +572,7 @@ RULES:
 
     return {
       answer: geminiText(response),
-      citations: this.extractCitationsFromHistory(state.toolCallHistory),
-    }
-  }
-
-  private extractCitationsFromHistory(toolCalls: ToolCall[]): Citation[] {
-    const citations: Citation[] = []
-    toolCalls
-      .filter(tc => tc.toolName === "rag_search" && tc.success)
-      .forEach(tc => {
-        const pattern =
-          /\[Result \d+\] \(source: ([^,)]+)(?:, page (\d+))?, relevance: ([\d.]+)\)\n([\s\S]*?)(?=---|\[Result|$)/g
-        let match = pattern.exec(tc.output)
-        while (match !== null) {
-          const [, sourceName, pageStr, scoreStr, content] = match
-          if (sourceName && content) {
-            citations.push({
-              chunkId: `stream-${Date.now()}-${citations.length}`,
-              documentId: "stream-retrieved",
-              documentName: sourceName.trim(),
-              pageNumber: pageStr ? parseInt(pageStr, 10) : undefined,
-              excerpt: content.trim().slice(0, 200),
-              relevanceScore: parseFloat(scoreStr ?? "0"),
-            })
-          }
-          match = pattern.exec(tc.output)
-        }
-      })
-    return citations
-  }
-
-  private describeStep(decision: ToolDecision): string {
-    switch (decision.toolName) {
-      case "rag_search":
-        return `Searching documents: "${decision.input["query"] ?? ""}"`
-      case "calculator":
-        return `Calculating: ${decision.input["expression"] ?? ""}`
-      case "web_search":
-        return `Searching the web: "${decision.input["query"] ?? ""}"`
-      default:
-        return `Running: ${decision.toolName}`
+      citations: extractCitationsFromHistory(state.toolCallHistory),
     }
   }
 
