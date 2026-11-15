@@ -12,14 +12,18 @@ From `cd backend && npm run test:coverage`:
 - Coverage: `agent.service.ts` 96.96% stmts / 79.34% branch / 100% funcs / 96.92% lines (348,388,537,554,611-613); `streaming.agent.service.ts` 95.6% / 73.33% / 100% / 96.64% (174-178,538,641-645)
 
 
-## Repo-wide coverage totals (floor, from `npx jest --coverage --coverageReporters=text-summary`)
+## Repo-wide coverage totals (floor, apples-to-apples `npm run test:coverage`)
 
-> Note: this coverage run reported 2 failed suites / 4 failed tests in unrelated `text-extraction.service` tests (environment/parser variance), 49 passed suites / 745 passed tests; totals below are from the generated `coverage/coverage-summary.json` and are the **repo-wide floor** (statements/branches/functions/lines), not per-file agent numbers.
-
-- Statements: **60.96%** (1498/2457)
-- Branches: **52.01%** (528/1015)
-- Functions: **59.23%** (231/390)
-- Lines: **61.20%** (1458/2382)
+> **Corrected (Phase 3 review):** Phase 0 recorded totals from an incomplete/flaky run (`--coverageReporters=text-summary`, unrelated `text-extraction.service` failures, 49/51 suites, 745/749 tests) as 60.96/52.01/59.23/61.20 — those numbers were **not representative**. Apples-to-apples `cd backend && npm run test:coverage` (same command, back-to-back): **main @ c432217 (PR #13)** and **this branch (post Phase 3 review)** both yield **53 suites, 766 tests, 17 snapshots passed** and identical all-files totals (covered/total):
+>
+> | Metric | Covered/Total | % | main c432217 | this branch |
+> |---|---:|---:|---:|---:|
+> | Statements | 2457/3070 | 80.03% | 2457/3070 | 2457/3070 |
+> | Branches | 1167/1625 | 71.81% | 1167/1625 | 1167/1625 |
+> | Functions | 430/555 | 77.47% | 430/555 | 430/555 |
+> | Lines | 2382/2955 | 80.60% | 2382/2955 | 2382/2955 |
+>
+> Floor for this refactor is the **main (c432217) totals above**; this branch is equal (not lower).
 
 ## Divergence map confirmation
 

@@ -8,6 +8,7 @@ export interface AgentRunParams {
   sessionId: string
   signal?: AbortSignal
   onEvent?: AgentEventCallback
+  transport: "http" | "ws"
 }
 
 export interface ToolContext {
