@@ -180,10 +180,14 @@ export class AgentEngine {
               async toolSpan => {
                 toolSpan.setAttribute(RAG_ATTRS.TOOL_NAME, decision.toolName)
                 toolSpan.setAttribute(RAG_ATTRS.ITERATION, state.iterationCount)
-                return tool.execute(decision.input)
+                return tool.execute(decision.input, { signal })
               }
             )
           } catch (error: unknown) {
+            // Rethrow aborts and Gemini rate limits so callers can stop cleanly / honour Retry-After.
+            // A per-call timeout (AbortError) while the caller's signal is still live is treated
+            // as a tool failure and recorded as a failed step so the loop can continue.
+            if (signal?.aborted || error instanceof RateLimitError) throw error
             toolSuccess = false
             toolError = error instanceof Error ? error.message : "Tool execution failed"
             toolOutput = `Tool error: ${toolError}`

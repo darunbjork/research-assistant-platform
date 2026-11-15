@@ -71,7 +71,7 @@ export function createCalculatorTool(): AgentTool {
       "Supports: +, -, *, /, (, ), %, decimal numbers. " +
       "Returns: the numeric result as a string.",
 
-    execute: async (input: Record<string, string>): Promise<string> => {
+    execute: async (input: Record<string, string>, _ctx): Promise<string> => {
       const expression = input["expression"]
 
       if (!expression || expression.trim() === "") {
