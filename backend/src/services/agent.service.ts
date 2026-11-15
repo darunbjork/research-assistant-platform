@@ -22,6 +22,7 @@ import { RateLimitError } from "../middleware/error.middleware"
 import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
 import { getTracer } from "../telemetry/tracer"
+import { parseToolDecision } from "../agents/engine/decision"
 import { withSpan, LLM_ATTRS, RAG_ATTRS } from "../telemetry/spans"
 
 const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
@@ -462,7 +463,7 @@ Respond ONLY with valid JSON (no markdown):
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
     const rawText = geminiText(response)
-    const decision = this.parseToolDecision(rawText)
+    const decision = parseToolDecision(rawText)
     const retryQuery = lastEval?.suggestedQuery?.trim()
     if (
       decision.toolName === "DONE" &&
@@ -535,39 +536,6 @@ RULES:
     if (toolName === "rag_search") state.status = "searching"
     else if (toolName === "calculator") state.status = "calculating"
     else state.status = "searching"
-  }
-
-  private parseToolDecision(rawText: string): ToolDecision {
-    const cleaned = rawText
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim()
-
-    try {
-      const parsed = JSON.parse(cleaned) as {
-        toolName?: unknown
-        input?: unknown
-        reason?: unknown
-      }
-
-      if (typeof parsed.toolName !== "string") {
-        throw new Error("toolName must be a string")
-      }
-
-      return {
-        toolName: parsed.toolName,
-        input:
-          typeof parsed.input === "object" && parsed.input !== null
-            ? (parsed.input as Record<string, string>)
-            : {},
-        reason: typeof parsed.reason === "string" ? parsed.reason : "",
-      }
-    } catch {
-      logRagEvent("agent_step", "Failed to parse tool decision — defaulting to DONE", {
-        service: "AgentService",
-      })
-      throw new Error("Gemini returned an invalid tool decision. Please try again.")
-    }
   }
 
   private extractCitationsFromHistory(toolCalls: ToolCall[]): Citation[] {

@@ -46,16 +46,15 @@ import { requestGemini } from "../utils/gemini-request"
 import { RateLimitError } from "../middleware/error.middleware"
 import { env } from "../config/env"
 import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
+import { parseToolDecision } from "../agents/engine/decision"
+import type { AgentEventCallback } from "../agents/engine/types"
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
 
-// ── Event Callback Type ────────────────────────────────────────────────────
-// The WebSocket handler passes this function to the streaming service.
-// Every event the service produces is routed through this callback.
-export type AgentEventCallback = (message: ServerMessage) => void
+export type { AgentEventCallback } from "../agents/engine/types"
 
 // ── Token tracking ─────────────────────────────────────────────────────────
 interface TokenUsage {
@@ -491,7 +490,7 @@ Respond ONLY with valid JSON:
     const response = await this.callGemini(requestBody, signal)
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
-    const decision = this.parseToolDecision(geminiText(response))
+    const decision = parseToolDecision(geminiText(response))
     const retryQuery = lastEval?.suggestedQuery?.trim()
     if (
       decision.toolName === "DONE" &&
@@ -579,31 +578,6 @@ RULES:
     return {
       answer: geminiText(response),
       citations: this.extractCitationsFromHistory(state.toolCallHistory),
-    }
-  }
-
-  private parseToolDecision(rawText: string): ToolDecision {
-    const cleaned = rawText
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim()
-    try {
-      const parsed = JSON.parse(cleaned) as {
-        toolName?: unknown
-        input?: unknown
-        reason?: unknown
-      }
-      if (typeof parsed.toolName !== "string") throw new Error("No toolName")
-      return {
-        toolName: parsed.toolName,
-        input:
-          typeof parsed.input === "object" && parsed.input !== null
-            ? (parsed.input as Record<string, string>)
-            : {},
-        reason: typeof parsed.reason === "string" ? parsed.reason : "",
-      }
-    } catch {
-      throw new Error("Gemini returned an invalid tool decision. Please try again.")
     }
   }
 
