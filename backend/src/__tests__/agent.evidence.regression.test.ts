@@ -102,6 +102,20 @@ describe.each(["http", "websocket"])("%s agent regressions", transport => {
     )
   })
 
+  it("does not draft or evaluate a failed search as successful evidence", async () => {
+    search.mockRejectedValueOnce(new Error("SEARCH_FAILURE_MARKER"))
+    fetchSpy
+      .mockResolvedValueOnce(reply('{"toolName":"rag_search","input":{"query":"extracted"}}'))
+      .mockResolvedValueOnce(reply('{"toolName":"DONE","input":{}}'))
+      .mockResolvedValueOnce(reply("Insufficient evidence."))
+    await run()
+    expect(evaluateSpy).not.toHaveBeenCalled()
+    const calls = fetchSpy.mock.calls as [unknown, RequestInit][]
+    expect(calls).toHaveLength(3)
+    const synthesis = JSON.parse(String(calls[2]?.[1].body)) as GeminiRequest
+    expect(synthesis.contents[0]?.parts[0]?.text).not.toContain("SEARCH_FAILURE_MARKER")
+  })
+
   it("does not complete successfully after malformed reasoning", async () => {
     fetchSpy.mockResolvedValueOnce(reply("invalid JSON"))
     await expect(run()).rejects.toThrow("invalid tool decision")

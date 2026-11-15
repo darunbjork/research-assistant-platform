@@ -44,29 +44,24 @@ export function createRagTool(hybridSearchService: HybridSearchService, userId: 
     execute: async (input: Record<string, string>): Promise<string> => {
       const query = input["query"]
 
-      if (!query || query.trim() === "") {
-        return "Error: rag_search requires a 'query' parameter."
+      if (typeof query !== "string" || query.trim() === "") {
+        throw new Error("rag_search requires a 'query' parameter.")
       }
 
       const start = Date.now()
 
-      try {
-        const results = await hybridSearchService.search(query.trim(), {
-          topK: 5,
-          userId,
-        })
+      const results = await hybridSearchService.search(query.trim(), {
+        topK: 5,
+        userId,
+      })
 
-        logRagEvent("retrieve", "RAG tool executed", {
-          service: "RagTool",
-          chunkCount: results.length,
-          durationMs: Date.now() - start,
-        })
+      logRagEvent("retrieve", "RAG tool executed", {
+        service: "RagTool",
+        chunkCount: results.length,
+        durationMs: Date.now() - start,
+      })
 
-        return formatResultsForLLM(results)
-      } catch (error: unknown) {
-        const msg = error instanceof Error ? error.message : "Unknown error"
-        return `Error searching documents: ${msg}. The document search service may be unavailable.`
-      }
+      return formatResultsForLLM(results)
     },
   }
 }
