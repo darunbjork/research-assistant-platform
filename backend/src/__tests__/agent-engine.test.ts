@@ -14,50 +14,60 @@ import {
   type ScriptedResponse,
 } from "./helpers/agent-script"
 
+interface TestSpan {
+  setAttribute: (k: string, v: unknown) => void
+  setStatus: () => void
+  recordException: () => void
+  end: () => void
+}
+
+interface SpanRecord {
+  name: string
+  attrs: Record<string, unknown>
+}
+
 // Capture spans recorded by AgentEngine (it does getTracer("agent.engine") in ctor)
-const spanRecords: Array<{ name: string; attrs: Record<string, unknown> }> = []
+const spanRecords: SpanRecord[] = []
 
 jest.mock("../telemetry/tracer", () => ({
-  getTracer: () => ({
-    startActiveSpan: async (name: string, fn: (span: any) => Promise<any>) => {
+  getTracer: (): {
+    startActiveSpan: (name: string, fn: (span: TestSpan) => Promise<unknown>) => Promise<unknown>
+  } => ({
+    startActiveSpan: async (name: string, fn: (span: TestSpan) => Promise<unknown>) => {
       const attrs: Record<string, unknown> = {}
-      const span = {
-        setAttribute: (k: string, v: unknown) => {
+      const span: TestSpan = {
+        setAttribute: (k: string, v: unknown): void => {
           attrs[k] = v
         },
-        setStatus: () => {},
-        recordException: () => {},
-        end: () => {},
+        setStatus: (): void => {},
+        recordException: (): void => {},
+        end: (): void => {},
       }
       spanRecords.push({ name, attrs })
-      try {
-        return await fn(span)
-      } finally {
-        // end already callable; no-op
-      }
+      return fn(span)
     },
   }),
 }))
 
 // withSpan is imported from ../telemetry/spans by engine; mock to use our tracer shape directly
 jest.mock("../telemetry/spans", () => {
-  const actual = jest.requireActual("../telemetry/spans")
+  const actual = jest.requireActual<typeof import("../telemetry/spans")>("../telemetry/spans")
   return {
     ...actual,
     withSpan: async (
       _tracer: unknown,
       name: string,
-      fn: (span: any) => Promise<any>,
-      attributes: Record<string, any> = {}
-    ) => {
+      fn: (span: TestSpan) => Promise<unknown>,
+      attributes: Record<string, unknown> = {}
+    ): Promise<unknown> => {
       const attrs: Record<string, unknown> = { ...attributes }
-      const span = {
-        setAttribute: (k: string, v: unknown) => {
+      const span: TestSpan = {
+        setAttribute: (k: string, v: unknown): void => {
           attrs[k] = v
         },
-        setStatus: () => {},
-        recordException: () => {},
-        end: () => {},
+        setStatus: (): void => {},
+        recordException: (): void => {},
+        end: (): void => {},
       }
       spanRecords.push({ name, attrs })
       return fn(span)
@@ -68,24 +78,42 @@ jest.mock("../telemetry/spans", () => {
 jest.setTimeout(10000)
 
 function gaugeValue(): number {
-  const g: any = activeAgentSessions
-  // prom-client Gauge stores labeled/unlabeled values in hashMap
-  if (g.hashMap && g.hashMap[""] && typeof g.hashMap[""].value === "number") {
-    return g.hashMap[""].value as number
+  const g = activeAgentSessions as unknown as {
+    hashMap?: Record<string, { value: number }>
+    get?: () => { values?: Array<{ value: number }> }
   }
-  // fallback: try get()
+  if (g.hashMap?.[""] && typeof g.hashMap[""].value === "number") {
+    return g.hashMap[""].value
+  }
   if (typeof g.get === "function") {
     const v = g.get()
-    if (v && Array.isArray(v.values) && v.values[0]) return v.values[0].value as number
+    if (v.values?.[0]) return v.values[0].value
   }
   return 0
 }
 
-function makeEngine(searchResults = [makeHybridResult({ content: "evidence", source: "a.txt", rrfScore: 0.9 })]) {
+function resetGauge(): void {
+  const g = activeAgentSessions as unknown as {
+    hashMap?: Record<string, { value: number }>
+    set?: (n: number) => void
+  }
+  if (g.hashMap) {
+    for (const k of Object.keys(g.hashMap)) {
+      const entry = g.hashMap[k]
+      if (entry) entry.value = 0
+    }
+  } else if (typeof g.set === "function") {
+    g.set(0)
+  }
+}
+
+function makeEngine(
+  searchResults = [makeHybridResult({ content: "evidence", source: "a.txt", rrfScore: 0.9 })]
+): { engine: AgentEngine } {
   const hybrid = makeStubHybridSearch({ results: searchResults }) as unknown as HybridSearchService
   const generation = makeStubGenerationService() as unknown as GenerationService
   const engine = new AgentEngine("key", hybrid, generation)
-  return { engine, hybrid, generation }
+  return { engine }
 }
 
 const baseScript: ScriptedResponse[] = [
@@ -98,13 +126,7 @@ const baseScript: ScriptedResponse[] = [
 describe("AgentEngine (Phase 4)", () => {
   beforeEach(() => {
     spanRecords.length = 0
-    // reset gauge to 0 for isolation
-    const g: any = activeAgentSessions
-    if (g.hashMap) {
-      for (const k of Object.keys(g.hashMap)) g.hashMap[k].value = 0
-    } else if (typeof g.set === "function") {
-      g.set(0)
-    }
+    resetGauge()
   })
 
   test("runs with no onEvent sink (HTTP-style) and returns done result", async () => {
@@ -173,7 +195,7 @@ describe("AgentEngine (Phase 4)", () => {
         sessionId: "s2",
         transport: "ws",
         signal: controller.signal,
-        onEvent: () => {},
+        onEvent: (): void => {},
       })
       expect(result.status).toBe("aborted")
       expect(gaugeValue()).toBe(before)
@@ -207,7 +229,9 @@ describe("AgentEngine (Phase 4)", () => {
         userId: "user-1",
         sessionId: "sess-span",
         transport: "ws",
-        onEvent: e => events.push(e),
+        onEvent: (e): void => {
+          events.push(e)
+        },
       })
     } finally {
       s.restore()
