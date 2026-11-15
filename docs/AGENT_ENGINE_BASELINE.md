@@ -12,18 +12,20 @@ From `cd backend && npm run test:coverage`:
 - Coverage: `agent.service.ts` 96.96% stmts / 79.34% branch / 100% funcs / 96.92% lines (348,388,537,554,611-613); `streaming.agent.service.ts` 95.6% / 73.33% / 100% / 96.64% (174-178,538,641-645)
 
 
-## Repo-wide coverage totals (floor, apples-to-apples `npm run test:coverage`)
+## Repo-wide coverage totals (floor)
 
-> **Corrected (Phase 3 review):** Phase 0 recorded totals from an incomplete/flaky run (`--coverageReporters=text-summary`, unrelated `text-extraction.service` failures, 49/51 suites, 745/749 tests) as 60.96/52.01/59.23/61.20 — those numbers were **not representative**. Apples-to-apples `cd backend && npm run test:coverage` (same command, back-to-back): **main @ c432217 (PR #13)** and **this branch (post Phase 3 review)** both yield **53 suites, 766 tests, 17 snapshots passed** and identical all-files totals (covered/total):
->
-> | Metric | Covered/Total | % | main c432217 | this branch |
-> |---|---:|---:|---:|---:|
-> | Statements | 2457/3070 | 80.03% | 2457/3070 | 2457/3070 |
-> | Branches | 1167/1625 | 71.81% | 1167/1625 | 1167/1625 |
-> | Functions | 430/555 | 77.47% | 430/555 | 430/555 |
-> | Lines | 2382/2955 | 80.60% | 2382/2955 | 2382/2955 |
->
-> Floor for this refactor is the **main (c432217) totals above**; this branch is equal (not lower).
+Measured on **main @ 5ee54d1** (this checkout, no worktrees/symlinks) with `cd backend && npx jest --coverage --coverageReporters=text-summary`:
+- Test suites: **51 passed, 2 failed, 53 total** (F10: `text-extraction.service` / `document.upload` flake under coverage — 762/766 tests passed, 17 snapshots)
+- All-files (covered/total):
+
+| Metric | Covered/Total | % |
+|---|---:|---:|
+| Statements | 2817/3538 | 79.62% |
+| Branches | 1117/1624 | 68.78% |
+| Functions | 403/541 | 74.49% |
+| Lines | 2737/3407 | 80.33% |
+
+> The prior "apples-to-apples" main-vs-branch comparison was invalid (code differed by ~400 lines, so totals must differ) and could not be reproduced. **Enforced floor = `jest.config.mjs` thresholds (statements 61%, branches 52%, functions 59%, lines 61%).**
 
 ## Divergence map confirmation
 
