@@ -53,6 +53,7 @@ export type VoiceErrorCode =
   | "PROVIDER_UNAVAILABLE" // provider circuit breaker open (Day 2)
   | "VOICE_BUDGET_REACHED" // provider quota/402 — cap spent, not an outage (Day 5)
   | "NO_VOICE_SESSION" // audio or voice_end arrived without an active session
+  | "TRANSCRIPT_INCOMPLETE" // final transcript incomplete (timeout/drop/closed/not_open)
   | "VOICE_INTERNAL" // unexpected server fault (logged, generic on the wire)
 
 /**

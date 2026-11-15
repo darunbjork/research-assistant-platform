@@ -27,7 +27,9 @@
 // Interim transcripts are never requested (interim_results=false), never
 // logged and never persisted. Exactly one final per utterance is delivered
 // (onFinal) — either when the Finalize flush responds or, if the flush
-// stalls but earlier finals exist, at the Finalize timeout.
+// stalls but earlier finals exist, at the Finalize timeout. The stream is
+// created per utterance, so transcript accumulation state is per-instance
+// (no cross-utterance reset needed).
 
 import WebSocket, { type RawData } from "ws"
 import type { IncomingMessage } from "http"
@@ -86,6 +88,18 @@ export type StreamFailureAction = "count" | "ignore"
 export interface DeepgramStreamFailure {
   action: StreamFailureAction
   message: string
+}
+
+/** Why a final transcript was delivered (completeness of the utterance). */
+export type FinalReason =
+  | "finalized" // Deepgram from_finalize answered the Finalize flush
+  | "finalize_timeout" // flush stalled but earlier finals existed
+  | "connection_lost" // unexpected drop while awaiting final (earlier finals)
+  | "closed" // deliberate close while awaiting final (earlier finals)
+  | "not_open" // finalize() called when stream not open but finals existed
+
+export interface DeepgramFinalMeta {
+  reason: FinalReason
 }
 
 // ── URL builder ───────────────────────────────────────────────────────────
@@ -151,21 +165,22 @@ export function closeAllVoiceUpstreams(): void {
 // ── The stream ────────────────────────────────────────────────────────────
 
 export interface DeepgramStreamOptions {
-  /** Full listen URL (use buildListenUrl). */
+  /** Full listen URL (env.DEEPGRAM_WS_URL, overridable for fake-server tests). */
   url: string
   apiKey: string
-  /** For log context only — never logged with the key. */
   sessionId: string
   /** At most one final transcript per utterance (deliver-once). */
-  onFinal: (text: string, fromFinalize: boolean) => void
+  onFinal: (text: string, meta: DeepgramFinalMeta) => void
+  /** Surfaces outages / non-fatal provider errors to the handler. */
   onFailure: (failure: DeepgramStreamFailure) => void
-  // Test hooks — defaults match production behaviour.
+  /** Injected for tests (defaults: keep-alive 4s, quiet 3s, flush 5s). */
   now?: () => number
   keepAliveMs?: number
   keepAliveQuietMs?: number
   finalizeTimeoutMs?: number
   handshakeTimeoutMs?: number
   bufferCapBytes?: number
+  /** Injected for tests to fake a stalled outbound buffer. */
   getBufferedAmount?: () => number
 }
 
@@ -175,7 +190,7 @@ export class DeepgramStream {
   private readonly url: string
   private readonly apiKey: string
   private readonly sessionId: string
-  private readonly onFinal: (text: string, fromFinalize: boolean) => void
+  private readonly onFinal: (text: string, meta: DeepgramFinalMeta) => void
   private readonly onFailure: (failure: DeepgramStreamFailure) => void
   private readonly now: () => number
   private readonly keepAliveMs: number
@@ -379,7 +394,7 @@ export class DeepgramStream {
 
     if (this.state !== "open") {
       if (this.finalText !== null && !this.delivered && !this.failureReported) {
-        this.deliver(this.finalText, false)
+        this.deliver(this.finalText, "not_open")
       }
       return Promise.resolve(this.finalText)
     }
@@ -418,7 +433,7 @@ export class DeepgramStream {
     // A deliberate close resolves any in-flight Finalize wait with whatever
     // finals we already have (deliver-once), never with a failure.
     if (this.awaitingFinal && this.resolveFinal !== null) {
-      this.settleFinalize(this.finalText)
+      this.settleFinalize(this.finalText, "closed")
     }
 
     const ws = this.ws
@@ -529,21 +544,21 @@ export class DeepgramStream {
     if (!isFinal && !fromFinalize) return
 
     if (transcript !== "") {
-      this.finalText = transcript
+      this.finalText = this.finalText === null ? transcript : `${this.finalText} ${transcript}`
     }
     if (fromFinalize && this.awaitingFinal) {
-      this.settleFinalize(this.finalText)
+      this.settleFinalize(this.finalText, "finalized")
     }
   }
 
-  private settleFinalize(text: string | null): void {
+  private settleFinalize(text: string | null, reason: FinalReason): void {
     if (this.finalizeTimer !== null) {
       clearTimeout(this.finalizeTimer)
       this.finalizeTimer = null
     }
     this.awaitingFinal = false
     if (text !== null) {
-      this.deliver(text, true)
+      this.deliver(text, reason)
     }
     const resolve = this.resolveFinal
     this.resolveFinal = null
@@ -556,7 +571,7 @@ export class DeepgramStream {
 
     if (this.finalText !== null) {
       // The flush stalled but earlier finals exist — deliver them (no error).
-      this.settleFinalize(this.finalText)
+      this.settleFinalize(this.finalText, "finalize_timeout")
       return
     }
 
@@ -581,7 +596,7 @@ export class DeepgramStream {
     // finals exist (partial transcript preservation) before reporting.
     if (!deliberate && this.awaitingFinal && this.resolveFinal !== null) {
       if (this.finalText !== null) {
-        this.settleFinalize(this.finalText)
+        this.settleFinalize(this.finalText, "connection_lost")
       } else {
         this.awaitingFinal = false
         const resolve = this.resolveFinal
@@ -598,10 +613,10 @@ export class DeepgramStream {
     })
   }
 
-  private deliver(text: string, fromFinalize: boolean): void {
+  private deliver(text: string, reason: FinalReason): void {
     if (this.delivered || this.failureReported) return
     this.delivered = true
-    this.onFinal(text, fromFinalize)
+    this.onFinal(text, { reason })
   }
 
   private reportFailure(failure: DeepgramStreamFailure): void {

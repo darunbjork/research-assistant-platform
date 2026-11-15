@@ -138,7 +138,7 @@ async function startRejectingUpstream(status: number): Promise<{
 
 interface StreamHarness {
   stream: DeepgramStream
-  finals: Array<{ text: string; fromFinalize: boolean }>
+  finals: Array<{ text: string; meta: { reason: string } }>
   failures: DeepgramStreamFailure[]
   /** Resolves when the next failure is reported. */
   nextFailure: () => Promise<DeepgramStreamFailure>
@@ -148,14 +148,14 @@ function makeStream(
   url: string,
   overrides: Partial<ConstructorParameters<typeof DeepgramStream>[0]> = {}
 ): StreamHarness {
-  const finals: Array<{ text: string; fromFinalize: boolean }> = []
+  const finals: Array<{ text: string; meta: { reason: string } }> = []
   const failures: DeepgramStreamFailure[] = []
   const pending: Array<(failure: DeepgramStreamFailure) => void> = []
   const stream = new DeepgramStream({
     url,
     apiKey: "dg-test-key-0123456789",
     sessionId: "sess-test",
-    onFinal: (text, fromFinalize) => finals.push({ text, fromFinalize }),
+    onFinal: (text, meta) => finals.push({ text, meta }),
     onFailure: failure => {
       failures.push(failure)
       pending.splice(0).forEach(resolve => resolve(failure))
@@ -322,7 +322,7 @@ describe("DeepgramStream audio and finals", () => {
 
     await harness.stream.finalize()
     await waitFor(() => harness.finals.length === 1)
-    expect(harness.finals[0]).toEqual({ text: "hello world", fromFinalize: true })
+    expect(harness.finals[0]).toEqual({ text: "hello world", meta: { reason: "finalized" } })
     expect(harness.failures).toHaveLength(0)
 
     harness.stream.close()
@@ -392,10 +392,59 @@ describe("DeepgramStream audio and finals", () => {
     await prior.connection
     await b.stream.finalize()
     await waitFor(() => b.finals.length === 1)
-    expect(b.finals[0]?.text).toBe("prior final")
+    expect(b.finals[0]).toEqual({ text: "prior final", meta: { reason: "finalize_timeout" } })
     expect(b.failures).toHaveLength(0)
     b.stream.close()
     await prior.close()
+  })
+
+  it("accumulates final segments in order and delivers once on finalize flush", async () => {
+    const upstream = await startFakeUpstream(socket => {
+      socket.on("message", (data, isBinary) => {
+        if (!isBinary && data.toString().includes("Finalize")) {
+          socket.send(
+            JSON.stringify({
+              type: "Results",
+              is_final: true,
+              from_finalize: true,
+              channel: { alternatives: [{ transcript: "four" }] },
+            })
+          )
+        }
+      })
+    })
+    const harness = makeStream(buildListenUrl(upstream.url, "nova-3"))
+    await harness.stream.connect()
+    const { socket } = await upstream.connection
+
+    const sendFinal = (text: string): void => {
+      socket.send(
+        JSON.stringify({
+          type: "Results",
+          is_final: true,
+          channel: { alternatives: [{ transcript: text }] },
+        })
+      )
+    }
+    sendFinal("one")
+    sendFinal("two")
+    sendFinal("three")
+    sendFinal("   ") // empty segment skipped
+    await sleep(30)
+    expect(harness.finals).toHaveLength(0)
+
+    await harness.stream.finalize()
+    await waitFor(() => harness.finals.length === 1)
+    expect(harness.finals[0]).toEqual({
+      text: "one two three four",
+      meta: { reason: "finalized" },
+    })
+    expect(harness.failures).toHaveLength(0)
+
+    // single segment unchanged (already covered elsewhere), but ensure no extra delivery
+    expect(harness.finals).toHaveLength(1)
+    harness.stream.close()
+    await upstream.close()
   })
 })
 
