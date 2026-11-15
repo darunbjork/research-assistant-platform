@@ -74,9 +74,18 @@ jest.mock("../utils/prisma", () => ({
 }))
 
 // ── Streaming agent mocked so no Gemini call can happen ───────────────────
+const mockStreamingRun = jest.fn(
+  async (
+    _query: string,
+    _userId: string,
+    _sessionId: string,
+    _onEvent: unknown,
+    _signal?: AbortSignal
+  ): Promise<undefined> => undefined
+)
 jest.mock("../services/streaming.agent.service", () => ({
   StreamingAgentService: class {
-    run = jest.fn().mockResolvedValue(undefined)
+    run = mockStreamingRun
   },
 }))
 
@@ -162,6 +171,19 @@ describe("voice session (Day 3a)", () => {
     mockExecQueue = []
     mockRedisKeys.length = 0
     mockFindUnique.mockImplementation(async () => ({ id: "user-ws" }))
+    ;(mockRedis.eval as jest.Mock).mockResolvedValue([1, 1])
+    ;(mockRedis.multi as jest.Mock).mockClear()
+    mockStreamingRun.mockImplementation(async (): Promise<undefined> => undefined)
+  })
+
+  afterEach(async () => {
+    // Ensure no auto-started/lingering agent run outlives a test.
+    try {
+      ws?.emit("close", 1000, Buffer.alloc(0))
+    } catch {
+      // ignore
+    }
+    await flush()
   })
 
   function mockRedisStoreReset(): void {
@@ -405,27 +427,61 @@ describe("voice session (Day 3a)", () => {
     })
   })
 
-  // ── Voice-triggered agent runs must hit the 40% sub-cap (Day 3b fix) ───
-  describe("voice-triggered agent runs", () => {
-    it("charges the agent run (5 units) through consumeVoiceBudget, not the plain counter", async () => {
+  // ── Agent run billing by origin (Day 5b) ────────────────────────────────
+  // Intended Day 5b change: voice-originated runs (server-triggered on a
+  // finalized transcript) charge consumeVoiceBudget(5); typed client "start"
+  // charges consumeGlobalBudget(5) even while a voice session is open.
+  describe("agent run billing by origin", () => {
+    it("voice-originated run (finalized transcript) charges consumeVoiceBudget(5)", async () => {
       await makeAuthenticated()
       await startVoice()
       expect(mockRedis.eval).toHaveBeenCalledTimes(1) // voice_start cost 1
 
-      ws.emit(
-        "message",
-        JSON.stringify({ type: "start", query: "what is in doc?", sessionId: "s1" })
-      )
-      await flush()
+      // Simulate server-triggered voice-origin agent start (as on finalized transcript).
+      await (
+        handler as unknown as {
+          handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
+        }
+      ).handleStart("transcribed query", "s1", "voice")
 
-      // Second eval = the agent run, ARGV cost "5" — both counters move.
       expect(mockRedis.eval).toHaveBeenCalledTimes(2)
       const agentRunCall = (
         (mockRedis.eval as jest.Mock).mock.calls[1] as unknown[] | undefined
       )?.[4]
       expect(agentRunCall).toBe("5")
-      // The plain global counter (consumeGlobalBudget's INCRBY) was never used.
       expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
+      expect(errors()).toHaveLength(0)
+    })
+
+    it("voice-originated run fails closed when the voice budget refuses (5 units)", async () => {
+      await makeAuthenticated()
+      await startVoice()
+      ;(mockRedis.eval as jest.Mock).mockResolvedValueOnce([-1, -1]) // agent run refused
+
+      await (
+        handler as unknown as {
+          handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
+        }
+      ).handleStart("budgeted out", "s3", "voice")
+
+      expect(errors()).toMatchObject([{ code: "CAPACITY_REACHED" }])
+      expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
+    })
+
+    it("typed start during an open voice session charges consumeGlobalBudget(5), never voice", async () => {
+      await makeAuthenticated()
+      await startVoice()
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1) // voice_start turn only
+
+      ws.emit(
+        "message",
+        JSON.stringify({ type: "start", query: "typed during voice", sessionId: "s2" })
+      )
+      await flush()
+
+      // No additional voice-budget eval; global budget path used instead.
+      expect(mockRedis.eval).toHaveBeenCalledTimes(1)
+      expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(true)
       expect(errors()).toHaveLength(0)
     })
 
@@ -434,25 +490,13 @@ describe("voice session (Day 3a)", () => {
 
       ws.emit(
         "message",
-        JSON.stringify({ type: "start", query: "plain text query", sessionId: "s2" })
+        JSON.stringify({ type: "start", query: "plain text query", sessionId: "s4" })
       )
       await flush()
 
       expect(mockRedis.eval).not.toHaveBeenCalled() // voice budget untouched
       expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(true)
       expect(errors()).toHaveLength(0)
-    })
-
-    it("voice agent run fails closed when the voice budget refuses (5 units)", async () => {
-      await makeAuthenticated()
-      await startVoice()
-      ;(mockRedis.eval as jest.Mock).mockResolvedValueOnce([-1, -1]) // agent run refused
-
-      ws.emit("message", JSON.stringify({ type: "start", query: "budgeted out", sessionId: "s3" }))
-      await flush()
-
-      expect(errors()).toMatchObject([{ code: "CAPACITY_REACHED" }])
-      expect(mockRedisKeys.some(k => k.startsWith("budget:llm:"))).toBe(false)
     })
   })
 
@@ -555,6 +599,62 @@ describe("voice session (Day 3a)", () => {
 
       expect(voiceErrors()[0]).toMatchObject({ code: "SESSION_LIMIT" })
       expect(handler.getVoiceDiagnostics().sessionId).toBeNull()
+    })
+  })
+
+  // ── Day 5b: abort finalized voice-origin run on socket close (C) ─────────
+  describe("finalized utterance run abort on socket close", () => {
+    it("aborts the agent run and no further Gemini calls happen after close", async () => {
+      await makeAuthenticated()
+      await startVoice()
+
+      let geminiCalls = 0
+      let sawAbort = false
+      mockStreamingRun.mockImplementation(
+        async (
+          _query: string,
+          _userId: string,
+          _sessionId: string,
+          _onEvent: unknown,
+          signal?: AbortSignal
+        ): Promise<undefined> =>
+          await new Promise<undefined>(resolve => {
+            const timer = setTimeout(() => {
+              if (!signal?.aborted) {
+                geminiCalls += 1
+              }
+              resolve(undefined)
+            }, 50)
+            signal?.addEventListener(
+              "abort",
+              () => {
+                sawAbort = true
+                clearTimeout(timer)
+                resolve(undefined)
+              },
+              { once: true }
+            )
+          })
+      )
+
+      // Utterance finalized → server-triggered voice-origin agent run starts.
+      const runPromise = (
+        handler as unknown as {
+          handleStart: (q: string, s: string, o: "text" | "voice") => Promise<void>
+        }
+      ).handleStart("final transcript", "s-abort", "voice")
+
+      await flush()
+      expect(mockStreamingRun).toHaveBeenCalledTimes(1)
+
+      // Socket closes during the agent run.
+      ws.emit("close", 1006, Buffer.alloc(0))
+      await flush()
+      await new Promise(r => setTimeout(r, 80))
+      await runPromise
+
+      expect(sawAbort).toBe(true)
+      expect(geminiCalls).toBe(0)
     })
   })
 })

@@ -81,9 +81,12 @@ jest.mock("../utils/prisma", () => ({
   },
 }))
 
+const mockStreamingRun = jest.fn<Promise<void>, [input: unknown]>(
+  async (): Promise<void> => undefined
+)
 jest.mock("../services/streaming.agent.service", () => ({
   StreamingAgentService: class {
-    run = jest.fn().mockResolvedValue(undefined)
+    run = mockStreamingRun
   },
 }))
 
@@ -312,9 +315,15 @@ describe("voice session + Deepgram upstream (Day 5)", () => {
 
     const finals = parsed(ws).filter(m => m.type === "transcript_final")
     expect(finals).toHaveLength(1)
-    expect(finals[0]?.text).toBe("hello deepgram")
+    expect(finals[0]).toEqual(
+      expect.objectContaining({
+        type: "transcript_final",
+        sessionId: "v1",
+        text: "hello deepgram",
+        complete: true,
+      })
+    )
     expect(finals[0]?.latencyMs).toBeGreaterThanOrEqual(0)
-    expect(finals[0]?.sessionId).toBe("v1")
 
     // Persist the final (text only — never raw audio).
     await waitFor(() => mockSaveVoiceTranscript.mock.calls.length === 1)
@@ -383,12 +392,17 @@ describe("voice session + Deepgram upstream (Day 5)", () => {
     // 38 s) is still ceil(38/30) = 2 units — no over-charge.
     ws.emit("message", JSON.stringify({ type: "voice_end", sessionId: "v1" }))
     await waitFor(() => parsed(ws).some(m => m.type === "transcript_final"))
+    // Finalized transcript now auto-starts the agent (voice origin) and
+    // charges 5 voice-budget units via eval.
+    await waitFor(() => mockRedisEval.mock.calls.length === 4)
+    expect(mockRedisEval.mock.calls[3]?.[4]).toBe("5")
+
     await startVoice(ws)
     await waitFor(() => connections.length === 2)
 
     // Restart charged its own voice turn (1 unit); no STT unit yet.
-    expect(mockRedisEval).toHaveBeenCalledTimes(4)
-    expect(mockRedisEval.mock.calls[3]?.[4]).toBe("1")
+    expect(mockRedisEval).toHaveBeenCalledTimes(5)
+    expect(mockRedisEval.mock.calls[4]?.[4]).toBe("1")
 
     const base2 = Date.now()
     const offset2 = { ms: 0 }

@@ -173,6 +173,8 @@ export interface TranscriptFinalMessage {
   text: string
   /** voice_start → final transcript available (browser clock, ms). */
   latencyMs: number
+  /** True only when Deepgram completed the Finalize flush (reason "finalized"). */
+  complete: boolean
 }
 
 export interface VoiceSummaryMessage {

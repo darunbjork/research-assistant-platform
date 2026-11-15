@@ -46,6 +46,7 @@ describe("voice server messages (serialise)", () => {
       sessionId: "s1",
       text: "what is rag",
       latencyMs: 320,
+      complete: true,
     }
     expect(JSON.parse(toJson(message))).toEqual(message)
   })
