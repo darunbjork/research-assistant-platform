@@ -36,7 +36,7 @@ import type {
 import type { GeminiRequest, GeminiResponse } from "../types/llm.types"
 import type { Citation } from "../types/retrieval.types"
 import type { ServerMessage } from "../types/websocket.types"
-import { createToolRegistry, formatToolDescriptions } from "../agents/tools/index"
+import { createToolRegistry } from "../agents/tools/index"
 import { classifyQuery } from "../agents/nodes/classify.node"
 import { EvaluatorNode } from "../agents/nodes/evaluate.node"
 import type { EvaluationResult } from "../agents/nodes/evaluate.node"
@@ -45,17 +45,25 @@ import { agentIterations } from "../utils/metrics"
 import { requestGemini } from "../utils/gemini-request"
 import { RateLimitError } from "../middleware/error.middleware"
 import { env } from "../config/env"
-import { CONTEXT_DATA_RULE, wrapInContext } from "../utils/prompt-boundary"
+import { parseToolDecision } from "../agents/engine/decision"
+import { extractCitationsFromHistory } from "../agents/engine/citations"
+import { describeStep, statusForTool } from "../agents/engine/steps"
+import {
+  buildDraftPrompt,
+  buildReasoningPrompt,
+  buildSynthesisPrompt,
+  DRAFT_GENERATION_CONFIG,
+  REASONING_GENERATION_CONFIG,
+  SYNTHESIS_GENERATION_CONFIG,
+} from "../agents/engine/prompts"
+import type { AgentEventCallback } from "../agents/engine/types"
 
 // ── Constants ──────────────────────────────────────────────────────────────
 const GEMINI_MODEL = env.GEMINI_GENERATION_MODEL
 const GEMINI_BASE_URL = "https://generativelanguage.googleapis.com/v1beta"
 const MAX_ITERATIONS = 5
 
-// ── Event Callback Type ────────────────────────────────────────────────────
-// The WebSocket handler passes this function to the streaming service.
-// Every event the service produces is routed through this callback.
-export type AgentEventCallback = (message: ServerMessage) => void
+export type { AgentEventCallback } from "../agents/engine/types"
 
 // ── Token tracking ─────────────────────────────────────────────────────────
 interface TokenUsage {
@@ -179,18 +187,11 @@ export class StreamingAgentService {
         }
 
         // Emit status for the tool that is about to run
-        const toolStatus =
-          decision.toolName === "rag_search"
-            ? "searching"
-            : decision.toolName === "calculator"
-              ? "calculating"
-              : "searching"
-
         this.emit(onEvent, {
           type: "status",
-          status: toolStatus,
+          status: statusForTool(decision.toolName),
           sessionId,
-          message: this.describeStep(decision),
+          message: describeStep(decision),
         })
 
         const toolStart = Date.now()
@@ -228,7 +229,7 @@ export class StreamingAgentService {
 
         const step: AgentStep = {
           stepNumber: state.iterationCount,
-          description: this.describeStep(decision),
+          description: describeStep(decision),
           toolUsed: decision.toolName,
           durationMs: toolDurationMs,
           timestamp: new Date(),
@@ -438,60 +439,17 @@ export class StreamingAgentService {
     lastEval: EvaluationResult | null,
     signal?: AbortSignal
   ): Promise<ToolDecision> {
-    const toolDescriptions = formatToolDescriptions(toolRegistry)
-
-    const historyText =
-      state.toolCallHistory.length === 0
-        ? "No tools called yet."
-        : state.toolCallHistory
-            .map(
-              (tc, i) =>
-                `Step ${i + 1} — ${tc.toolName}\n` +
-                `Input: ${JSON.stringify(tc.input)}\n` +
-                `Output: ${tc.output}`
-            )
-            .join("\n\n")
-
-    const evalFeedback =
-      lastEval !== null
-        ? `\nLAST EVALUATION: ${(lastEval.overallScore * 100).toFixed(0)}%\n` +
-          `RETRY REASON: ${lastEval.retryReason}\n` +
-          (lastEval.suggestedQuery ? `SUGGESTED QUERY: "${lastEval.suggestedQuery}"` : "")
-        : ""
-
-    const prompt = `You are a research assistant deciding the next action.
-
-USER QUERY: ${state.userQuery}
-
-AVAILABLE TOOLS:
-${toolDescriptions}
-- DONE: When you have enough high-quality information.
-
-HISTORY (${state.iterationCount}/${MAX_ITERATIONS} steps):
-${wrapInContext(historyText)}
-${evalFeedback}
-${CONTEXT_DATA_RULE}
-
-RULES:
-1. If evaluation score >= 70% and query is fully addressed: DONE.
-2. If score < 70%: use rag_search with the SUGGESTED QUERY if provided.
-3. Never repeat an identical search query.
-4. After 4+ searches: DONE.
-
-Respond ONLY with valid JSON:
-{"toolName": "tool_name", "input": {"key": "value"}, "reason": "brief reason"}`
+    const prompt = buildReasoningPrompt(state, toolRegistry, lastEval, MAX_ITERATIONS)
 
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, topP: 1.0, maxOutputTokens: 4096 },
+      generationConfig: { ...REASONING_GENERATION_CONFIG },
     }
-
-    requestBody.generationConfig!.responseMimeType = "application/json"
 
     const response = await this.callGemini(requestBody, signal)
     tokenUsage.total += response.usageMetadata?.totalTokenCount ?? 0
 
-    const decision = this.parseToolDecision(geminiText(response))
+    const decision = parseToolDecision(geminiText(response))
     const retryQuery = lastEval?.suggestedQuery?.trim()
     if (
       decision.toolName === "DONE" &&
@@ -511,21 +469,10 @@ Respond ONLY with valid JSON:
   ): Promise<string> {
     if (state.toolCallHistory.length === 0) return ""
 
-    const evidence = state.toolCallHistory
-      .filter(tc => tc.success)
-      .map((tc, i) => `[Evidence ${i + 1}] (${tc.toolName}): ${tc.output}`)
-      .join("\n\n")
-
-    const prompt = `Draft a concise answer using ONLY the evidence below.
-QUERY: ${state.userQuery}
-EVIDENCE:
-${wrapInContext(evidence)}
-${CONTEXT_DATA_RULE}
-Draft (2-4 sentences):`
-
+    const prompt = buildDraftPrompt(state)
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, topP: 1.0, maxOutputTokens: 4096 },
+      generationConfig: { ...DRAFT_GENERATION_CONFIG },
     }
 
     try {
@@ -549,28 +496,10 @@ Draft (2-4 sentences):`
       return { answer: result.answer, citations: [] }
     }
 
-    const evidence = state.toolCallHistory
-      .filter(tc => tc.success)
-      .map(
-        (tc, i) =>
-          `[Evidence ${i + 1}] (${tc.toolName}, input: ${JSON.stringify(tc.input)})\n${tc.output}`
-      )
-      .join("\n\n---\n\n")
-
-    const prompt = `Answer using ONLY the evidence below.
-QUESTION: ${state.userQuery}
-EVIDENCE:
-${wrapInContext(evidence)}
-${CONTEXT_DATA_RULE}
-RULES:
-1. Only use information from the evidence.
-2. If insufficient: say "Based on the available documents, I could not find a complete answer."
-3. Cite evidence as [Evidence N].
-4. Be concise and factual.`
-
+    const prompt = buildSynthesisPrompt(state)
     const requestBody: GeminiRequest = {
       contents: [{ role: "user", parts: [{ text: prompt }] }],
-      generationConfig: { temperature: 0.1, topP: 0.8, maxOutputTokens: 4096 },
+      generationConfig: { ...SYNTHESIS_GENERATION_CONFIG },
     }
 
     const response = await this.callGemini(requestBody, signal)
@@ -578,71 +507,7 @@ RULES:
 
     return {
       answer: geminiText(response),
-      citations: this.extractCitationsFromHistory(state.toolCallHistory),
-    }
-  }
-
-  private parseToolDecision(rawText: string): ToolDecision {
-    const cleaned = rawText
-      .replace(/```json\s*/gi, "")
-      .replace(/```\s*/g, "")
-      .trim()
-    try {
-      const parsed = JSON.parse(cleaned) as {
-        toolName?: unknown
-        input?: unknown
-        reason?: unknown
-      }
-      if (typeof parsed.toolName !== "string") throw new Error("No toolName")
-      return {
-        toolName: parsed.toolName,
-        input:
-          typeof parsed.input === "object" && parsed.input !== null
-            ? (parsed.input as Record<string, string>)
-            : {},
-        reason: typeof parsed.reason === "string" ? parsed.reason : "",
-      }
-    } catch {
-      throw new Error("Gemini returned an invalid tool decision. Please try again.")
-    }
-  }
-
-  private extractCitationsFromHistory(toolCalls: ToolCall[]): Citation[] {
-    const citations: Citation[] = []
-    toolCalls
-      .filter(tc => tc.toolName === "rag_search" && tc.success)
-      .forEach(tc => {
-        const pattern =
-          /\[Result \d+\] \(source: ([^,)]+)(?:, page (\d+))?, relevance: ([\d.]+)\)\n([\s\S]*?)(?=---|\[Result|$)/g
-        let match = pattern.exec(tc.output)
-        while (match !== null) {
-          const [, sourceName, pageStr, scoreStr, content] = match
-          if (sourceName && content) {
-            citations.push({
-              chunkId: `stream-${Date.now()}-${citations.length}`,
-              documentId: "stream-retrieved",
-              documentName: sourceName.trim(),
-              pageNumber: pageStr ? parseInt(pageStr, 10) : undefined,
-              excerpt: content.trim().slice(0, 200),
-              relevanceScore: parseFloat(scoreStr ?? "0"),
-            })
-          }
-          match = pattern.exec(tc.output)
-        }
-      })
-    return citations
-  }
-
-  private describeStep(decision: ToolDecision): string {
-    switch (decision.toolName) {
-      case "rag_search":
-        return `Searching documents: "${decision.input["query"] ?? ""}"`
-      case "calculator":
-        return `Calculating: ${decision.input["expression"] ?? ""}`
-      case "web_search":
-        return `Searching the web: "${decision.input["query"] ?? ""}"`
-      default:
-        return `Running: ${decision.toolName}`
+      citations: extractCitationsFromHistory(state.toolCallHistory),
     }
   }
 
