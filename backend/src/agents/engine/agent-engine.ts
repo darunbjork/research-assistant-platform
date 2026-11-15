@@ -79,7 +79,7 @@ export class AgentEngine {
         transport
       )
 
-      logRagEvent("agent_step", "Streaming agent session started", {
+      logRagEvent("agent_step", "Agent session started", {
         service: "AgentEngine",
         sessionId,
         userId,
@@ -124,7 +124,7 @@ export class AgentEngine {
               state.status = "aborted"
               break
             }
-            logError("Streaming agent reasoning failed", error, {
+            logError("Agent session reasoning failed", error, {
               service: "AgentEngine",
               sessionId,
               transport,
@@ -185,7 +185,7 @@ export class AgentEngine {
             )
           } catch (error: unknown) {
             // Rethrow aborts and Gemini rate limits so callers can stop cleanly / honour Retry-After.
-            // A per-call timeout (AbortError) while the caller's signal is still live is treated
+            // A per-call timeout (TimeoutError) while the caller's signal is still live is treated
             // as a tool failure and recorded as a failed step so the loop can continue.
             if (signal?.aborted || error instanceof RateLimitError) throw error
             toolSuccess = false
@@ -340,7 +340,7 @@ export class AgentEngine {
 
         this.emit(onEvent, { type: "complete", sessionId, result: finalResult }, transport)
 
-        logRagEvent("agent_step", "Streaming agent session complete", {
+        logRagEvent("agent_step", "Agent session complete", {
           service: "AgentEngine",
           sessionId,
           transport,
@@ -390,7 +390,7 @@ export class AgentEngine {
       },
       transport
     )
-    logRagEvent("agent_step", "Streaming agent session aborted", {
+    logRagEvent("agent_step", "Agent session aborted", {
       service: "AgentEngine",
       sessionId: state.sessionId,
       transport,

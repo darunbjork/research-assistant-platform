@@ -381,7 +381,7 @@ export class AgentWsHandler {
     this.runController = runController
     activeRunControllers.add(runController)
 
-    logRagEvent("agent_step", "Streaming agent session started via WebSocket", {
+    logRagEvent("agent_step", "Agent session started via WebSocket", {
       service: "AgentWsHandler",
       sessionId,
       userId: this.userId,
@@ -409,7 +409,7 @@ export class AgentWsHandler {
     } catch (error: unknown) {
       // Aborted by a client disconnect: info-level only, no error message.
       if (runController.signal.aborted) {
-        logRagEvent("agent_step", "Streaming agent run aborted (connection closed)", {
+        logRagEvent("agent_step", "Agent session run aborted (connection closed)", {
           service: "AgentWsHandler",
           sessionId,
           userId: this.userId,
@@ -417,7 +417,7 @@ export class AgentWsHandler {
         return
       }
 
-      logError("Streaming agent failed", error, {
+      logError("Agent session failed", error, {
         service: "AgentWsHandler",
         sessionId,
         userId: this.userId,

@@ -467,6 +467,35 @@ describe("agent characterization (HTTP vs WS, pre-refactor)", () => {
     }).toMatchSnapshot("S12")
   })
 
+  // S14 (Phase 6): per-call timeout (TimeoutError) while caller signal live is recorded as failed step; loop continues (like S8)
+  test("S14 per-call timeout recorded as failed step and loop continues", async () => {
+    const query = "timeout in tool"
+    const timeoutErr = Object.assign(new Error("timed out"), { name: "TimeoutError" })
+    const script: ScriptedResponse[] = [
+      decision("rag_search", { query: "x" }),
+      decision("DONE", {}, "give up"),
+      textResponse("Final despite timeout.", 60),
+    ]
+    const search = makeStubHybridSearch({ error: timeoutErr })
+    const h = await runHttp(script, search, query)
+    const w = await runWs(script, makeStubHybridSearch({ error: timeoutErr }), query)
+    if (h.error || w.error) throw h.error ?? w.error
+    const hn = normalizeResult(h.result!)
+    const wn = normalizeResult(w.result!)
+    expectEqualOrExplain(hn, wn, "S14")
+    expect(kinds(h.script)).toEqual([
+      "generateContent:reason",
+      "generateContent:reason",
+      "generateContent:synthesis",
+    ])
+    expect(kinds(w.script)).toEqual(kinds(h.script))
+    expect({
+      http: hn,
+      fetchKinds: kinds(h.script),
+      wsEvents: normalizeEvents(w.events),
+    }).toMatchSnapshot("S14")
+  })
+
   // S13: MAX_TOKENS Gemini response in draft. Current behavior: geminiText throws but draftAnswer swallows
   // non-abort/non-429 errors and returns "" so the loop continues (records current behavior; "explicit failure" not observed).
   test("S13 MAX_TOKENS draft response current behavior", async () => {

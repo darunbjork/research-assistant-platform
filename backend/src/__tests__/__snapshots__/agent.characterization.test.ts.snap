@@ -1102,3 +1102,71 @@ exports[`agent characterization (HTTP vs WS, pre-refactor) S13 MAX_TOKENS draft 
   ],
 }
 `;
+
+exports[`agent characterization (HTTP vs WS, pre-refactor) S14 per-call timeout recorded as failed step and loop continues: S14 1`] = `
+{
+  "fetchKinds": [
+    "generateContent:reason",
+    "generateContent:reason",
+    "generateContent:synthesis",
+  ],
+  "http": {
+    "citations": [],
+    "durationMs": 0,
+    "finalAnswer": "Final despite timeout.",
+    "iterationCount": 2,
+    "sessionId": "<session>",
+    "status": "done",
+    "steps": [
+      {
+        "description": "Searching documents: "x"",
+        "durationMs": 0,
+        "stepNumber": 1,
+        "timestamp": "<ts>",
+        "toolUsed": "rag_search",
+      },
+      {
+        "description": "Determined sufficient information gathered",
+        "durationMs": 0,
+        "stepNumber": 2,
+        "timestamp": "<ts>",
+      },
+    ],
+    "tokensUsed": 260,
+  },
+  "wsEvents": [
+    {
+      "status": "thinking",
+      "type": "status",
+    },
+    {
+      "status": "searching",
+      "type": "status",
+    },
+    {
+      "step": {
+        "description": "Searching documents: "x"",
+        "stepNumber": 1,
+        "toolUsed": "rag_search",
+      },
+      "type": "step",
+    },
+    {
+      "step": {
+        "description": "Determined sufficient information gathered",
+        "stepNumber": 2,
+        "toolUsed": undefined,
+      },
+      "type": "step",
+    },
+    {
+      "status": "generating",
+      "type": "status",
+    },
+    {
+      "status": "done",
+      "type": "complete",
+    },
+  ],
+}
+`;
