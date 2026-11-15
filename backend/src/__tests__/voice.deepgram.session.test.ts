@@ -81,7 +81,9 @@ jest.mock("../utils/prisma", () => ({
   },
 }))
 
-const mockStreamingRun = jest.fn<Promise<void>, [input: unknown]>(async (): Promise<void> => undefined)
+const mockStreamingRun = jest.fn<Promise<void>, [input: unknown]>(
+  async (): Promise<void> => undefined
+)
 jest.mock("../services/streaming.agent.service", () => ({
   StreamingAgentService: class {
     run = mockStreamingRun

@@ -258,7 +258,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     } catch {
       // Ignore malformed messages
     }
-  }, []);
+  }, [resetQueryState]);
 
   // ── Connect to WebSocket ───────────────────────────────────────────────
   const connect = useCallback((): void => {

@@ -22,7 +22,11 @@ jest.mock("../utils/redis", () => ({
         incrby: (): FakePipeline => p,
         expire: (): FakePipeline => p,
         ttl: (): FakePipeline => p,
-        exec: async (): Promise<unknown> => [[null, 1], [null, 1], [null, 60]],
+        exec: async (): Promise<unknown> => [
+          [null, 1],
+          [null, 1],
+          [null, 60],
+        ],
       }
       return p
     },
@@ -43,7 +47,9 @@ jest.mock("../utils/prisma", () => ({
 }))
 const mockStreamingRun = jest.fn(async (): Promise<void> => undefined)
 jest.mock("../services/streaming.agent.service", () => ({
-  StreamingAgentService: class { run = mockStreamingRun },
+  StreamingAgentService: class {
+    run = mockStreamingRun
+  },
 }))
 const mockSaveVoiceTranscript = jest.fn(async (_input: unknown): Promise<null> => null)
 jest.mock("../services/voice.transcript.service", () => ({
@@ -57,9 +63,13 @@ let capturedOnFinal: OnFinal | null = null
 jest.mock("../services/deepgram.stream", () => {
   class DeepgramStream {
     isOpen = false
-    connect = jest.fn(async () => { this.isOpen = true })
+    connect = jest.fn(async () => {
+      this.isOpen = true
+    })
     finalize = jest.fn(async () => null)
-    close = jest.fn(() => { this.isOpen = false })
+    close = jest.fn(() => {
+      this.isOpen = false
+    })
     sendAudio = jest.fn(() => true)
     constructor(opts: { onFinal: OnFinal }) {
       capturedOnFinal = opts.onFinal
@@ -70,7 +80,9 @@ jest.mock("../services/deepgram.stream", () => {
     DeepgramStream,
     buildListenUrl: () => "ws://fake",
     classifyHandshakeStatus: () => "count",
-    DeepgramHandshakeError: class extends Error { status: number | null = null },
+    DeepgramHandshakeError: class extends Error {
+      status: number | null = null
+    },
     registerUpstream: (userId: string, reg: { stream: DeepgramStream; superseded: () => void }) => {
       const displaced = active.get(userId) ?? null
       active.set(userId, reg)
@@ -116,9 +128,17 @@ class FakeWebSocket {
   emit(event: string, ...args: unknown[]): void {
     for (const l of this.listeners.get(event) ?? []) l(...args)
   }
-  send(data: string): void { this.sent.push(data) }
+  send(data: string): void {
+    this.sent.push(data)
+  }
 }
-interface Msg { type: string; complete?: boolean; text?: string; code?: string; message?: string }
+interface Msg {
+  type: string
+  complete?: boolean
+  text?: string
+  code?: string
+  message?: string
+}
 const flush = (): Promise<void> => new Promise(r => setImmediate(r))
 const parsed = (ws: FakeWebSocket): Msg[] => ws.sent.map(s => JSON.parse(s) as Msg)
 
@@ -144,10 +164,13 @@ describe("voice transcript_final reasons (Step 3)", () => {
     const ws = await setup()
     expect(capturedOnFinal).not.toBeNull()
     capturedOnFinal?.("hello", { reason: "finalized" })
-    await flush(); await flush()
+    await flush()
+    await flush()
 
     const finals = parsed(ws).filter(m => m.type === "transcript_final")
-    expect(finals).toEqual([expect.objectContaining({ text: "hello", complete: true, sessionId: "v1" })])
+    expect(finals).toEqual([
+      expect.objectContaining({ text: "hello", complete: true, sessionId: "v1" }),
+    ])
     expect(parsed(ws).filter(m => m.type === "voice_error")).toHaveLength(0)
     expect(mockStreamingRun).toHaveBeenCalledTimes(1)
     // voice_start turn(1) + voice-origin agent budget(5)
@@ -159,7 +182,8 @@ describe("voice transcript_final reasons (Step 3)", () => {
     it(`${reason}: sends transcript_final complete:false + TRANSCRIPT_INCOMPLETE, no agent`, async () => {
       const ws = await setup()
       capturedOnFinal?.("partial", { reason })
-      await flush(); await flush()
+      await flush()
+      await flush()
 
       const finals = parsed(ws).filter(m => m.type === "transcript_final")
       expect(finals).toEqual([expect.objectContaining({ text: "partial", complete: false })])
