@@ -26,30 +26,10 @@ interface SpanRecord {
   attrs: Record<string, unknown>
 }
 
-// Capture spans recorded by AgentEngine (it does getTracer("agent.engine") in ctor)
+// Capture spans recorded by withSpan (engine spans flow through mocked withSpan)
 const spanRecords: SpanRecord[] = []
 
-jest.mock("../telemetry/tracer", () => ({
-  getTracer: (): {
-    startActiveSpan: (name: string, fn: (span: TestSpan) => Promise<unknown>) => Promise<unknown>
-  } => ({
-    startActiveSpan: async (name: string, fn: (span: TestSpan) => Promise<unknown>) => {
-      const attrs: Record<string, unknown> = {}
-      const span: TestSpan = {
-        setAttribute: (k: string, v: unknown): void => {
-          attrs[k] = v
-        },
-        setStatus: (): void => {},
-        recordException: (): void => {},
-        end: (): void => {},
-      }
-      spanRecords.push({ name, attrs })
-      return fn(span)
-    },
-  }),
-}))
-
-// withSpan is imported from ../telemetry/spans by engine; mock to use our tracer shape directly
+// withSpan is imported from ../telemetry/spans by engine; mock to capture span attrs
 jest.mock("../telemetry/spans", () => {
   const actual = jest.requireActual<typeof import("../telemetry/spans")>("../telemetry/spans")
   return {
@@ -77,34 +57,9 @@ jest.mock("../telemetry/spans", () => {
 
 jest.setTimeout(10000)
 
-function gaugeValue(): number {
-  const g = activeAgentSessions as unknown as {
-    hashMap?: Record<string, { value: number }>
-    get?: () => { values?: Array<{ value: number }> }
-  }
-  if (g.hashMap?.[""] && typeof g.hashMap[""].value === "number") {
-    return g.hashMap[""].value
-  }
-  if (typeof g.get === "function") {
-    const v = g.get()
-    if (v.values?.[0]) return v.values[0].value
-  }
-  return 0
-}
-
-function resetGauge(): void {
-  const g = activeAgentSessions as unknown as {
-    hashMap?: Record<string, { value: number }>
-    set?: (n: number) => void
-  }
-  if (g.hashMap) {
-    for (const k of Object.keys(g.hashMap)) {
-      const entry = g.hashMap[k]
-      if (entry) entry.value = 0
-    }
-  } else if (typeof g.set === "function") {
-    g.set(0)
-  }
+async function gaugeValue(): Promise<number> {
+  const result = await activeAgentSessions.get()
+  return result.values[0]?.value ?? 0
 }
 
 function makeEngine(
@@ -126,7 +81,6 @@ const baseScript: ScriptedResponse[] = [
 describe("AgentEngine (Phase 4)", () => {
   beforeEach(() => {
     spanRecords.length = 0
-    resetGauge()
   })
 
   test("runs with no onEvent sink (HTTP-style) and returns done result", async () => {
@@ -165,29 +119,47 @@ describe("AgentEngine (Phase 4)", () => {
       })
       expect(result.status).toBe("done")
       expect(events.length).toBeGreaterThan(0)
+      expect(events.some(e => e.type === "complete")).toBe(true)
     } finally {
       s.restore()
     }
   })
 
-  test("restores activeAgentSessions after success", async () => {
-    const before = gaugeValue()
+  test("increments activeAgentSessions during run and restores after success", async () => {
+    const before = await gaugeValue()
     const { engine } = makeEngine()
+    let during = -1
+    const onEvent = (m: ServerMessage): void => {
+      if (m.type === "step" && during === -1) {
+        void gaugeValue().then(v => {
+          during = v
+        })
+      }
+    }
     const s = scriptGemini(baseScript)
     try {
-      await engine.run({ query: "q", userId: "u", sessionId: "s1", transport: "http" })
-      expect(gaugeValue()).toBe(before)
+      await engine.run({
+        query: "q",
+        userId: "u",
+        sessionId: "s1",
+        transport: "ws",
+        onEvent,
+      })
+      // allow microtask from gaugeValue().then to flush
+      await Promise.resolve()
+      expect(during).toBe(before + 1)
+      expect(await gaugeValue()).toBe(before)
     } finally {
       s.restore()
     }
   })
 
   test("restores activeAgentSessions after abort", async () => {
-    const before = gaugeValue()
+    const before = await gaugeValue()
     const { engine } = makeEngine()
     const controller = new AbortController()
     controller.abort()
-    const s = scriptGemini([]) // should not be called
+    const s = scriptGemini([])
     try {
       const result = await engine.run({
         query: "q",
@@ -198,22 +170,38 @@ describe("AgentEngine (Phase 4)", () => {
         onEvent: (): void => {},
       })
       expect(result.status).toBe("aborted")
-      expect(gaugeValue()).toBe(before)
+      expect(await gaugeValue()).toBe(before)
     } finally {
       s.restore()
     }
   })
 
-  test("restores activeAgentSessions after error", async () => {
-    const before = gaugeValue()
+  test("increments activeAgentSessions during run and restores after error", async () => {
+    const before = await gaugeValue()
     const { engine } = makeEngine()
-    // reasoning call fails with non-abort error -> engine rethrows
-    const s = scriptGemini([{ kind: "throw", error: new Error("boom") }])
+    let during = -1
+    const onEvent = (m: ServerMessage): void => {
+      if (m.type === "step" && during === -1) {
+        void gaugeValue().then(v => {
+          during = v
+        })
+      }
+    }
+    // rag_search -> step emitted, draft ok, eval ok (>=0.7 ends loop), synthesis throws -> error after step
+    const script: ScriptedResponse[] = [
+      decision("rag_search", { query: "alpha" }, "search"),
+      textResponse("Alpha is the answer. According to the document it states alpha clearly.", 80),
+      evalResponse(0.9, { shouldRetry: false }),
+      { kind: "throw", error: new Error("boom") },
+    ]
+    const s = scriptGemini(script)
     try {
       await expect(
-        engine.run({ query: "q", userId: "u", sessionId: "s3", transport: "http" })
+        engine.run({ query: "q", userId: "u", sessionId: "s3", transport: "ws", onEvent })
       ).rejects.toThrow("boom")
-      expect(gaugeValue()).toBe(before)
+      await Promise.resolve()
+      expect(during).toBe(before + 1)
+      expect(await gaugeValue()).toBe(before)
     } finally {
       s.restore()
     }
