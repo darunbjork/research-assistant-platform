@@ -23,11 +23,12 @@
 - **Hybrid Search Engine**: Combines vector similarity (cosine distance via `pgvector`) with full-text keyword search using Reciprocal Rank Fusion (RRF).
 - **Cross-Encoder Reranking**: Re-orders retrieved context chunks for maximum relevance before passing them to the LLM.
 - **ReAct AI Agent**: Real-time agentic reasoning powered by Google Gemini with WebSocket streaming support (`Agent WS`).
+- **Voice Questions & Spoken Answers** (Agent WS mode): ask with the **Mic** — audio streams to Deepgram, the finalized transcript runs the agent — and hear the answer read aloud by ElevenLabs with **🔊 Speak answers**. Citations and markdown are stripped before speaking, answers are capped at 600 characters on a sentence boundary, **⏹ Stop** or pressing the mic interrupts at once, and a TTS failure never changes the text answer. Both providers run as offline mocks by default; spoken characters are capped per user per day (see [docs/cost.md](docs/cost.md) and [ADR 0006](docs/adr/0006-speak-answers.md)).
 - **Document Upload**: `POST /api/v1/documents/upload` accepts PDF (text-based only — scanned/image-only PDFs are rejected), TXT, MD, CSV (10 MB file, 500k characters, 200 PDF pages) and ingests in the background.
 - **High-Performance Caching**: Redis-backed caching — embeddings cached for 24 hours, search results for 5 minutes — to minimize API cost and latency.
 - **Observability & Metrics**: OpenTelemetry tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (off by default in production), Prometheus metrics guarded by `METRICS_TOKEN`, and a local Prometheus/Grafana/Jaeger stack via `npm run monitoring:up`.
-- **Robust Error Handling**: Structured Express middleware with automated 429 rate limit detection and fallback generation modes.
-- **Comprehensive Test Suite**: 602 unit tests across 40 suites plus 7 integration tests; statement coverage 76% (CI floor: 61/52/59/61).
+- **Robust Error Handling**: Structured Express middleware with automated 429 rate limit detection and fallback generation modes. Agent calls to Gemini retry overloads (5xx) with backoff and switch to an optional second model (`GEMINI_FALLBACK_MODEL`) when the primary stays overloaded, times out or is rate limited.
+- **Comprehensive Test Suite**: 866 backend unit tests across 58 suites (statement coverage 81%; CI floor: 61/52/59/61), a separate integration suite (`npm run test:integration`), and 60 frontend tests (Vitest). Tests never call Gemini, Deepgram or ElevenLabs.
 - **Voice Data Retention**: Voice transcripts are text-only (raw audio is never stored) and count as personal data — kept **30 days**, purged by three sweeps (on service startup, after each save, and by a daily in-process timer that is unref'd and cleared on graceful shutdown), and fully removed when a user is deleted (foreign-key cascade).
 
 ---
@@ -40,8 +41,9 @@
 | **Backend** | Node.js 22, Express, TypeScript, Prisma ORM, OpenTelemetry |
 | **Database** | PostgreSQL 16 + `pgvector` (Vector Search, `vector(768)` + HNSW) |
 | **Caching & Queues** | Redis, [Bull](https://github.com/OptimalBits/bull) job queue (not BullMQ) |
-| **LLM & Embeddings** | Google Gemini — `gemini-embedding-001` at **768 dims**; generation model from `GEMINI_GENERATION_MODEL` (default `gemini-3.6-flash`) |
-| **Testing** | Jest, Supertest |
+| **LLM & Embeddings** | Google Gemini — `gemini-embedding-001` at **768 dims**; generation model from `GEMINI_GENERATION_MODEL` (default `gemini-3.6-flash`), optional `GEMINI_FALLBACK_MODEL` |
+| **Voice** | Deepgram streaming STT (`nova-3`), ElevenLabs streaming TTS (`eleven_flash_v2_5`, PCM 24 kHz), Web Audio (AudioWorklet capture, gapless playback) |
+| **Testing** | Jest + Supertest (backend), Vitest + Testing Library (frontend) |
 
 **Local dev ports:** backend `3001`, frontend (Vite) `5173`, Postgres `5433` → container `5432`, Redis `6379`.
 
@@ -74,6 +76,19 @@
    JWT_REFRESH_SECRET="your_32_character_jwt_refresh_secret"
    PORT=3001
    ```
+
+3. *(Optional)* **Voice.** Both directions are offline mocks by default — no keys, no cost. To use the real providers, set them in `backend/.env` (each is validated at startup only when selected) and complete the spend-cap checklist in [docs/cost.md](docs/cost.md) first:
+   ```env
+   # Speech-to-text (mic → transcript)
+   VOICE_MOCK=false
+   DEEPGRAM_API_KEY="your_deepgram_key"
+
+   # Spoken answers (answer → audio)
+   TTS_PROVIDER=elevenlabs
+   ELEVENLABS_API_KEY="your_elevenlabs_key"   # a key limited to Text to Speech, with a credit cap
+   ELEVENLABS_VOICE_ID="your_voice_id"        # free plans: use a Default voice, not a Library voice
+   ```
+   `.env` is read only at startup — restart the backend after changing it (`npm run dev` reloads on code changes, not on `.env` changes).
 
 ---
 
@@ -136,6 +151,7 @@ npm test
 When testing with a free Gemini API key:
 - **Use Micro Documents**: Test document upload using short 1-page sample files (100–300 words). This generates 1 chunk (~50 tokens) instead of 40+ chunks (~10,000+ tokens).
 - **Leverage Redis Cache**: Once a text chunk is embedded, subsequent queries hit Redis cache with **0 API token usage**.
+- **Expect 503s and per-model limits**: the free tier often returns 503 "high demand", and its daily/per-minute quotas are counted **per model**. Each agent question makes 3–5 Gemini calls. Setting `GEMINI_FALLBACK_MODEL` (e.g. a `flash-lite` model) lets the agent continue on a second model when the first is overloaded or throttled.
 - For detailed token management strategies, see [docs/gemini-testing-guide.md](docs/gemini-testing-guide.md).
 
 ---
