@@ -1,6 +1,11 @@
 # ResearchBot — Production-Grade Agentic RAG Platform
-<img width="1440" height="900" alt="Screenshot 2026-07-28 at 17 40 06" src="https://github.com/user-attachments/assets/8b4e9650-448e-468b-a9be-048abcfb7362" />
-<img width="1440" height="900" alt="Screenshot 2026-07-28 at 17 40 22" src="https://github.com/user-attachments/assets/1ad075fb-78ba-4a57-9dc3-4b088823ea4d" />
+
+<img width="1440" alt="ResearchBot app: upload panel, document library and Agent (WS) chat answering which file types the upload accepts" src="docs/screenshots/01-app-overview.png" />
+
+| | |
+|---|---|
+| <img alt="Agent answers which file types the upload accepts, citing Evidence 1, with reasoning steps and sources" src="docs/screenshots/02-file-types-answer.png" /> | <img alt="Document library and the How ResearchBot works panel: upload, embed, search, generate" src="docs/screenshots/03-how-it-works.png" /> |
+| <img alt="Cross-page retrieval: the quantum ferret marker from page two, with 3 sources and run stats" src="docs/screenshots/04-quantum-ferret-cross-page.png" /> | <img alt="Agent lists the four ingestion checklist items with citations, sources and run stats" src="docs/screenshots/05-ingestion-checklist.png" /> |
 
 
 ---

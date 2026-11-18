@@ -29,6 +29,9 @@ export const envSchema = z
       emptyToUndefined,
       z.string().min(1).default("gemini-3.6-flash")
     ),
+    // Optional second generation model, tried once when the primary is
+    // overloaded (5xx) or times out. Unset = no fallback.
+    GEMINI_FALLBACK_MODEL: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
     GEMINI_EMBEDDING_MODEL: z.preprocess(
       emptyToUndefined,
       z.string().min(1).default("gemini-embedding-001")
