@@ -51,7 +51,9 @@ export class TtsError extends Error {
   constructor(
     readonly code: TtsErrorCode,
     message: string,
-    readonly status?: number
+    readonly status?: number,
+    /** ElevenLabs' own error code (e.g. "paid_plan_required") — safe to log. */
+    readonly providerCode?: string
   ) {
     super(message)
     this.name = "TtsError"
@@ -111,27 +113,67 @@ export interface ElevenLabsConfig {
   firstByteTimeoutMs?: number
 }
 
+/** ElevenLabs error body: `{ detail: { code, status, message } }` (code/status are safe to log). */
+function providerErrorCode(body: string): string | undefined {
+  try {
+    const parsed = JSON.parse(body) as { detail?: { code?: unknown; status?: unknown } }
+    const code = parsed.detail?.code ?? parsed.detail?.status
+    return typeof code === "string" && /^[a-z_]{1,64}$/.test(code) ? code : undefined
+  } catch {
+    return undefined
+  }
+}
+
 /** Map a non-OK ElevenLabs response to a typed error (body is read, never logged). */
 async function errorFromResponse(response: Response): Promise<Error> {
   const status = response.status
   const body = await response.text().catch(() => "")
-  if (status === 402 || /quota/i.test(body)) {
+  const providerCode = providerErrorCode(body)
+
+  // A setup problem, not a spent cap: free plans cannot use library voices
+  // via the API (HTTP 402 paid_plan_required). Retrying cannot fix it, so it
+  // must not read as "quota" or trip the breaker.
+  if (providerCode === "paid_plan_required") {
+    return new TtsError(
+      "TTS_FAILED",
+      "The configured voice needs a paid ElevenLabs plan — choose a default voice.",
+      status,
+      providerCode
+    )
+  }
+  if (providerCode === "quota_exceeded" || status === 402 || /quota/i.test(body)) {
     return new TtsError(
       "TTS_QUOTA",
       "Speech quota reached — spoken answers resume when it resets.",
-      status
+      status,
+      providerCode
     )
   }
   if (status === 401 || status === 403) {
-    return new TtsError("TTS_AUTH", "Speech provider rejected the server credentials.", status)
+    return new TtsError(
+      "TTS_AUTH",
+      "Speech provider rejected the server credentials.",
+      status,
+      providerCode
+    )
   }
   if (status === 429) {
     return new RateLimitError("Speech provider rate-limited the request — try again shortly.")
   }
   if (status >= 500) {
-    return new TtsError("TTS_UNAVAILABLE", `Speech provider unavailable (HTTP ${status}).`, status)
+    return new TtsError(
+      "TTS_UNAVAILABLE",
+      `Speech provider unavailable (HTTP ${status}).`,
+      status,
+      providerCode
+    )
   }
-  return new TtsError("TTS_FAILED", `Speech provider refused the request (HTTP ${status}).`, status)
+  return new TtsError(
+    "TTS_FAILED",
+    `Speech provider refused the request (HTTP ${status}).`,
+    status,
+    providerCode
+  )
 }
 
 /** Real ElevenLabs client: POST …/stream, PCM16 response body streamed through. */
@@ -240,6 +282,7 @@ export class ElevenLabsTtsService implements TtsService {
           durationMs: Date.now() - startedAt,
           code: error instanceof TtsError ? error.code : (error as { code?: string }).code,
           status: error instanceof TtsError ? error.status : undefined,
+          providerCode: error instanceof TtsError ? error.providerCode : undefined,
         })
       }
       throw error
