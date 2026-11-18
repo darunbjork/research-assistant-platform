@@ -136,7 +136,7 @@ re-flags this.
 ## 5. Mitigations (in place / scheduled)
 
 - `VOICE_MOCK=true` default in `backend/.env.example` **and** `.env.production.example` — zero spend by construction (Day 1).
-- Startup validation: keys + voice-id required only when `VOICE_MOCK=false`; failures print names only (`env.ts` superRefine, Day 1).
+- Startup validation, per provider: `DEEPGRAM_API_KEY` is required only when `VOICE_MOCK=false` (speech-to-text); `ELEVENLABS_API_KEY` + `ELEVENLABS_VOICE_ID` only when `TTS_PROVIDER=elevenlabs` (spoken answers). Both default to mock. Failures print names only (`env.ts` superRefine).
 - `docker-compose.prod.yml` forwards the whole `.env.production` via `env_file` — **no compose change needed** for voice vars.
 - Voice limiter fail-closed (~20 turns/h, 10 sessions/h) + global budget charge per turn (Days 2/6).
 - Voice sub-cap 40 % with **check-before-increment** (atomic Lua): a refused voice call never drains the shared global counter (Day 2.5).
@@ -162,11 +162,39 @@ re-flags this.
   - **Status:** implemented (mock-only verification green — fake-server suite + handler suite; `/worklets/*` served `Cache-Control: no-cache`). Real call still gated on the §4 confirmation above.
 - Outage runbook `docs/runbooks/voice-provider-outage.md` (Day 12).
 
+## 5b. Spoken answers (TTS) — what bounds the ElevenLabs bill
+
+Implemented by `docs/VOICE_TTS_PLAN.md` (Phases 1–5); design in
+`docs/adr/0006-speak-answers.md`. Rate: **$0.04 / 1,000 characters** on
+`eleven_flash_v2_5` (§1).
+
+| Control | Setting | Effect |
+| --- | --- | --- |
+| Opt-in per connection | `set_speak` (browser 🔊 toggle, default on in the UI, **off** on the server until the browser asks) | Nothing is synthesised unless the user's socket asked for it |
+| Per-answer cap | `TTS_MAX_CHARS=600` (100–2000) | Answer cut at the last full sentence ≤ 600 chars → **≤ $0.024 per spoken answer** |
+| Per-user daily cap | `TTS_DAILY_CHARS_PER_USER=20000` — Redis `INCRBY tts:chars:{userId}:{UTC day}`, 48 h TTL | **≤ $0.80 per user per day**; over the cap → `TTS_DAILY_LIMIT`, answer stays text-only |
+| Fails closed | Redis error on the daily counter | Speaking is skipped (`TTS_UNAVAILABLE`); the text answer is unaffected |
+| Provider credit cap | ElevenLabs restricted key: **Text to Speech access only**, with a credit (`character_limit`) cap | Hard stop at the provider; a quota response (`TTS_QUOTA`) opens the TTS breaker at once |
+| Breaker | `ttsBreaker`: 5 outages → open 5 min; quota opens immediately; auth/429/aborts never count | No retry storm against a failing or spent provider |
+| Barge-in / abort | Mic, ⏹ Stop, a new question, `set_speak false`, socket close, shutdown | The upstream ElevenLabs stream is cancelled (no further reads) |
+
+What is **not** charged: spoken answers do **not** draw the global
+LLM/voice budget units from §2 (that `ceil(summary_chars / 500)` TTS unit
+belonged to the Day-6 LLM-summary design, which was not built — see ADR
+0006). The per-user daily character cap and the provider key cap are the
+TTS spend controls.
+
+Metrics: `voice_tts_chars_total` (characters accepted by the provider,
+counted when the first audio arrives) and `voice_tts_first_byte_seconds`.
+
+- [ ] **ElevenLabs TTS key**: restricted to Text to Speech, credit cap `____ chars` set (date `____`) — the key is in `backend/.env` (2026-11-18); record the cap here.
+
 ## 6. Switching to real mode (only after §4 is checked)
 
 1. Complete §4, write caps + dates into this file.
-2. Set `VOICE_MOCK=false` and the three credentials (`DEEPGRAM_API_KEY`,
-   `ELEVENLABS_API_KEY`, `ELEVENLABS_VOICE_ID`) in server env only.
-3. Restart — startup validation fails fast if any is missing.
+2. Real speech-to-text: set `VOICE_MOCK=false` and `DEEPGRAM_API_KEY`.
+   Real spoken answers: set `TTS_PROVIDER=elevenlabs`, `ELEVENLABS_API_KEY`
+   and `ELEVENLABS_VOICE_ID`. Server env only; the two are independent.
+3. Restart — startup validation fails fast if a selected provider's key is missing.
 4. Make one manual call; confirm it appears in both dashboards under the caps.
 5. Keep dashboard alerts on as defence in depth; our budget + limiter bound usage regardless.
