@@ -1,11 +1,11 @@
 // backend/src/services/tts.service.ts
 //
-// Text-to-speech provider boundary (voice curriculum Day 2). Mirrors
-// stt.service.ts: interface + deterministic mock now, real ElevenLabs client
-// on Day 8. The mock emits silence sized from the text so downstream
-// sequencing (Day 8) can be developed and tested offline.
+// Text-to-speech provider boundary. Mirrors stt.service.ts: one interface,
+// a deterministic mock (silence sized from the text, no network) and the
+// real ElevenLabs client. The provider is chosen by TTS_PROVIDER, which is
+// independent of VOICE_MOCK (that flag controls speech-to-text only).
 
-import { VOICE_SAMPLE_RATE } from "../types/voice.types"
+import { TTS_SAMPLE_RATE } from "../types/voice.types"
 import { CircuitBreaker } from "../utils/circuit-breaker"
 import { env } from "../config/env"
 
@@ -15,7 +15,7 @@ export interface TtsSynthesizeRequest {
 }
 
 export interface TtsSynthesizeResult {
-  /** PCM16 little-endian mono audio at VOICE_SAMPLE_RATE (format re-checked Day 8). */
+  /** PCM16 little-endian mono audio at TTS_SAMPLE_RATE. */
   audioPcm16: Buffer
 }
 
@@ -27,7 +27,7 @@ export interface TtsService {
 export class MockTtsService implements TtsService {
   async synthesize(request: TtsSynthesizeRequest): Promise<TtsSynthesizeResult> {
     const durationMs = request.text.length * 10
-    const samples = Math.round((durationMs / 1000) * VOICE_SAMPLE_RATE)
+    const samples = Math.round((durationMs / 1000) * TTS_SAMPLE_RATE)
     return { audioPcm16: Buffer.alloc(samples * 2) }
   }
 }
@@ -35,14 +35,12 @@ export class MockTtsService implements TtsService {
 /** Breaker guarding the ElevenLabs endpoint (trips → PROVIDER_UNAVAILABLE). */
 export const ttsBreaker = new CircuitBreaker("elevenlabs-tts")
 
-/**
- * Build the TTS service for a mode. Real mode throws until the ElevenLabs
- * client lands on Day 8 — env.ts already forces the key to exist when
- * VOICE_MOCK=false, but the client itself is not written yet.
- */
-export function createTtsService(voiceMock: boolean, breaker?: CircuitBreaker): TtsService {
-  if (!voiceMock) {
-    throw new Error("Real ElevenLabs TTS is not implemented yet (voice Day 8)")
+export type TtsProvider = "mock" | "elevenlabs"
+
+/** Build the TTS service for a provider (env.TTS_PROVIDER). */
+export function createTtsService(provider: TtsProvider, breaker?: CircuitBreaker): TtsService {
+  if (provider === "elevenlabs") {
+    throw new Error("ElevenLabs TTS client is not implemented yet")
   }
   const inner = new MockTtsService()
   if (!breaker) return inner
@@ -53,8 +51,8 @@ export function createTtsService(voiceMock: boolean, breaker?: CircuitBreaker): 
 
 let defaultTts: TtsService | null = null
 
-/** Process-wide TTS service chosen from env.VOICE_MOCK (lazy, memoised). */
+/** Process-wide TTS service chosen from env.TTS_PROVIDER (lazy, memoised). */
 export function getTtsService(): TtsService {
-  defaultTts ??= createTtsService(env.VOICE_MOCK, ttsBreaker)
+  defaultTts ??= createTtsService(env.TTS_PROVIDER, ttsBreaker)
   return defaultTts
 }

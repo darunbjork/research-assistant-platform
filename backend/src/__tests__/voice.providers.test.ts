@@ -44,8 +44,8 @@ describe("MockTtsService", () => {
 
   it("returns silence sized at 10 ms per character", async () => {
     const result = await service.synthesize({ text: "a".repeat(250), sessionId: "s1" })
-    // 2500 ms × 16 000 samples/s × 2 bytes = 80 000 bytes
-    expect(result.audioPcm16).toHaveLength(80_000)
+    // 2500 ms × 24 000 samples/s (TTS_SAMPLE_RATE) × 2 bytes = 120 000 bytes
+    expect(result.audioPcm16).toHaveLength(120_000)
     expect(result.audioPcm16.every((byte: number) => byte === 0)).toBe(true)
   })
 
@@ -58,12 +58,11 @@ describe("MockTtsService", () => {
 describe("createSttService / createTtsService", () => {
   it("mock mode returns the deterministic stubs", () => {
     expect(createSttService(true)).toBeInstanceOf(MockSttService)
-    expect(createTtsService(true)).toBeInstanceOf(MockTtsService)
+    expect(createTtsService("mock")).toBeInstanceOf(MockTtsService)
   })
 
-  it("real mode keeps batch STT out (streaming since Day 5) and TTS until Day 8", () => {
+  it("real mode keeps batch STT out (streaming since Day 5)", () => {
     expect(() => createSttService(false)).toThrow("deepgram.stream.ts")
-    expect(() => createTtsService(false)).toThrow("voice Day 8")
   })
 
   it("wraps the service with the breaker when one is supplied", async () => {
@@ -80,7 +79,7 @@ describe("createSttService / createTtsService", () => {
   })
 })
 
-describe("process-wide services (env.VOICE_MOCK=true in tests)", () => {
+describe("process-wide services (VOICE_MOCK=true, TTS_PROVIDER=mock in tests)", () => {
   it("getSttService/getTtsService memoise and delegate to the deterministic mocks", async () => {
     expect(getSttService()).toBe(getSttService())
     expect(getTtsService()).toBe(getTtsService())
@@ -94,7 +93,7 @@ describe("process-wide services (env.VOICE_MOCK=true in tests)", () => {
     expect(stt.text).toBe("mock transcript (1000ms, session s)")
 
     const tts = await getTtsService().synthesize({ text: "hi", sessionId: "s" })
-    expect(tts.audioPcm16).toHaveLength(640) // 2 chars → 20 ms → 320 samples × 2 bytes
+    expect(tts.audioPcm16).toHaveLength(960) // 2 chars → 20 ms → 480 samples × 2 bytes
   })
 
   it("exports named breakers for the two providers", () => {

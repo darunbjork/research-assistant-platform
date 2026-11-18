@@ -137,26 +137,24 @@ describe("voice env (Day 1)", () => {
     expect(result.success).toBe(false)
   })
 
-  it("requires all three voice credentials when VOICE_MOCK=false", () => {
+  it("requires only DEEPGRAM_API_KEY when VOICE_MOCK=false (TTS stays mock)", () => {
     const result = envSchema.safeParse({ ...VALID, VOICE_MOCK: "false" })
     expect(result.success).toBe(false)
     if (result.success) return
     const paths = result.error.issues.map(issue => issue.path.join("."))
-    expect(paths).toContain("DEEPGRAM_API_KEY")
-    expect(paths).toContain("ELEVENLABS_API_KEY")
-    expect(paths).toContain("ELEVENLABS_VOICE_ID")
+    expect(paths).toEqual(["DEEPGRAM_API_KEY"])
   })
 
-  it("accepts VOICE_MOCK=false when all three voice credentials are present", () => {
+  it("accepts real STT with mock TTS and no ElevenLabs keys", () => {
     const result = envSchema.safeParse({
       ...VALID,
       VOICE_MOCK: "false",
       DEEPGRAM_API_KEY: "deepgram-test-key-0001",
-      ELEVENLABS_API_KEY: "elevenlabs-test-key-01",
-      ELEVENLABS_VOICE_ID: "voice-id-abc123",
     })
     expect(result.success).toBe(true)
-    if (result.success) expect(result.data.VOICE_MOCK).toBe(false)
+    if (!result.success) return
+    expect(result.data.VOICE_MOCK).toBe(false)
+    expect(result.data.TTS_PROVIDER).toBe("mock")
   })
 
   it("treats empty voice credentials as unset (mock mode still passes)", () => {
@@ -230,5 +228,56 @@ describe("loadEnv", () => {
     const env = loadEnv(VALID)
     expect(Object.isFrozen(env)).toBe(true)
     expect(env.PORT).toBe(3001)
+  })
+})
+
+describe("TTS env (spoken answers)", () => {
+  it("defaults to the mock provider with the documented caps", () => {
+    const result = envSchema.safeParse(VALID)
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.TTS_PROVIDER).toBe("mock")
+    expect(result.data.TTS_MAX_CHARS).toBe(600)
+    expect(result.data.TTS_DAILY_CHARS_PER_USER).toBe(20000)
+    expect(result.data.ELEVENLABS_OUTPUT_FORMAT).toBe("pcm_24000")
+  })
+
+  it("requires the ElevenLabs key and voice id only when TTS_PROVIDER=elevenlabs", () => {
+    const result = envSchema.safeParse({ ...VALID, TTS_PROVIDER: "elevenlabs" })
+    expect(result.success).toBe(false)
+    if (result.success) return
+    const paths = result.error.issues.map(issue => issue.path.join("."))
+    expect(paths).toContain("ELEVENLABS_API_KEY")
+    expect(paths).toContain("ELEVENLABS_VOICE_ID")
+    expect(paths).not.toContain("DEEPGRAM_API_KEY")
+  })
+
+  it("accepts TTS_PROVIDER=elevenlabs (case-insensitive) with both credentials", () => {
+    const result = envSchema.safeParse({
+      ...VALID,
+      TTS_PROVIDER: " ElevenLabs ",
+      ELEVENLABS_API_KEY: "elevenlabs-test-key-01",
+      ELEVENLABS_VOICE_ID: "voice-id-abc123",
+    })
+    expect(result.success).toBe(true)
+    if (result.success) expect(result.data.TTS_PROVIDER).toBe("elevenlabs")
+  })
+
+  it("rejects an unknown TTS_PROVIDER", () => {
+    expect(envSchema.safeParse({ ...VALID, TTS_PROVIDER: "kokoro" }).success).toBe(false)
+  })
+
+  it.each([
+    ["99", false],
+    ["100", true],
+    ["2000", true],
+    ["2001", false],
+    ["abc", false],
+  ])("validates TTS_MAX_CHARS=%s → %s", (value, ok) => {
+    expect(envSchema.safeParse({ ...VALID, TTS_MAX_CHARS: value }).success).toBe(ok)
+  })
+
+  it("rejects a non-positive TTS_DAILY_CHARS_PER_USER", () => {
+    expect(envSchema.safeParse({ ...VALID, TTS_DAILY_CHARS_PER_USER: "0" }).success).toBe(false)
   })
 })
