@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { queryAgent } from "../utils/api";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useVoiceCapture } from "../hooks/useVoiceCapture";
+import { useTtsPlayer } from "../hooks/useTtsPlayer";
 import MessageCard from "./MessageCard";
 import AgentStatusBadge from "./AgentStatusBadge";
 import type { ChatMessage, AgentStatus } from "../types";
@@ -19,6 +20,25 @@ function formatTime(date: Date): string {
 
 type ChatMode = "ws-agent" | "http-agent" | "rag" | "rag-rerank";
 
+const SPEAK_STORAGE_KEY = "researchbot.speakAnswers";
+
+/** Saved 🔊 preference; ON unless the user turned it off. Storage may be blocked. */
+function loadSpeakPreference(): boolean {
+  try {
+    return localStorage.getItem(SPEAK_STORAGE_KEY) !== "off";
+  } catch {
+    return true;
+  }
+}
+
+function saveSpeakPreference(enabled: boolean): void {
+  try {
+    localStorage.setItem(SPEAK_STORAGE_KEY, enabled ? "on" : "off");
+  } catch {
+    // private mode / blocked storage: the toggle still works for this visit
+  }
+}
+
 const WELCOME_MESSAGE: ChatMessage = {
   id: "welcome",
   text:
@@ -35,12 +55,37 @@ export default function AgentChat() {
   const [inputValue, setInputValue] = useState("");
   const [chatMode, setChatMode] = useState<ChatMode>("ws-agent");
   const [httpStatus, setHttpStatus] = useState<AgentStatus>("idle");
+  const [speakAnswers, setSpeakAnswers] = useState<boolean>(loadSpeakPreference);
 
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
-  // ── WebSocket hook ─────────────────────────────────────────────────────
-  const ws = useAgentWebSocket();
+  // ── Spoken answers (TTS player) + WebSocket hook ──────────────────────
+  // Speaking only exists in Agent (WS) mode.
+  const player = useTtsPlayer();
+  const ws = useAgentWebSocket({
+    speakEnabled: speakAnswers && chatMode === "ws-agent",
+    tts: player,
+  });
+
+  /** Silence the current answer locally and on the server. */
+  const stopSpeaking = (): void => {
+    player.stop();
+    ws.bargeIn();
+  };
+
+  const handleSpeakToggle = (): void => {
+    const next = !speakAnswers;
+    setSpeakAnswers(next);
+    saveSpeakPreference(next);
+    if (next) player.prime(); // a click is the user gesture audio needs
+    else player.stop();
+  };
+
+  // Leaving Agent (WS) mode stops any answer being spoken.
+  useEffect(() => {
+    if (chatMode !== "ws-agent" && player.isSpeaking) player.stop();
+  }, [chatMode, player]);
 
   // ── Voice capture (Day 4) ──────────────────────────────────────────────
   const voice = useVoiceCapture();
@@ -52,6 +97,9 @@ export default function AgentChat() {
       return;
     }
     if (ws.connectionState !== "authenticated") return;
+    // Barge-in: talking over the answer stops it before the mic opens.
+    if (player.isSpeaking) stopSpeaking();
+    player.prime();
     ws.voiceStart();
     void voice.startCapture(ws.sendVoiceFrame);
   };
@@ -157,7 +205,10 @@ export default function AgentChat() {
     setMessages((prev) => [...prev, userMessage]);
 
     if (chatMode === "ws-agent") {
-      // WebSocket mode — streaming
+      // WebSocket mode — streaming. A new question replaces any answer
+      // still being spoken (the server cancels it on "start" too).
+      player.stop();
+      if (speakAnswers) player.prime();
       ws.startQuery(query);
     } else if (chatMode === "http-agent") {
       // HTTP Agent mode (fallback)
@@ -456,6 +507,13 @@ export default function AgentChat() {
           </div>
         )}
 
+        {/* Speaking failed — the text answer above is unaffected. */}
+        {chatMode === "ws-agent" && ws.ttsError && (
+          <p role="note" className="-mt-2 mb-3 text-xs text-amber-700">
+            🔇 {ws.ttsError}
+          </p>
+        )}
+
         <div ref={bottomRef} />
       </div>
 
@@ -486,6 +544,16 @@ export default function AgentChat() {
             disabled={isDisabled}
             className="flex-1 px-4 py-2.5 border border-slate-300 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-slate-50 disabled:text-slate-400 transition-colors"
           />
+          {chatMode === "ws-agent" && player.isSpeaking && (
+            <button
+              onClick={stopSpeaking}
+              aria-label="Stop speaking"
+              title="Stop reading the answer aloud"
+              className="px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex-shrink-0 border bg-amber-50 border-amber-300 text-amber-800 hover:bg-amber-100"
+            >
+              ⏹ Stop
+            </button>
+          )}
           {chatMode === "ws-agent" && (
             <button
               onClick={handleVoiceToggle}
@@ -528,11 +596,25 @@ export default function AgentChat() {
             )}
           </button>
         </div>
-        <p className="text-xs text-slate-400 mt-1.5 text-center">
-          {chatMode === "ws-agent"
-            ? "WebSocket streaming · steps appear in real time"
-            : "Enter to send · answers grounded in your documents"}
-        </p>
+        <div className="flex items-center justify-center gap-3 mt-1.5">
+          <p className="text-xs text-slate-400 text-center">
+            {chatMode === "ws-agent"
+              ? "WebSocket streaming · steps appear in real time"
+              : "Enter to send · answers grounded in your documents"}
+          </p>
+          {chatMode === "ws-agent" && (
+            <button
+              type="button"
+              role="switch"
+              aria-checked={speakAnswers}
+              onClick={handleSpeakToggle}
+              title="Read answers aloud"
+              className="text-xs text-slate-500 hover:text-slate-700"
+            >
+              {speakAnswers ? "🔊 Speak answers: on" : "🔇 Speak answers: off"}
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );

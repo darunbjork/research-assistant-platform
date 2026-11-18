@@ -6,11 +6,13 @@
 // user reloads the page.
 
 import { act, cleanup, renderHook } from "@testing-library/react";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from "vitest";
 import {
   useAgentWebSocket,
+  type UseAgentWebSocketOptions,
   type UseAgentWebSocketReturn,
 } from "./useAgentWebSocket";
+import type { TtsSink } from "./useTtsPlayer";
 import { saveTokens } from "../utils/auth";
 
 // ── Controllable WebSocket double ──────────────────────────────────────────
@@ -27,6 +29,7 @@ class MockWebSocket {
   static instances: MockWebSocket[] = [];
 
   readyState: number = MockWebSocket.CONNECTING;
+  binaryType: string = "blob";
   onopen: (() => void) | null = null;
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: (() => void) | null = null;
@@ -360,5 +363,127 @@ describe("useAgentWebSocket — voice protocol (Day 4)", () => {
       "Session expired — reconnecting…",
     );
     expect(result.current.voiceError).toBe("Access token expired.");
+  });
+});
+
+describe("useAgentWebSocket — spoken answers (TTS)", () => {
+  beforeEach(() => {
+    MockWebSocket.instances = [];
+    vi.useFakeTimers();
+    vi.stubGlobal("WebSocket", MockWebSocket);
+    saveTokens("test-access-token", "test-refresh-token");
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
+    localStorage.clear();
+  });
+
+  function sink(): {
+    start: Mock<TtsSink["start"]>;
+    frame: Mock<TtsSink["frame"]>;
+    done: Mock<TtsSink["done"]>;
+  } {
+    return {
+      start: vi.fn<TtsSink["start"]>(),
+      frame: vi.fn<TtsSink["frame"]>(),
+      done: vi.fn<TtsSink["done"]>(),
+    };
+  }
+
+  function connectWith(initial: UseAgentWebSocketOptions): {
+    result: { current: UseAgentWebSocketReturn };
+    rerender: (props: UseAgentWebSocketOptions) => void;
+    ws: MockWebSocket;
+  } {
+    const rendered = renderHook((props: UseAgentWebSocketOptions) => useAgentWebSocket(props), {
+      initialProps: initial,
+    });
+    const ws = latestSocket();
+    act(() => ws.fireOpen());
+    act(() => ws.fireServerMessage({ type: "connected", sessionId: "pending-auth" }));
+    act(() => ws.fireServerMessage({ type: "auth_confirmed", userId: "user-1" }));
+    return { result: rendered.result, rerender: rendered.rerender, ws };
+  }
+
+  it("receives audio frames as ArrayBuffer", () => {
+    const { ws } = connectWith({});
+    expect(ws.binaryType).toBe("arraybuffer");
+  });
+
+  it("sends set_speak on authentication and whenever the toggle changes", () => {
+    const tts = sink();
+    const { rerender, ws } = connectWith({ speakEnabled: true, tts });
+    expect(sentJson(ws).filter((m) => m.type === "set_speak").at(-1)).toEqual({
+      type: "set_speak",
+      enabled: true,
+    });
+
+    act(() => rerender({ speakEnabled: false, tts }));
+    expect(sentJson(ws).filter((m) => m.type === "set_speak").at(-1)).toEqual({
+      type: "set_speak",
+      enabled: false,
+    });
+  });
+
+  it("defaults to not speaking", () => {
+    const { ws } = connectWith({});
+    expect(sentJson(ws).filter((m) => m.type === "set_speak").at(-1)).toEqual({
+      type: "set_speak",
+      enabled: false,
+    });
+  });
+
+  it("routes tts_start, binary frames and tts_done to the player", () => {
+    const tts = sink();
+    const { ws } = connectWith({ speakEnabled: true, tts });
+    const audio = new ArrayBuffer(12);
+
+    act(() =>
+      ws.fireServerMessage({ type: "tts_start", sessionId: "s", turn: 4, sampleRate: 24000, chars: 9 }),
+    );
+    act(() => ws.onmessage?.(new MessageEvent("message", { data: audio })));
+    act(() => ws.fireServerMessage({ type: "tts_done", sessionId: "s", turn: 4 }));
+
+    expect(tts.start).toHaveBeenCalledWith(4, 24000);
+    expect(tts.frame).toHaveBeenCalledWith(audio);
+    expect(tts.done).toHaveBeenCalledWith(4);
+  });
+
+  it("a TTS voice_error becomes a note — not the chat error, not a mic stop", () => {
+    const tts = sink();
+    const { result, ws } = connectWith({ speakEnabled: true, tts });
+    act(() =>
+      ws.fireServerMessage({
+        type: "voice_error",
+        sessionId: "s",
+        code: "TTS_DAILY_LIMIT",
+        message: "Daily spoken-answer limit reached.",
+      }),
+    );
+    expect(result.current.ttsError).toBe("Daily spoken-answer limit reached.");
+    expect(result.current.error).toBeNull();
+    expect(result.current.voiceError).toBeNull();
+    expect(tts.done).toHaveBeenCalled();
+  });
+
+  it("a new query clears the previous TTS note", () => {
+    const { result, ws } = connectWith({ speakEnabled: true, tts: sink() });
+    act(() =>
+      ws.fireServerMessage({ type: "voice_error", sessionId: "s", code: "TTS_QUOTA", message: "Quota." }),
+    );
+    act(() => result.current.startQuery("Next question?"));
+    expect(result.current.ttsError).toBeNull();
+  });
+
+  it("bargeIn sends barge_in for the last question", () => {
+    const { result, ws } = connectWith({ speakEnabled: true, tts: sink() });
+    act(() => result.current.startQuery("Which file types?"));
+    const sessionId = sentJson(ws).find((m) => m.type === "start")?.sessionId;
+    act(() => result.current.bargeIn());
+    expect(sentJson(ws).at(-1)).toEqual({ type: "barge_in", sessionId });
   });
 });
