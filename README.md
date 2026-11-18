@@ -6,6 +6,8 @@
 |---|---|
 | <img alt="Agent answers which file types the upload accepts, citing Evidence 1, with reasoning steps and sources" src="docs/screenshots/02-file-types-answer.png" /> | <img alt="Document library and the How ResearchBot works panel: upload, embed, search, generate" src="docs/screenshots/03-how-it-works.png" /> |
 | <img alt="Cross-page retrieval: the quantum ferret marker from page two, with 3 sources and run stats" src="docs/screenshots/04-quantum-ferret-cross-page.png" /> | <img alt="Agent lists the four ingestion checklist items with citations, sources and run stats" src="docs/screenshots/05-ingestion-checklist.png" /> |
+| <img alt="Spoken answer being read aloud: the Stop button and the Speak answers toggle are visible under the answer" src="docs/screenshots/06-spoken-answer-stop.png" /> | <img alt="Voice question about the ingestion checklist, answered with four cited items" src="docs/screenshots/07-voice-ingestion-checklist.png" /> |
+| <img alt="Voice question about accepted file types, answered with sources" src="docs/screenshots/08-voice-file-types.png" /> | |
 
 
 ---
