@@ -34,6 +34,8 @@ import {
 } from "../services/deepgram.stream"
 import { sttBreaker } from "../services/stt.service"
 import { saveVoiceTranscript } from "../services/voice.transcript.service"
+import { TtsSpeaker } from "./tts.speaker"
+import type { AgentResult } from "../types/agent.types"
 
 // ── Hardening constants (task 2.8) ────────────────────────────────────────
 // No successful auth within this window ⇒ close the connection.
@@ -90,10 +92,11 @@ const generationService = new GenerationService(env.GEMINI_API_KEY)
 
 // ── Running-agent registry (task 5.5) ─────────────────────────────────────
 // Every in-flight run's AbortController, across all live connections, so
-// graceful shutdown can abort them before closing the sockets.
+// graceful shutdown can abort them before closing the sockets. Spoken
+// answers (TTS) register here too, so shutdown also stops them.
 const activeRunControllers = new Set<AbortController>()
 
-/** Abort every in-flight agent run. Called once during shutdown (step 3). */
+/** Abort every in-flight agent run and spoken answer. Called once during shutdown (step 3). */
 export function abortRunningAgents(): void {
   for (const controller of activeRunControllers) {
     if (!controller.signal.aborted) {
@@ -127,8 +130,17 @@ export class AgentWsHandler {
   private audioChain: Promise<void> = Promise.resolve()
   /** set_speak: speak completed answers aloud on this connection (default off). */
   private speakEnabled = false
+  /** Speaks completed answers; one spoken answer at a time per connection. */
+  private readonly speaker: TtsSpeaker
 
   constructor(private readonly ws: WebSocket) {
+    this.speaker = new TtsSpeaker({
+      ws,
+      send: message => this.send(message),
+      sendVoiceError: (code, message, sessionId) => this.sendVoiceError(code, message, sessionId),
+      registry: activeRunControllers,
+    })
+
     // Auth timeout: a connection that never authenticates is closed (4001)
     // so an open socket can't sit around forever consuming resources.
     this.authTimer = setTimeout(() => {
@@ -177,8 +189,10 @@ export class AgentWsHandler {
     // Handle connection close
     this.ws.on("close", (_code: number, _reason: Buffer) => {
       this.clearAuthTimer()
-      // Client went away — cancel any in-flight agent run (task 2.9).
+      // Client went away — cancel any in-flight agent run (task 2.9) and
+      // any answer still being spoken.
       this.runController?.abort()
+      this.speaker.cancel()
       // Day 5 rule 2: client close → CloseStream then close on the upstream.
       this.closeUpstream()
       logRagEvent("agent_step", "WebSocket connection closed", {
@@ -220,10 +234,14 @@ export class AgentWsHandler {
         break
 
       case "start":
+        // A new question interrupts the previous spoken answer.
+        this.speaker.cancel()
         await this.handleStart(message.query, message.sessionId, "text")
         break
 
       case "voice_start":
+        // The user is talking — stop speaking at once.
+        this.speaker.cancel()
         await this.handleVoiceStart(message.sessionId)
         break
 
@@ -237,6 +255,7 @@ export class AgentWsHandler {
 
       case "set_speak":
         this.speakEnabled = message.enabled
+        if (!message.enabled) this.speaker.cancel()
         break
     }
   }
@@ -397,6 +416,7 @@ export class AgentWsHandler {
       viaVoice,
     })
 
+    let result: AgentResult | undefined
     try {
       // Create the streaming agent with the send callback
       const streamingAgent = new StreamingAgentService(
@@ -414,7 +434,13 @@ export class AgentWsHandler {
         }
       }
 
-      await streamingAgent.run(query.trim(), this.userId, sessionId, onEvent, runController.signal)
+      result = await streamingAgent.run(
+        query.trim(),
+        this.userId,
+        sessionId,
+        onEvent,
+        runController.signal
+      )
     } catch (error: unknown) {
       // Aborted by a client disconnect: info-level only, no error message.
       if (runController.signal.aborted) {
@@ -442,6 +468,18 @@ export class AgentWsHandler {
       this.isRunning = false
       this.runController = null
       activeRunControllers.delete(runController)
+    }
+
+    // Speak the answer AFTER the run is released, so a new question (or the
+    // mic) can interrupt it. The text answer is already on the wire; a TTS
+    // failure can only add a voice_error, never change that answer.
+    if (
+      this.speakEnabled &&
+      result?.status === "done" &&
+      !runController.signal.aborted &&
+      result.finalAnswer.trim() !== ""
+    ) {
+      await this.speaker.speak(this.userId, sessionId, result.finalAnswer)
     }
   }
 
@@ -613,19 +651,20 @@ export class AgentWsHandler {
   }
 
   /**
-   * barge_in (Day 3a): accepted as a no-op while the session exists —
-   * there is no TTS to stop yet (Day 7). Unknown sessions are ignored so a
-   * stale barge_in after teardown cannot surface a spurious error.
+   * barge_in: stop the answer being spoken right now — from the mic or the
+   * Stop button, so it applies whatever the sessionId (a text-mode answer
+   * has no voice session). Without a spoken answer it is a harmless no-op;
+   * it never produces an error.
    */
   private handleBargeIn(sessionId: string): void {
-    const session = this.voiceSession
-    if (session !== null && session.sessionId === sessionId) {
-      logRagEvent("agent_step", "Voice barge-in received", {
-        service: "AgentWsHandler",
-        sessionId,
-        userId: this.userId ?? "unauthenticated",
-      })
-    }
+    const wasSpeaking = this.speaker.isSpeaking
+    this.speaker.cancel()
+    logRagEvent("agent_step", "Voice barge-in received", {
+      service: "AgentWsHandler",
+      sessionId,
+      userId: this.userId ?? "unauthenticated",
+      stoppedSpeaking: wasSpeaking,
+    })
   }
 
   // ── Deepgram upstream (Day 5) ───────────────────────────────────────────
