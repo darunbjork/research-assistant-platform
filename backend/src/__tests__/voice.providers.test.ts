@@ -92,8 +92,14 @@ describe("process-wide services (VOICE_MOCK=true, TTS_PROVIDER=mock in tests)", 
     })
     expect(stt.text).toBe("mock transcript (1000ms, session s)")
 
-    const tts = await getTtsService().synthesize({ text: "hi", sessionId: "s" })
-    expect(tts.audioPcm16).toHaveLength(960) // 2 chars → 20 ms → 480 samples × 2 bytes
+    let bytes = 0
+    for await (const chunk of getTtsService().synthesizeStream(
+      { text: "hi", sessionId: "s" },
+      new AbortController().signal
+    )) {
+      bytes += chunk.length
+    }
+    expect(bytes).toBe(960) // 2 chars → 20 ms → 480 samples × 2 bytes
   })
 
   it("exports named breakers for the two providers", () => {
