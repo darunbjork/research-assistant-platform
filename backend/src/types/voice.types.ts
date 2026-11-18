@@ -29,11 +29,33 @@ export const VOICE_MAX_SESSION_MS = 10 * 60_000
 export const VOICE_MAX_TRANSCRIPT_CHARS = 500
 
 /**
- * Every tts_chunk binary frame (server→client) starts with a 4-byte
- * big-endian uint32 sequence number, then the audio payload (format decided
- * on Day 8). Documented here so Day 8 and the frontend share one rule.
+ * Every TTS binary frame (server→client) starts with an 8-byte header:
+ *   bytes 0-3  uint32 LE  turn — which spoken answer this audio belongs to
+ *   bytes 4-7  uint32 LE  seq  — 0-based frame index within that turn
+ * followed by PCM16 LE mono audio at TTS_SAMPLE_RATE.
+ *
+ * `turn` lets the browser drop frames still in flight from an answer that
+ * was interrupted (barge-in, new question). Little-endian matches the PCM
+ * byte order and `DataView.getUint32(offset, true)` in the browser.
  */
-export const TTS_SEQUENCE_PREFIX_BYTES = 4
+export const TTS_FRAME_HEADER_BYTES = 8
+
+/** Build one TTS binary frame: 8-byte LE header (turn, seq) + PCM16 audio. */
+export function encodeTtsFrame(turn: number, seq: number, audio: Buffer): Buffer {
+  const header = Buffer.alloc(TTS_FRAME_HEADER_BYTES)
+  header.writeUInt32LE(turn >>> 0, 0)
+  header.writeUInt32LE(seq >>> 0, 4)
+  return Buffer.concat([header, audio])
+}
+
+/** Read the header of a TTS binary frame (inverse of encodeTtsFrame). */
+export function decodeTtsFrame(frame: Buffer): { turn: number; seq: number; audio: Buffer } {
+  return {
+    turn: frame.readUInt32LE(0),
+    seq: frame.readUInt32LE(4),
+    audio: frame.subarray(TTS_FRAME_HEADER_BYTES),
+  }
+}
 
 /** Lifecycle of one voice session on the server (drives voice_error timing). */
 export type VoiceSessionPhase =
@@ -57,6 +79,9 @@ export type VoiceErrorCode =
   | "TOKEN_EXPIRED" // access token expired and refresh failed
   | "STT_FAILED" // Deepgram error or bad payload
   | "TTS_FAILED" // ElevenLabs error or bad payload
+  | "TTS_UNAVAILABLE" // speech provider down / breaker open (text answer unaffected)
+  | "TTS_QUOTA" // ElevenLabs credit cap spent
+  | "TTS_DAILY_LIMIT" // per-user daily spoken-character budget used up
   | "PROVIDER_UNAVAILABLE" // provider circuit breaker open (Day 2)
   | "VOICE_BUDGET_REACHED" // provider quota/402 — cap spent, not an outage (Day 5)
   | "NO_VOICE_SESSION" // audio or voice_end arrived without an active session

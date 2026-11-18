@@ -125,6 +125,8 @@ export class AgentWsHandler {
    * frame (frames are processed strictly in arrival order).
    */
   private audioChain: Promise<void> = Promise.resolve()
+  /** set_speak: speak completed answers aloud on this connection (default off). */
+  private speakEnabled = false
 
   constructor(private readonly ws: WebSocket) {
     // Auth timeout: a connection that never authenticates is closed (4001)
@@ -231,6 +233,10 @@ export class AgentWsHandler {
 
       case "barge_in":
         this.handleBargeIn(message.sessionId)
+        break
+
+      case "set_speak":
+        this.speakEnabled = message.enabled
         break
     }
   }
@@ -916,6 +922,11 @@ export class AgentWsHandler {
       session.sttForwardedBytes += bytes.length
       stream.sendAudio(bytes)
     }
+  }
+
+  /** Whether completed answers are spoken on this connection (set_speak). */
+  isSpeakEnabled(): boolean {
+    return this.speakEnabled
   }
 
   /** Voice counters for diagnostics and Day 11 metrics. */

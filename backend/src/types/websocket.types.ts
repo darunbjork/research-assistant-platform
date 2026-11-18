@@ -21,11 +21,14 @@
 //   CLIENT → SERVER: { type: "barge_in", sessionId }   (stop speaking)
 //   CLIENT → SERVER: { type: "voice_end", sessionId }   (utterance over)
 //   CLIENT → SERVER: binary audio_chunk (PCM16 LE, 16 kHz mono, ≤4096 B)
+//   CLIENT → SERVER: { type: "set_speak", enabled }   (speak answers; default off)
 //   SERVER → CLIENT: { type: "transcript_interim", sessionId, text }
 //   SERVER → CLIENT: { type: "transcript_final", sessionId, text, latencyMs }
 //   SERVER → CLIENT: { type: "voice_summary", sessionId, text }
-//   SERVER → CLIENT: binary tts_chunk (4-byte BE uint32 sequence + audio)
-//   SERVER → CLIENT: { type: "tts_done", sessionId }
+//   SERVER → CLIENT: { type: "tts_start", sessionId, turn, sampleRate, chars }
+//   SERVER → CLIENT: binary TTS frame (8-byte header: uint32 LE turn +
+//                    uint32 LE seq, then PCM16 LE mono at sampleRate)
+//   SERVER → CLIENT: { type: "tts_done", sessionId, turn }
 //   SERVER → CLIENT: { type: "voice_error", sessionId, code, message }
 // Binary frames are routed on the `isBinary` flag BEFORE this JSON parser
 // (Day 3), so they never reach parseClientMessage.
@@ -42,6 +45,7 @@ export type ClientMessage =
   | VoiceStartMessage
   | BargeInMessage
   | VoiceEndMessage
+  | SetSpeakMessage
 
 export interface StartAgentMessage {
   type: "start"
@@ -75,6 +79,12 @@ export interface VoiceEndMessage {
   sessionId: string
 }
 
+/** Per-connection opt-in: speak completed answers aloud (default false). */
+export interface SetSpeakMessage {
+  type: "set_speak"
+  enabled: boolean
+}
+
 // ── Messages the SERVER sends to the CLIENT ───────────────────────────────
 
 export type ServerMessage =
@@ -89,6 +99,7 @@ export type ServerMessage =
   | TranscriptInterimMessage
   | TranscriptFinalMessage
   | VoiceSummaryMessage
+  | TtsStartMessage
   | TtsDoneMessage
   | VoiceErrorMessage
 
@@ -183,9 +194,22 @@ export interface VoiceSummaryMessage {
   text: string
 }
 
+/** A spoken answer is starting: binary frames tagged with `turn` follow. */
+export interface TtsStartMessage {
+  type: "tts_start"
+  sessionId: string
+  turn: number
+  /** PCM16 LE mono sample rate of the frames (TTS_SAMPLE_RATE). */
+  sampleRate: number
+  /** Characters being spoken (after toSpeakableText). */
+  chars: number
+}
+
+/** Every frame of `turn` has been sent. Never sent for an aborted turn. */
 export interface TtsDoneMessage {
   type: "tts_done"
   sessionId: string
+  turn: number
 }
 
 export interface VoiceErrorMessage {
@@ -215,6 +239,10 @@ export function parseClientMessage(raw: string): ClientMessage | null {
       case "barge_in":
       case "voice_end":
         return parsed as ClientMessage
+      case "set_speak":
+        return typeof (parsed as { enabled?: unknown }).enabled === "boolean"
+          ? (parsed as ClientMessage)
+          : null
       default:
         return null
     }
