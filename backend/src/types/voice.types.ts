@@ -9,6 +9,13 @@
 /** Audio the browser streams up: PCM16 little-endian, 16 kHz mono. */
 export const VOICE_SAMPLE_RATE = 16_000
 
+/**
+ * Audio the server streams down for spoken answers: PCM16 little-endian,
+ * 24 kHz mono (ElevenLabs `pcm_24000`). Deliberately separate from the
+ * 16 kHz STT rate — the two directions never share a sample rate.
+ */
+export const TTS_SAMPLE_RATE = 24_000
+
 /** One audio_chunk WS frame (client→server) may carry at most this many bytes. */
 export const VOICE_MAX_FRAME_BYTES = 4096
 

@@ -78,10 +78,11 @@ export const envSchema = z
     OTEL_EXPORTER_OTLP_ENDPOINT: z.preprocess(emptyToUndefined, z.string().optional()),
     OTEL_SERVICE_NAME: z.preprocess(emptyToUndefined, z.string().optional()),
     // ── Voice layer (Deepgram STT / ElevenLabs TTS) — Day 1 ──────────────
-    // VOICE_MOCK=true (default) makes every provider call a deterministic
-    // in-process stub: no network, no billing. Keys are required only when
-    // VOICE_MOCK=false (superRefine below). Complete the spend-cap checklist
-    // in docs/cost.md before ever flipping this off.
+    // VOICE_MOCK controls speech-to-text only: true (default) = deterministic
+    // in-process STT stub, no network, no billing; false = real Deepgram, and
+    // DEEPGRAM_API_KEY becomes required. Text-to-speech is chosen separately
+    // by TTS_PROVIDER. Complete the spend-cap checklist in docs/cost.md before
+    // enabling either real provider.
     VOICE_MOCK: z.preprocess(
       value => {
         if (value === undefined || value === "") return undefined
@@ -106,6 +107,31 @@ export const envSchema = z
       z.string().min(1).default("eleven_flash_v2_5")
     ),
     ELEVENLABS_VOICE_ID: z.preprocess(emptyToUndefined, z.string().min(1).optional()),
+    // PCM16 mono at 24 kHz — must match TTS_SAMPLE_RATE in voice.types.ts.
+    ELEVENLABS_OUTPUT_FORMAT: z.preprocess(
+      emptyToUndefined,
+      z.string().min(1).default("pcm_24000")
+    ),
+    // ── Spoken answers (TTS) — independent of VOICE_MOCK ─────────────────
+    // "mock" (default) = silence, no network; "elevenlabs" = real ElevenLabs,
+    // and ELEVENLABS_API_KEY + ELEVENLABS_VOICE_ID become required.
+    TTS_PROVIDER: z.preprocess(
+      value => {
+        if (value === undefined || value === "") return undefined
+        return typeof value === "string" ? value.trim().toLowerCase() : value
+      },
+      z.enum(["mock", "elevenlabs"]).default("mock")
+    ),
+    // Characters spoken per answer (ElevenLabs bills per character).
+    TTS_MAX_CHARS: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(100).max(2000).default(600)
+    ),
+    // Per-user daily character budget across all spoken answers.
+    TTS_DAILY_CHARS_PER_USER: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().positive().default(20000)
+    ),
   })
   .superRefine((value, ctx) => {
     if (value.JWT_SECRET === value.JWT_REFRESH_SECRET) {
@@ -122,26 +148,27 @@ export const envSchema = z
         path: ["CORS_ORIGINS"],
       })
     }
-    // Real voice mode needs all three credentials; mock mode needs none.
-    if (!value.VOICE_MOCK) {
-      if (!value.DEEPGRAM_API_KEY) {
-        ctx.addIssue({
-          code: "custom",
-          message: "DEEPGRAM_API_KEY is required when VOICE_MOCK=false",
-          path: ["DEEPGRAM_API_KEY"],
-        })
-      }
+    // Real STT needs the Deepgram key; real TTS needs the ElevenLabs pair.
+    // Each provider is validated only when it is actually selected.
+    if (!value.VOICE_MOCK && !value.DEEPGRAM_API_KEY) {
+      ctx.addIssue({
+        code: "custom",
+        message: "DEEPGRAM_API_KEY is required when VOICE_MOCK=false",
+        path: ["DEEPGRAM_API_KEY"],
+      })
+    }
+    if (value.TTS_PROVIDER === "elevenlabs") {
       if (!value.ELEVENLABS_API_KEY) {
         ctx.addIssue({
           code: "custom",
-          message: "ELEVENLABS_API_KEY is required when VOICE_MOCK=false",
+          message: "ELEVENLABS_API_KEY is required when TTS_PROVIDER=elevenlabs",
           path: ["ELEVENLABS_API_KEY"],
         })
       }
       if (!value.ELEVENLABS_VOICE_ID) {
         ctx.addIssue({
           code: "custom",
-          message: "ELEVENLABS_VOICE_ID is required when VOICE_MOCK=false",
+          message: "ELEVENLABS_VOICE_ID is required when TTS_PROVIDER=elevenlabs",
           path: ["ELEVENLABS_VOICE_ID"],
         })
       }
