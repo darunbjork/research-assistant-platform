@@ -133,6 +133,39 @@ describe("ElevenLabsTtsService", () => {
     await expect(collect(stream)).rejects.toMatchObject({ name: "TtsError", code, status })
   })
 
+  it("maps a library voice on a free plan (402 paid_plan_required) to TTS_FAILED, not quota", async () => {
+    const body = JSON.stringify({
+      detail: {
+        type: "payment_required",
+        code: "paid_plan_required",
+        message: "Free users cannot use library voices via the API.",
+        status: "payment_required",
+      },
+    })
+    fetchSpy.mockResolvedValueOnce(new Response(body, { status: 402 }))
+    const stream = new ElevenLabsTtsService(CONFIG).synthesizeStream(
+      REQUEST,
+      new AbortController().signal
+    )
+    const error = (await collect(stream).catch((caught: unknown) => caught)) as TtsError
+    expect(error.code).toBe("TTS_FAILED")
+    expect(error.providerCode).toBe("paid_plan_required")
+    expect(error.message).toContain("paid ElevenLabs plan")
+  })
+
+  it("keeps ElevenLabs' quota_exceeded code on the quota error", async () => {
+    const body = JSON.stringify({ detail: { code: "quota_exceeded", status: "quota_exceeded" } })
+    fetchSpy.mockResolvedValueOnce(new Response(body, { status: 401 }))
+    const stream = new ElevenLabsTtsService(CONFIG).synthesizeStream(
+      REQUEST,
+      new AbortController().signal
+    )
+    await expect(collect(stream)).rejects.toMatchObject({
+      code: "TTS_QUOTA",
+      providerCode: "quota_exceeded",
+    })
+  })
+
   it("maps 429 to RateLimitError", async () => {
     fetchSpy.mockResolvedValueOnce(new Response("", { status: 429 }))
     const stream = new ElevenLabsTtsService(CONFIG).synthesizeStream(
@@ -237,6 +270,14 @@ describe("withTtsBreaker", () => {
     const { service, breaker } = guarded(5)
     await expect(run(service)).rejects.toMatchObject({ code: "TTS_QUOTA" })
     expect(breaker.state).toBe("open")
+  })
+
+  it("does not open the breaker for a paid-voice setup error", async () => {
+    const body = JSON.stringify({ detail: { code: "paid_plan_required" } })
+    fetchSpy.mockResolvedValueOnce(new Response(body, { status: 402 }))
+    const { service, breaker } = guarded(1)
+    await expect(run(service)).rejects.toMatchObject({ code: "TTS_FAILED" })
+    expect(breaker.state).toBe("closed")
   })
 
   it("does not count auth or rate-limit errors as outages", async () => {
