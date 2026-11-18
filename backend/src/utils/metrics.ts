@@ -248,3 +248,19 @@ export const globalBudgetUsed = new Gauge({
 export async function updateQueueDepthGauge(depth: number): Promise<void> {
   queueDepth.set(depth)
 }
+
+// ── Voice: spoken answers (TTS) ───────────────────────────────────────────
+// No labels: per-user detail lives in the daily Redis counter, not here.
+
+export const voiceTtsCharsTotal = new Counter({
+  name: "voice_tts_chars_total",
+  help: "Characters sent to the TTS provider for spoken answers (ElevenLabs bills per character)",
+  registers: [register],
+})
+
+export const voiceTtsFirstByteSeconds = new Histogram({
+  name: "voice_tts_first_byte_seconds",
+  help: "Time from requesting speech to the first audio chunk",
+  buckets: [0.1, 0.25, 0.5, 1, 2, 5, 10],
+  registers: [register],
+})

@@ -404,6 +404,17 @@ describe("voice session (Day 3a)", () => {
       expect(voiceErrors()).toHaveLength(0)
     })
 
+    it("set_speak toggles speaking per connection (default off)", async () => {
+      await makeAuthenticated()
+      expect(handler.isSpeakEnabled()).toBe(false)
+      ws.emit("message", JSON.stringify({ type: "set_speak", enabled: true }))
+      await flush()
+      expect(handler.isSpeakEnabled()).toBe(true)
+      ws.emit("message", JSON.stringify({ type: "set_speak", enabled: false }))
+      await flush()
+      expect(handler.isSpeakEnabled()).toBe(false)
+    })
+
     it("voice_start on the same session restarts the utterance, keeps the clock", async () => {
       await makeAuthenticated()
       await startVoice()

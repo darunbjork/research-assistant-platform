@@ -2,6 +2,7 @@ import { useState, useEffect, useRef, useCallback } from "react";
 import { getAccessToken } from "../utils/auth";
 import { refreshAccessToken, logout } from "../utils/api";
 import type { AgentStatus, AgentStep, AgentResult, Citation } from "../types";
+import type { TtsSink } from "./useTtsPlayer";
 
 // ── WebSocket Message Types (mirrors backend) ──────────────────────────────
 // We duplicate just the types we need — no shared package needed.
@@ -53,6 +54,18 @@ interface WsTranscriptFinalMsg {
 interface WsPongMsg {
   type: "pong";
 }
+interface WsTtsStartMsg {
+  type: "tts_start";
+  sessionId: string;
+  turn: number;
+  sampleRate: number;
+  chars: number;
+}
+interface WsTtsDoneMsg {
+  type: "tts_done";
+  sessionId: string;
+  turn: number;
+}
 
 type ServerMsg =
   | WsConnectedMsg
@@ -64,7 +77,21 @@ type ServerMsg =
   | WsErrorMsg
   | WsVoiceErrorMsg
   | WsTranscriptFinalMsg
+  | WsTtsStartMsg
+  | WsTtsDoneMsg
   | WsPongMsg;
+
+/** voice_error codes about speaking the answer — never a failed agent run. */
+function isTtsErrorCode(code: string | undefined): boolean {
+  return code !== undefined && code.startsWith("TTS_");
+}
+
+export interface UseAgentWebSocketOptions {
+  /** Ask the server to speak completed answers (sent as set_speak). */
+  speakEnabled?: boolean;
+  /** Receives tts_start / binary frames / tts_done (the audio player). */
+  tts?: TtsSink;
+}
 
 // ── Connection States ─────────────────────────────────────────────────────
 export type WsConnectionState =
@@ -96,6 +123,8 @@ export interface UseAgentWebSocketReturn {
   voiceError: string | null;
   /** Final voice transcript from the server (voice turns). */
   transcriptFinal: TranscriptFinal | null;
+  /** Last spoken-answer failure (TTS_*) — the text answer is unaffected. */
+  ttsError: string | null;
   isRunning: boolean;
   startQuery: (query: string) => void;
   disconnect: () => void;
@@ -105,6 +134,8 @@ export interface UseAgentWebSocketReturn {
   voiceEnd: () => void;
   /** Day 4: one binary PCM16 frame (≤ 4096 bytes) to the server. */
   sendVoiceFrame: (frame: Uint8Array<ArrayBuffer>) => void;
+  /** Tell the server to stop speaking the current answer. */
+  bargeIn: () => void;
 }
 
 // ── WebSocket URL ─────────────────────────────────────────────────────────
@@ -119,7 +150,10 @@ function generateSessionId(): string {
 }
 
 // ── The Hook ─────────────────────────────────────────────────────────────
-export function useAgentWebSocket(): UseAgentWebSocketReturn {
+export function useAgentWebSocket(
+  options: UseAgentWebSocketOptions = {},
+): UseAgentWebSocketReturn {
+  const speakEnabled = options.speakEnabled ?? false;
   const [connectionState, setConnectionState] =
     useState<WsConnectionState>("disconnected");
   const [agentStatus, setAgentStatus] = useState<AgentStatus>("idle");
@@ -133,6 +167,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
   const [voiceError, setVoiceError] = useState<string | null>(null);
   const [transcriptFinal, setTranscriptFinal] = useState<TranscriptFinal | null>(null);
   const [isRunning, setIsRunning] = useState(false);
+  const [ttsError, setTtsError] = useState<string | null>(null);
 
   const wsRef = useRef<WebSocket | null>(null);
   const pingIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -142,6 +177,14 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
   // Day 4: the voice session id survives voice_end (10-minute server
   // session) but dies with the socket — the server keeps it per-connection.
   const voiceSessionIdRef = useRef<string | null>(null);
+  // Latest player and speak flag, read from socket callbacks without
+  // re-creating them (the player object may change identity per render).
+  const ttsRef = useRef<TtsSink | undefined>(options.tts);
+  const speakEnabledRef = useRef(speakEnabled);
+  const lastSessionIdRef = useRef<string | null>(null);
+  useEffect(() => {
+    ttsRef.current = options.tts;
+  }, [options.tts]);
 
   // ── Reset state for a new query ────────────────────────────────────────
   const resetQueryState = useCallback((): void => {
@@ -151,12 +194,18 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     setResult(null);
     setQualityScore(null);
     setError(null);
+    setTtsError(null);
     setAgentStatus("idle");
     setCurrentMessage("Starting...");
   }, []);
 
   // ── Handle incoming WebSocket message ──────────────────────────────────
   const handleMessage = useCallback((event: MessageEvent): void => {
+    // Binary frames are spoken-answer audio (binaryType = "arraybuffer").
+    if (event.data instanceof ArrayBuffer) {
+      ttsRef.current?.frame(event.data);
+      return;
+    }
     try {
       const message = JSON.parse(event.data as string) as ServerMsg;
 
@@ -176,6 +225,21 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
           setConnectionState("authenticated");
           setCurrentMessage("ResearchBot ready");
           refreshAttemptedRef.current = false;
+          // Speaking is per connection on the server: re-send on every auth.
+          if (wsRef.current?.readyState === WebSocket.OPEN) {
+            wsRef.current.send(
+              JSON.stringify({ type: "set_speak", enabled: speakEnabledRef.current }),
+            );
+          }
+          break;
+
+        case "tts_start":
+          setTtsError(null);
+          ttsRef.current?.start(message.turn, message.sampleRate);
+          break;
+
+        case "tts_done":
+          ttsRef.current?.done(message.turn);
           break;
 
         case "status":
@@ -218,6 +282,14 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
           break;
 
         case "voice_error":
+          if (isTtsErrorCode(message.code)) {
+            // Speaking failed: the text answer stands. Let queued audio
+            // finish and show a small note — never the chat error banner,
+            // and never voiceError (that one stops the microphone).
+            setTtsError(message.message);
+            ttsRef.current?.done();
+            break;
+          }
           // Day 4: quota/session/budget refusals from the voice layer.
           // Kept separate from `error` so the UI can stop the mic without
           // mistaking a voice refusal for a failed agent run.
@@ -273,6 +345,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     setConnectionState("connecting");
 
     const ws = new WebSocket(`${WS_URL}/ws/agent`);
+    ws.binaryType = "arraybuffer"; // TTS frames arrive as ArrayBuffer
     wsRef.current = ws;
 
     ws.onopen = () => {
@@ -379,6 +452,7 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
       setIsRunning(true);
 
       const sessionId = generateSessionId();
+      lastSessionIdRef.current = sessionId;
 
       if (wsRef.current?.readyState === WebSocket.OPEN) {
         wsRef.current.send(
@@ -430,6 +504,24 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     ws.send(frame);
   }, []);
 
+  // ── Spoken answers ─────────────────────────────────────────────────────
+  const bargeIn = useCallback((): void => {
+    const ws = wsRef.current;
+    if (ws?.readyState !== WebSocket.OPEN) return;
+    const sessionId =
+      lastSessionIdRef.current ?? voiceSessionIdRef.current ?? "none";
+    ws.send(JSON.stringify({ type: "barge_in", sessionId }));
+  }, []);
+
+  // Send set_speak whenever the toggle changes on a live, authenticated socket.
+  useEffect(() => {
+    speakEnabledRef.current = speakEnabled;
+    const ws = wsRef.current;
+    if (connectionState === "authenticated" && ws?.readyState === WebSocket.OPEN) {
+      ws.send(JSON.stringify({ type: "set_speak", enabled: speakEnabled }));
+    }
+  }, [speakEnabled, connectionState]);
+
   // ── Connect on mount, disconnect on unmount ────────────────────────────
   useEffect(() => {
     connect();
@@ -453,11 +545,13 @@ export function useAgentWebSocket(): UseAgentWebSocketReturn {
     error,
     voiceError,
     transcriptFinal,
+    ttsError,
     isRunning,
     startQuery,
     disconnect,
     voiceStart,
     voiceEnd,
     sendVoiceFrame,
+    bargeIn,
   };
 }
