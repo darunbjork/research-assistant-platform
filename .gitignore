@@ -35,3 +35,7 @@ logs/
 *.swp
 *.swo
 Thumbs.db
+
+# Monitoring secrets (written by scripts/monitoring-init.sh)
+monitoring/secrets/*
+!monitoring/secrets/*.example

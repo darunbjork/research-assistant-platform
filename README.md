@@ -26,7 +26,7 @@
 - **Voice Questions & Spoken Answers** (Agent WS mode): ask with the **Mic** — audio streams to Deepgram, the finalized transcript runs the agent — and hear the answer read aloud by ElevenLabs with **🔊 Speak answers**. Citations and markdown are stripped before speaking, answers are capped at 600 characters on a sentence boundary, **⏹ Stop** or pressing the mic interrupts at once, and a TTS failure never changes the text answer. Both providers run as offline mocks by default; spoken characters are capped per user per day (see [docs/cost.md](docs/cost.md) and [ADR 0006](docs/adr/0006-speak-answers.md)).
 - **Document Upload**: `POST /api/v1/documents/upload` accepts PDF (text-based only — scanned/image-only PDFs are rejected), TXT, MD, CSV (10 MB file, 500k characters, 200 PDF pages) and ingests in the background.
 - **High-Performance Caching**: Redis-backed caching — embeddings cached for 24 hours, search results for 5 minutes — to minimize API cost and latency.
-- **Observability & Metrics**: OpenTelemetry tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (off by default in production), Prometheus metrics guarded by `METRICS_TOKEN`, and a local Prometheus/Grafana/Jaeger stack via `npm run monitoring:up`.
+- **Observability & Metrics**: OpenTelemetry tracing when `OTEL_EXPORTER_OTLP_ENDPOINT` is set (off by default in production), Prometheus metrics guarded by `METRICS_TOKEN`, and a local Prometheus/Grafana stack via `npm run monitoring:up` (Jaeger via `docker-compose.observability.yml`).
 - **Robust Error Handling**: Structured Express middleware with automated 429 rate limit detection and fallback generation modes. Agent calls to Gemini retry overloads (5xx) with backoff and switch to an optional second model (`GEMINI_FALLBACK_MODEL`) when the primary stays overloaded, times out or is rate limited.
 - **Comprehensive Test Suite**: 866 backend unit tests across 58 suites (statement coverage 81%; CI floor: 61/52/59/61), a separate integration suite (`npm run test:integration`), and 60 frontend tests (Vitest). Tests never call Gemini, Deepgram or ElevenLabs.
 - **Voice Data Retention**: Voice transcripts are text-only (raw audio is never stored) and count as personal data — kept **30 days**, purged by three sweeps (on service startup, after each save, and by a daily in-process timer that is unref'd and cleared on graceful shutdown), and fully removed when a user is deleted (foreign-key cascade).
@@ -187,7 +187,7 @@ npm run preview                         # Serve the production build locally
 | :--- | :--- |
 | `npm run dev` | Dev server with hot reload (`ts-node-dev`) |
 | `npm start` | Run the compiled build (`dist/app.js`) |
-| `npm run monitoring:up` / `monitoring:down` / `monitoring:logs` | Prometheus + Grafana + Jaeger stack |
+| `npm run monitoring:up` / `monitoring:down` / `monitoring:logs` | Prometheus + Grafana on localhost (`monitoring:up` first runs `scripts/monitoring-init.sh`, which copies `METRICS_TOKEN` for scraping and generates `GRAFANA_ADMIN_PASSWORD` in the root `.env`). Jaeger: `docker compose -f docker-compose.observability.yml up -d` |
 | `npm run loadtest:all` | Run all Artillery load-test scenarios (see [backend/load-tests/README.md](backend/load-tests/README.md)) |
 
 ---

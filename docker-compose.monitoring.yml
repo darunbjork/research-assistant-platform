@@ -1,16 +1,16 @@
 # docker-compose.monitoring.yml
-# Grafana + Prometheus for local monitoring.
+# Prometheus + Grafana for local monitoring (the only monitoring stack).
 #
-# Usage:
+# Usage (from the repo root):
+#   ./scripts/monitoring-init.sh
 #   docker compose -f docker-compose.monitoring.yml up -d
+# or from backend/: npm run monitoring:up
 #
-# Access:
-#   Grafana:    http://localhost:3000  (admin/admin)
+# Access (localhost only, never exposed to the network):
+#   Grafana:    http://localhost:3000  (admin / $GRAFANA_ADMIN_PASSWORD)
 #   Prometheus: http://localhost:9090
 #
 # NOTE: port 3000 is Grafana, port 3001 is your backend.
-
-version: "3.8"
 
 services:
   # ── Prometheus ─────────────────────────────────────────────────────────
@@ -19,16 +19,22 @@ services:
     container_name: rag_prometheus
     restart: unless-stopped
     ports:
-      - "9090:9090"
+      - "127.0.0.1:9090:9090"
+    # Makes host.docker.internal resolve on Linux too (Docker Desktop on
+    # macOS/Windows provides it already), so one scrape target works everywhere.
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./monitoring/alerts:/etc/prometheus/alerts:ro
+      # Written by scripts/monitoring-init.sh from backend/.env METRICS_TOKEN.
+      - ./monitoring/secrets/metrics_token:/etc/prometheus/metrics_token:ro
       - prometheus_data:/prometheus
     command:
       - "--config.file=/etc/prometheus/prometheus.yml"
       - "--storage.tsdb.path=/prometheus"
       - "--storage.tsdb.retention.time=30d"
       - "--web.enable-lifecycle"
-      - "--web.enable-admin-api"
     networks:
       - monitoring
     healthcheck:
@@ -51,13 +57,15 @@ services:
     container_name: rag_grafana
     restart: unless-stopped
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
-      - GF_SECURITY_ADMIN_PASSWORD=admin
+      # Refuses to start without a password. Set it in the root .env
+      # (scripts/monitoring-init.sh generates one) or export it.
+      # Grafana only applies this on first start (empty grafana_data volume).
+      - GF_SECURITY_ADMIN_PASSWORD=${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD (run ./scripts/monitoring-init.sh)}
       - GF_USERS_ALLOW_SIGN_UP=false
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
-      - GF_INSTALL_PLUGINS=grafana-clock-panel
     volumes:
       - grafana_data:/var/lib/grafana
       - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro

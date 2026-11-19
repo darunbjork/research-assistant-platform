@@ -90,8 +90,10 @@ async function seedMetrics(): Promise<void> {
   console.log()
   console.log("Next steps:")
   console.log("  1. Start the backend:  npm run dev")
-  console.log("  2. Start Grafana:      docker compose -f docker-compose.monitoring.yml up -d")
-  console.log("  3. Open Grafana:       http://localhost:3000  (admin/admin)")
+  console.log("  2. Start Grafana:      npm run monitoring:up")
+  console.log(
+    "  3. Open Grafana:       http://localhost:3000  (admin / GRAFANA_ADMIN_PASSWORD from the root .env)"
+  )
   console.log("  4. Find the dashboard: 'Research Assistant — RAG Overview'")
   console.log()
   console.log("The /metrics endpoint now has data — Prometheus will scrape it")
