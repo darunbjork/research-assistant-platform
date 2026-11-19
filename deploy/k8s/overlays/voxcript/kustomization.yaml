@@ -30,3 +30,12 @@ patches:
       - op: replace
         path: /spec/rules/0/host
         value: research.voxcript.app
+  # The certificate's only name.
+  - target:
+      group: cert-manager.io
+      kind: Certificate
+      name: researchbot-tls
+    patch: |-
+      - op: replace
+        path: /spec/dnsNames/0
+        value: research.voxcript.app

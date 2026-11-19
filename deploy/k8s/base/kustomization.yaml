@@ -30,6 +30,7 @@ resources:
   - backend.yaml
   - web.yaml
   - middleware.yaml
+  - certificate.yaml
   - ingress.yaml
   - servicemonitor.yaml
   - networkpolicy.yaml
