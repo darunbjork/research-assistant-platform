@@ -1,0 +1,124 @@
+# Applied ONCE by the human with cluster-admin rights, NOT by CI:
+#   kubectl apply -f deploy/k8s/admin/deployer-rbac.yaml
+# The token Secret and the kubeconfig are created by hand afterwards; see
+# deploy/k8s/README.md ("Deployer credentials"). Nothing secret is in here.
+#
+# The deploy workflow (scripts/k8s-deploy.sh) runs as this ServiceAccount.
+# It can touch namespace `researchbot` ONLY (a Role, never a ClusterRole), and
+# only the resource kinds our manifests contain, with exactly the verbs it
+# uses:
+#
+#   kubectl apply (client-side)           get, create, patch
+#   kubectl rollout status                get, list, watch   (the workload)
+#   kubectl rollout undo / revision check get, list          (replicasets), patch (deployments)
+#   migrate Job: delete, apply, wait      get, list, watch, create, patch, delete (jobs)
+#   migrate logs on failure               list pods, get pods/log
+#   wait for the TLS certificate          get, list, watch   (certificates)
+#   describe the issuance on timeout      get, list, watch   (certificaterequests, orders, challenges)
+#   diagnostics on failure                get, list, watch   (events, pods)
+#
+# Deliberately absent:
+#   - secrets: no verb at all. Pods reference Secrets by name; creating a
+#     Deployment that references a Secret needs no access to it, and the
+#     Prometheus operator reads METRICS_TOKEN with its own rights.
+#   - delete on anything but jobs, and no `--prune`: the workflow never
+#     removes objects, so a bad render can't wipe the namespace.
+#   - serviceaccounts: nothing here patches one (images are public; every
+#     pod sets automountServiceAccountToken: false itself).
+#   - namespaces, resourcequotas, roles, rolebindings, persistentvolumeclaims:
+#     the namespace can't grant itself more rights or raise its own quota.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: deployer
+  namespace: researchbot
+  labels:
+    app.kubernetes.io/part-of: researchbot
+    app.kubernetes.io/name: deployer
+# The deploy workflow uses a token from a separate, hand-made Secret; nothing
+# runs as this ServiceAccount inside a pod.
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: deployer
+  namespace: researchbot
+  labels:
+    app.kubernetes.io/part-of: researchbot
+    app.kubernetes.io/name: deployer
+rules:
+  # ── Objects the manifests apply ────────────────────────────────────────
+  - apiGroups: [""]
+    resources: ["configmaps", "services"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["apps"]
+    resources: ["deployments", "statefulsets"]
+    # list + watch: `kubectl rollout status` watches the object.
+    verbs: ["get", "list", "watch", "create", "patch"]
+  - apiGroups: ["batch"]
+    resources: ["cronjobs"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["networking.k8s.io"]
+    resources: ["ingresses", "networkpolicies"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["traefik.io"]
+    resources: ["middlewares"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["monitoring.coreos.com"]
+    resources: ["servicemonitors"]
+    verbs: ["get", "create", "patch"]
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificates"]
+    # list + watch: the first deploy waits for the certificate to be Ready.
+    verbs: ["get", "list", "watch", "create", "patch"]
+  # Read-only: shown by `kubectl describe` when the certificate isn't Ready
+  # in time (the ACME DNS-01 chain cert-manager creates per issuance).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificaterequests"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["acme.cert-manager.io"]
+    resources: ["orders", "challenges"]
+    verbs: ["get", "list", "watch"]
+
+  # ── The migrate Job: deleted and re-created on every deploy ────────────
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "patch", "delete"]
+
+  # ── Rollout undo and revision checks ───────────────────────────────────
+  # `kubectl rollout undo` copies the template from an older ReplicaSet.
+  - apiGroups: ["apps"]
+    resources: ["replicasets"]
+    verbs: ["get", "list"]
+
+  # ── Read-only diagnostics: migrate logs, failing pods, events ──────────
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get"]
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["events.k8s.io"]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: deployer
+  namespace: researchbot
+  labels:
+    app.kubernetes.io/part-of: researchbot
+    app.kubernetes.io/name: deployer
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: deployer
+subjects:
+  - kind: ServiceAccount
+    name: deployer
+    namespace: researchbot

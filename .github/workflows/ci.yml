@@ -258,17 +258,23 @@ jobs:
       - name: Dashboards copies are up to date
         run: |
           ./scripts/sync-k8s-dashboards.sh
-          git diff --exit-code -- deploy/k8s/base/dashboards \
+          git diff --exit-code -- deploy/k8s/base/app/dashboards \
             || { echo "::error::Run ./scripts/sync-k8s-dashboards.sh and commit the result"; exit 1; }
 
       # Offline only: render with the runner's kubectl (bundled kustomize),
       # then validate every object, including the ServiceMonitor and Traefik
       # Middleware CRDs, against their JSON schemas. Nothing touches a cluster.
-      - name: Render (kubectl kustomize)
+      # The same render the deploy runs (scripts/k8s-render.sh), with dummy
+      # digests: it also checks that every image is pinned to its digest, no
+      # placeholder or tag survives, and every object has its tier label.
+      - name: Render (scripts/k8s-render.sh)
+        env:
+          BACKEND_DIGEST: sha256:1111111111111111111111111111111111111111111111111111111111111111
+          MIGRATOR_DIGEST: sha256:2222222222222222222222222222222222222222222222222222222222222222
+          WEB_DIGEST: sha256:3333333333333333333333333333333333333333333333333333333333333333
         run: |
-          mkdir -p rendered
-          kubectl kustomize deploy/k8s > rendered/app.yaml
-          kubectl kustomize deploy/k8s/migrate > rendered/migrate.yaml
+          kubectl kustomize deploy/k8s > /dev/null   # the plain entry point renders too
+          ./scripts/k8s-render.sh rendered
           cp deploy/k8s/admin/*.yaml rendered/
 
       - name: Validate (kubeconform, strict)

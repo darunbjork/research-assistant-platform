@@ -1,7 +1,7 @@
 name: Images
 
 # Builds the three images the k3s deployment runs and pushes them to GHCR
-# (private packages). Runs after CI succeeds on main, or by hand.
+# (public packages, pulled anonymously). Runs after CI succeeds on main, or by hand.
 #
 # WHY build in CI rather than on the server: compiling TypeScript and Vite on
 # the shared 8 GB node would compete with Transcribe's Whisper worker.
@@ -109,6 +109,31 @@ jobs:
             ${{ env.REGISTRY }}/researchbot-web:main
           cache-from: type=gha,scope=web
           cache-to: type=gha,mode=max,scope=web
+
+      # The deploy workflow downloads this by run id and deploys ONLY these
+      # digests (never a tag). Plain KEY=value lines: the deploy parses them
+      # strictly, it never sources the file.
+      - name: Write digests file
+        env:
+          SHA: ${{ steps.meta.outputs.sha }}
+          BACKEND: ${{ steps.backend.outputs.digest }}
+          MIGRATOR: ${{ steps.migrator.outputs.digest }}
+          WEB: ${{ steps.web.outputs.digest }}
+        run: |
+          mkdir -p digests
+          printf 'SHA=%s\nBACKEND_DIGEST=%s\nMIGRATOR_DIGEST=%s\nWEB_DIGEST=%s\n' \
+            "$SHA" "$BACKEND" "$MIGRATOR" "$WEB" > digests/digests.env
+          cat digests/digests.env
+
+      - name: Upload digests artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: image-digests
+          path: digests/digests.env
+          if-no-files-found: error
+          # Redeploys/rollbacks by commit SHA need this artifact; older
+          # commits must be rebuilt (run Images by hand) first.
+          retention-days: 90
 
       - name: Summary
         env:

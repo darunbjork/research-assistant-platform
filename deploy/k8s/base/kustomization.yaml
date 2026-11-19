@@ -5,7 +5,7 @@
 # Deliberately NOT in here:
 #   - the Namespace: it already exists (created by the human) and the CI
 #     deployer is namespace-scoped, so it can't manage a cluster-scoped object.
-#   - any Secret: researchbot-secrets, r2-backup and ghcr-pull are created by
+#   - any Secret: researchbot-secrets and r2-backup are created by
 #     hand on the cluster and only referenced by name.
 #   - the migrate Job: Jobs are immutable, so it lives in ../migrate and is
 #     deleted and re-created before each rollout instead of being re-applied.
@@ -23,63 +23,14 @@ labels:
     includeSelectors: false
     includeTemplates: true
 
+# Two tiers, applied in order by the deploy workflow (scripts/k8s-deploy.sh):
+#   data/  researchbot.io/tier=data — NetworkPolicies, the shared
+#          ConfigMap, postgres and redis. Applied first, so the
+#          migrate Job has a database (and network access to it).
+#   app/   researchbot.io/tier=app — backend, web, Ingress, TLS, monitoring,
+#          dashboards and the backup CronJob. Applied after migrations.
+# Rendering both together keeps ConfigMap hash references intact; the
+# deploy selects a tier with `kubectl apply -l researchbot.io/tier=…`.
 resources:
-  - serviceaccount.yaml
-  - postgres.yaml
-  - redis.yaml
-  - backend.yaml
-  - web.yaml
-  - middleware.yaml
-  - certificate.yaml
-  - ingress.yaml
-  - servicemonitor.yaml
-  - networkpolicy.yaml
-  - db-backup.yaml
-
-configMapGenerator:
-  # Non-secret runtime config for the backend (envFrom) and a few keys read
-  # individually by postgres and web. The hash suffix makes a config change
-  # roll the pods that use it.
-  - name: researchbot-config
-    literals:
-      - NODE_ENV=production
-      - PORT=3001
-      # Traefik is the only proxy in front of /api and /ws.
-      - TRUST_PROXY_HOPS=1
-      - ALLOW_REGISTRATION=true
-      - GLOBAL_DAILY_LLM_CALLS_MAX=2000
-      - LOG_LEVEL=info
-      # Voice providers stay mocked until the spend-cap checklist in
-      # docs/cost.md is done; flip these in the overlay, not here.
-      - VOICE_MOCK=true
-      - DEEPGRAM_MODEL=nova-3
-      - TTS_PROVIDER=mock
-      - TTS_MAX_CHARS=600
-      - TTS_DAILY_CHARS_PER_USER=20000
-      - ELEVENLABS_MODEL_ID=eleven_flash_v2_5
-      - ELEVENLABS_OUTPUT_FORMAT=pcm_24000
-      - POSTGRES_USER=rag
-      - POSTGRES_DB=ragdb
-      # Set per environment in the overlay.
-      - CORS_ORIGINS=https://research.example.com
-      - DOMAIN=research.example.com
-
-  # One ConfigMap per dashboard keeps each well under the 256 KiB
-  # last-applied annotation limit of client-side `kubectl apply`.
-  # Grafana's sidecar watches ALL namespaces for this label (B0 §4).
-  # Fixed names (no hash): a hashed name would leave the old ConfigMap
-  # behind on every change, and Grafana would show duplicate dashboards.
-  - name: researchbot-dashboard-overview
-    files:
-      - dashboards/rag-overview.json
-    options:
-      disableNameSuffixHash: true
-      labels:
-        grafana_dashboard: "1"
-  - name: researchbot-dashboard-latency
-    files:
-      - dashboards/rag-latency.json
-    options:
-      disableNameSuffixHash: true
-      labels:
-        grafana_dashboard: "1"
+  - data
+  - app

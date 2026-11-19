@@ -1,0 +1,39 @@
+# App tier (researchbot.io/tier=app). See ../kustomization.yaml.
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+labels:
+  - pairs:
+      researchbot.io/tier: app
+    includeSelectors: false
+    includeTemplates: false
+
+resources:
+  - backend.yaml
+  - web.yaml
+  - middleware.yaml
+  - certificate.yaml
+  - ingress.yaml
+  - servicemonitor.yaml
+  - db-backup.yaml
+
+configMapGenerator:
+  # One ConfigMap per dashboard keeps each well under the 256 KiB
+  # last-applied annotation limit of client-side `kubectl apply`.
+  # Grafana's sidecar watches ALL namespaces for this label (B0 §4).
+  # Fixed names (no hash): a hashed name would leave the old ConfigMap
+  # behind on every change, and Grafana would show duplicate dashboards.
+  - name: researchbot-dashboard-overview
+    files:
+      - dashboards/rag-overview.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
+  - name: researchbot-dashboard-latency
+    files:
+      - dashboards/rag-latency.json
+    options:
+      disableNameSuffixHash: true
+      labels:
+        grafana_dashboard: "1"
