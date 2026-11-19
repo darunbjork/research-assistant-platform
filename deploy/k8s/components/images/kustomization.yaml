@@ -1,0 +1,21 @@
+# Image digests for ResearchBot's own images, shared by the app overlay and
+# the migrate Job so both always run the same build.
+#
+# Pinned by digest (never by tag), as Transcribe does: a digest names one
+# exact build, so a re-pushed tag can't change what runs.
+#
+# The all-zero digests are placeholders ON PURPOSE: the deploy workflow
+# (Phase B3) fills in the real ones from images.yml with
+#   kustomize edit set image ghcr.io/darunbjork/researchbot-backend@sha256:…
+# run in this directory. Applying the placeholders by hand fails with an
+# image pull error instead of deploying an unknown build.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+
+images:
+  - name: ghcr.io/darunbjork/researchbot-backend
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: ghcr.io/darunbjork/researchbot-migrator
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
+  - name: ghcr.io/darunbjork/researchbot-web
+    digest: sha256:0000000000000000000000000000000000000000000000000000000000000000
