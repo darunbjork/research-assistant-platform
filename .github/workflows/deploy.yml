@@ -1,0 +1,170 @@
+name: Deploy
+
+# Deploys ResearchBot to namespace `researchbot` on the shared k3s cluster.
+#
+#   automatic: after "Images" succeeds for a push to main
+#   by hand:   workflow_dispatch with a commit SHA (redeploy or roll back to
+#              any commit whose Images run is still within artifact retention)
+#
+# WHY this shape: the API server port (6443) is closed to the internet, and
+# CI must not hold a shell or cluster-admin. So CI gets
+#   - an SSH tunnel only: user deploy-rb's key is restricted to
+#     port-forwarding 127.0.0.1:6443, no shell;
+#   - a token for the namespace-scoped `deployer` ServiceAccount
+#     (deploy/k8s/admin/deployer-rbac.yaml): researchbot only, no Secrets.
+# A leaked GitHub secret can't reach Transcribe, other namespaces or the node.
+#
+# Images are deployed by DIGEST from the Images run's artifact, never by tag.
+# The deploy logic itself is scripts/k8s-deploy.sh.
+
+on:
+  workflow_run:
+    workflows: [Images]
+    types: [completed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      sha:
+        description: Full commit SHA on main to deploy (its Images run must have succeeded)
+        required: true
+        type: string
+
+permissions:
+  contents: read
+  # Find the Images run for a SHA and download its digests artifact.
+  actions: read
+
+concurrency:
+  group: deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Deploy to k3s
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production
+      url: https://research.voxcript.app
+
+    steps:
+      - name: Resolve commit and Images run
+        id: source
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVENT: ${{ github.event_name }}
+          TRIGGER_RUN_ID: ${{ github.event.workflow_run.id }}
+          RUN_SHA: ${{ github.event.workflow_run.head_sha }}
+          INPUT_SHA: ${{ inputs.sha }}
+        run: |
+          set -euo pipefail
+          if [[ "$EVENT" == workflow_dispatch ]]; then
+            if [[ ! "$INPUT_SHA" =~ ^[0-9a-f]{40}$ ]]; then
+              echo "::error::sha must be a full 40-character lowercase commit SHA"
+              exit 1
+            fi
+            sha="$INPUT_SHA"
+            run_id="$(gh run list --repo "$GITHUB_REPOSITORY" --workflow images.yml \
+              --commit "$sha" --status success --limit 1 \
+              --json databaseId --jq '.[0].databaseId // empty')"
+            if [[ -z "$run_id" ]]; then
+              echo "::error::No successful Images run for $sha. Run the Images workflow for it first."
+              exit 1
+            fi
+          else
+            sha="$RUN_SHA"
+            run_id="$TRIGGER_RUN_ID"
+          fi
+          echo "sha=$sha" >> "$GITHUB_OUTPUT"
+          echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
+          echo "Deploying $sha from Images run $run_id"
+
+      # Manifests and scripts from the SAME commit as the images, so a
+      # rollback to an older SHA also rolls back its manifests.
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.sha }}
+
+      - name: Download digests
+        uses: actions/download-artifact@v4
+        with:
+          name: image-digests
+          run-id: ${{ steps.source.outputs.run_id }}
+          github-token: ${{ github.token }}
+          path: ${{ runner.temp }}/digests
+
+      - name: Read digests
+        env:
+          EXPECTED_SHA: ${{ steps.source.outputs.sha }}
+          FILE: ${{ runner.temp }}/digests/digests.env
+        run: |
+          set -euo pipefail
+          # Strict parse, never `source`: only the four known keys, each value
+          # fully validated before it reaches GITHUB_ENV.
+          value() { grep -E "^$1=" "$FILE" | tail -n 1 | cut -d= -f2-; }
+          sha="$(value SHA)"
+          if [[ "$sha" != "$EXPECTED_SHA" ]]; then
+            echo "::error::digests artifact is for '$sha', expected $EXPECTED_SHA"
+            exit 1
+          fi
+          for key in BACKEND_DIGEST MIGRATOR_DIGEST WEB_DIGEST; do
+            v="$(value "$key")"
+            if [[ ! "$v" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+              echo "::error::$key in the artifact is not a sha256 digest"
+              exit 1
+            fi
+            echo "$key=$v" >> "$GITHUB_ENV"
+            echo "$key=$v"
+          done
+
+      - name: Open SSH tunnel to the API server
+        env:
+          DEPLOY_SSH_KEY: ${{ secrets.DEPLOY_SSH_KEY }}
+          DEPLOY_KNOWN_HOSTS: ${{ secrets.DEPLOY_KNOWN_HOSTS }}
+          DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/ssh"
+          printf '%s\n' "$DEPLOY_SSH_KEY" > "$RUNNER_TEMP/ssh/key"
+          printf '%s\n' "$DEPLOY_KNOWN_HOSTS" > "$RUNNER_TEMP/ssh/known_hosts"
+          # StrictHostKeyChecking=yes against the pinned host key: no TOFU.
+          # ExitOnForwardFailure: -f only returns once the forward is up.
+          ssh -i "$RUNNER_TEMP/ssh/key" \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=yes \
+            -o UserKnownHostsFile="$RUNNER_TEMP/ssh/known_hosts" \
+            -o ExitOnForwardFailure=yes \
+            -o ServerAliveInterval=30 \
+            -o ServerAliveCountMax=4 \
+            -o BatchMode=yes \
+            -f -N -L 6443:127.0.0.1:6443 \
+            "deploy-rb@$DEPLOY_HOST"
+          echo "Tunnel up: 127.0.0.1:6443"
+
+      - name: Write kubeconfig
+        env:
+          KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
+        run: |
+          set -euo pipefail
+          umask 077
+          printf '%s\n' "$KUBE_CONFIG" > "$RUNNER_TEMP/kubeconfig"
+          echo "KUBECONFIG=$RUNNER_TEMP/kubeconfig" >> "$GITHUB_ENV"
+
+      - name: Deploy
+        env:
+          SMOKE_URL: https://research.voxcript.app/health
+          RENDER_DIR: ${{ runner.temp }}/rendered
+        run: ./scripts/k8s-deploy.sh
+
+      - name: Close tunnel and remove credentials
+        if: always()
+        run: |
+          pkill -f -- '-L 6443:127.0.0.1:6443' || true
+          rm -rf "$RUNNER_TEMP/ssh" "$RUNNER_TEMP/kubeconfig"
