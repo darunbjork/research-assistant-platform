@@ -239,3 +239,49 @@ jobs:
 
       - name: Build web image (Caddy)
         run: docker build -f deploy/web.Dockerfile .
+
+  k8s:
+    name: Kubernetes manifests
+    runs-on: ubuntu-latest
+
+    defaults:
+      run:
+        working-directory: .
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # The cluster's dashboards are generated copies (kustomize can't read
+      # files outside deploy/k8s); fail if someone edited monitoring/ without
+      # re-running the sync script.
+      - name: Dashboards copies are up to date
+        run: |
+          ./scripts/sync-k8s-dashboards.sh
+          git diff --exit-code -- deploy/k8s/base/dashboards \
+            || { echo "::error::Run ./scripts/sync-k8s-dashboards.sh and commit the result"; exit 1; }
+
+      # Offline only: render with the runner's kubectl (bundled kustomize),
+      # then validate every object, including the ServiceMonitor and Traefik
+      # Middleware CRDs, against their JSON schemas. Nothing touches a cluster.
+      - name: Render (kubectl kustomize)
+        run: |
+          mkdir -p rendered
+          kubectl kustomize deploy/k8s > rendered/app.yaml
+          kubectl kustomize deploy/k8s/migrate > rendered/migrate.yaml
+          cp deploy/k8s/admin/*.yaml rendered/
+
+      - name: Validate (kubeconform, strict)
+        run: |
+          docker run --rm -v "$PWD/rendered:/rendered:ro" ghcr.io/yannh/kubeconform:v0.6.7 \
+            -strict -summary -output text \
+            -schema-location default \
+            -schema-location 'https://raw.githubusercontent.com/datreeio/CRDs-catalog/main/{{.Group}}/{{.ResourceKind}}_{{.ResourceAPIVersion}}.json' \
+            /rendered
+
+      - name: Manifests never define Secrets or the Namespace
+        run: |
+          if grep -nE '^kind: (Secret|Namespace)$' rendered/*.yaml; then
+            echo "::error::Secrets and the Namespace are created by hand on the cluster, never in deploy/k8s"
+            exit 1
+          fi

@@ -1,0 +1,18 @@
+# The single owner of Secret researchbot-tls. An explicit Certificate (instead
+# of the cert-manager.io/cluster-issuer annotation on an Ingress) means both
+# Ingresses only READ the Secret, so nothing can create a second Certificate
+# that fights over it. letsencrypt-prod issues every cert on this cluster via
+# DNS-01 (Cloudflare); B0 §7. The host is set in the overlay.
+apiVersion: cert-manager.io/v1
+kind: Certificate
+metadata:
+  name: researchbot-tls
+spec:
+  secretName: researchbot-tls
+  issuerRef:
+    kind: ClusterIssuer
+    name: letsencrypt-prod
+  dnsNames:
+    - research.example.com
+  privateKey:
+    rotationPolicy: Always

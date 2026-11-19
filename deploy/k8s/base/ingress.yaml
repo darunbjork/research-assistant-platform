@@ -1,0 +1,75 @@
+# Two Ingresses for one host, so the body-limit middleware applies to /api
+# only (see middleware.yaml). The host is set in the overlay.
+#
+# Neither Ingress carries a cert-manager annotation: Secret researchbot-tls
+# is owned by the explicit Certificate in certificate.yaml, and both
+# Ingresses only reference it.
+#
+# /metrics is deliberately not routed: Prometheus scrapes it inside the
+# cluster (servicemonitor.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: researchbot
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: researchbot-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - research.example.com
+      secretName: researchbot-tls
+  rules:
+    - host: research.example.com
+      http:
+        paths:
+          # Traefik → backend directly (one proxy hop, TRUST_PROXY_HOPS=1).
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: researchbot-api
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: researchbot-security-headers@kubernetescrd,researchbot-body-limit@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - research.example.com
+      secretName: researchbot-tls
+  rules:
+    - host: research.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http

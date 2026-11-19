@@ -1,4 +1,25 @@
-{$DOMAIN} {
+# deploy/Caddyfile — used by both deployments:
+#
+#   compose (docker-compose.prod.yml): SITE_ADDRESS={$DOMAIN}. Caddy is the
+#     public edge: it terminates TLS, proxies /api, /ws and /health to the
+#     backend, and sends HSTS.
+#   k3s (deploy/k8s): SITE_ADDRESS=:8080, HSTS=off. Traefik terminates TLS,
+#     routes /api, /ws and /health straight to the backend Service, and sends
+#     HSTS from its Middleware; this Caddy only serves the SPA (the proxy
+#     handles below are never hit there). Port 8080 so it can run as non-root
+#     without CAP_NET_BIND_SERVICE.
+#
+# Caddy substitutes {$VAR} before parsing, so `import hsts-{$HSTS}` picks a
+# snippet. DOMAIN is still required in both modes: the CSP below names the
+# WebSocket origin.
+
+(hsts-on) {
+    header Strict-Transport-Security "max-age=31536000; includeSubDomains"
+}
+(hsts-off) {
+}
+
+{$SITE_ADDRESS} {
     encode zstd gzip
 
     # API, WebSocket and health go to the backend. Caddy proxies WebSocket upgrades automatically.
@@ -25,8 +46,9 @@
         file_server
     }
 
+    import hsts-{$HSTS:on}
+
     header {
-        Strict-Transport-Security "max-age=31536000; includeSubDomains"
         X-Content-Type-Options "nosniff"
         Referrer-Policy "strict-origin-when-cross-origin"
         X-Frame-Options "DENY"

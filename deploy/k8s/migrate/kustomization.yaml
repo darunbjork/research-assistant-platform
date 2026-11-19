@@ -1,0 +1,21 @@
+# The one-off migration Job, kept out of the app kustomization: Jobs are
+# immutable, so the deploy workflow deletes the previous one, applies this,
+# and waits for it to complete BEFORE rolling out the backend (Phase B3).
+#
+#   kubectl kustomize deploy/k8s/migrate
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: researchbot
+
+labels:
+  - pairs:
+      app.kubernetes.io/part-of: researchbot
+    includeSelectors: false
+    includeTemplates: true
+
+resources:
+  - job.yaml
+
+components:
+  - ../components/images

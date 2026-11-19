@@ -1,0 +1,8 @@
+# Entry point: `kubectl kustomize deploy/k8s` renders the voxcript app
+# manifests. The migrate Job is separate (deploy/k8s/migrate), and so are
+# the objects only a cluster admin applies (deploy/k8s/admin).
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - overlays/voxcript

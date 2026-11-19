@@ -19,6 +19,7 @@ import {
 } from "./services/voice.transcript.service"
 import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
+import livezRouter from "./routes/livez.routes"
 import authRouter from "./routes/auth.routes"
 import documentRouter from "./routes/document.routes"
 import ragRouter from "./routes/rag.routes"
@@ -39,10 +40,11 @@ dotenv.config()
 const app = express()
 const PORT = env.PORT
 
-// Caddy is the single reverse proxy in front (task 5.3), so trust exactly
-// one hop: req.ip then reflects the real client address instead of the
-// proxy's — required for the IP-based auth rate limits (D20).
-app.set("trust proxy", 1)
+// Trust exactly as many proxy hops as sit in front of the app (Caddy in
+// compose, Traefik on k3s — both 1): req.ip then reflects the real client
+// address instead of the proxy's — required for the IP-based auth rate
+// limits (D20). See TRUST_PROXY_HOPS in config/env.ts.
+app.set("trust proxy", env.TRUST_PROXY_HOPS)
 
 // ── Middleware ────────────────────────────────────────────────────────────
 app.use(
@@ -64,6 +66,9 @@ app.use(
 // they can never drift) covers 500,000 characters of multibyte text plus
 // the JSON envelope (D9) while still bounding memory per request.
 app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }))
+// Liveness probe (k8s): mounted before the request logger so a probe every
+// few seconds doesn't flood the logs. See routes/livez.routes.ts.
+app.use("/", livezRouter)
 app.use(requestLoggerMiddleware)
 
 // ── API Documentation ─────────────────────────────────────────────────────

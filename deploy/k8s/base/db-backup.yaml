@@ -1,0 +1,131 @@
+# Nightly Postgres backup to Cloudflare R2, following Transcribe's pattern
+# (K3S plan, B0 §1): an initContainer dumps to an emptyDir, then the main
+# container uploads it. WHY mandatory: postgres sits on local-path storage
+# (one disk, no replication), so this is the only copy that survives losing
+# the node.
+#
+# Bucket `researchbot-db-backups` is ResearchBot's own, with a bucket-scoped
+# token in Secret `r2-backup` (created by hand, never in these manifests).
+# Retention is an R2 lifecycle rule on the bucket, so there's no cleanup here.
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: db-backup
+  labels:
+    app.kubernetes.io/name: db-backup
+spec:
+  # 03:30 UTC; Transcribe's backup runs at 03:00, so they don't overlap.
+  schedule: "30 3 * * *"
+  timeZone: Etc/UTC
+  concurrencyPolicy: Forbid
+  # Run a missed backup within an hour (e.g. after a node reboot), not later.
+  startingDeadlineSeconds: 3600
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 1800
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: db-backup
+        spec:
+          restartPolicy: Never
+          automountServiceAccountToken: false
+          securityContext:
+            runAsNonRoot: true
+            seccompProfile:
+              type: RuntimeDefault
+          initContainers:
+            - name: pg-dump
+              # Same image as the server, so pg_dump's major version matches.
+              image: pgvector/pgvector:pg16@sha256:484e838076e04939d27d3e176e91c86eea96236126023be8d3059761122e579f
+              command:
+                - sh
+                - -ec
+                - |
+                  # pg_dump rejects Prisma-style query params (?connection_limit=…).
+                  url="${DATABASE_URL%%\?*}"
+                  file="/backup/researchbot-$(date -u +%Y%m%dT%H%M%SZ).dump"
+                  pg_dump --format=custom --no-owner --dbname="$url" --file="$file"
+                  ls -l "$file"
+              env:
+                - name: DATABASE_URL
+                  valueFrom:
+                    secretKeyRef:
+                      name: researchbot-secrets
+                      key: DATABASE_URL
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              securityContext:
+                runAsUser: 999
+                runAsGroup: 999
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+          containers:
+            - name: upload
+              # 2.22.x on purpose: from 2.23 the CLI sends checksum headers by
+              # default, which R2 has rejected; the two *_CHECKSUM_* variables
+              # below keep an upgrade safe.
+              image: amazon/aws-cli:2.22.35@sha256:6977c83ae3dc99f28fcf8276b9ea5eec33833cd5be40574b34112e98113ec7a2
+              command:
+                - sh
+                - -ec
+                - |
+                  aws s3 cp /backup/ "s3://${BACKUP_BUCKET}/" --recursive \
+                    --endpoint-url "$S3_ENDPOINT" --only-show-errors
+                  echo "uploaded: $(ls /backup)"
+              env:
+                - name: BACKUP_BUCKET
+                  value: researchbot-db-backups
+                - name: AWS_DEFAULT_REGION
+                  value: auto
+                - name: AWS_REQUEST_CHECKSUM_CALCULATION
+                  value: when_required
+                - name: AWS_RESPONSE_CHECKSUM_VALIDATION
+                  value: when_required
+                # The CLI writes its cache under $HOME; the root FS is read-only.
+                - name: HOME
+                  value: /tmp
+              # AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, S3_ENDPOINT.
+              envFrom:
+                - secretRef:
+                    name: r2-backup
+              resources:
+                requests:
+                  cpu: 50m
+                  memory: 64Mi
+                limits:
+                  cpu: 500m
+                  memory: 256Mi
+              securityContext:
+                runAsUser: 65534
+                runAsGroup: 65534
+                allowPrivilegeEscalation: false
+                readOnlyRootFilesystem: true
+                capabilities:
+                  drop: ["ALL"]
+              volumeMounts:
+                - name: backup
+                  mountPath: /backup
+                  readOnly: true
+                - name: tmp
+                  mountPath: /tmp
+          volumes:
+            - name: backup
+              emptyDir:
+                sizeLimit: 2Gi
+            - name: tmp
+              emptyDir:
+                sizeLimit: 64Mi
