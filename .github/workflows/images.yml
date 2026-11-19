@@ -1,7 +1,7 @@
 name: Images
 
 # Builds the three images the k3s deployment runs and pushes them to GHCR
-# (private packages). Runs after CI succeeds on main, or by hand.
+# (public packages, pulled anonymously). Runs after CI succeeds on main, or by hand.
 #
 # WHY build in CI rather than on the server: compiling TypeScript and Vite on
 # the shared 8 GB node would compete with Transcribe's Whisper worker.

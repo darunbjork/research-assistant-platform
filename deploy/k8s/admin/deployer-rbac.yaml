@@ -14,6 +14,7 @@
 #   migrate Job: delete, apply, wait      get, list, watch, create, patch, delete (jobs)
 #   migrate logs on failure               list pods, get pods/log
 #   wait for the TLS certificate          get, list, watch   (certificates)
+#   describe the issuance on timeout      get, list, watch   (certificaterequests, orders, challenges)
 #   diagnostics on failure                get, list, watch   (events, pods)
 #
 # Deliberately absent:
@@ -22,6 +23,8 @@
 #     Prometheus operator reads METRICS_TOKEN with its own rights.
 #   - delete on anything but jobs, and no `--prune`: the workflow never
 #     removes objects, so a bad render can't wipe the namespace.
+#   - serviceaccounts: nothing here patches one (images are public; every
+#     pod sets automountServiceAccountToken: false itself).
 #   - namespaces, resourcequotas, roles, rolebindings, persistentvolumeclaims:
 #     the namespace can't grant itself more rights or raise its own quota.
 apiVersion: v1
@@ -47,7 +50,7 @@ metadata:
 rules:
   # ── Objects the manifests apply ────────────────────────────────────────
   - apiGroups: [""]
-    resources: ["configmaps", "services", "serviceaccounts"]
+    resources: ["configmaps", "services"]
     verbs: ["get", "create", "patch"]
   - apiGroups: ["apps"]
     resources: ["deployments", "statefulsets"]
@@ -69,6 +72,14 @@ rules:
     resources: ["certificates"]
     # list + watch: the first deploy waits for the certificate to be Ready.
     verbs: ["get", "list", "watch", "create", "patch"]
+  # Read-only: shown by `kubectl describe` when the certificate isn't Ready
+  # in time (the ACME DNS-01 chain cert-manager creates per issuance).
+  - apiGroups: ["cert-manager.io"]
+    resources: ["certificaterequests"]
+    verbs: ["get", "list", "watch"]
+  - apiGroups: ["acme.cert-manager.io"]
+    resources: ["orders", "challenges"]
+    verbs: ["get", "list", "watch"]
 
   # ── The migrate Job: deleted and re-created on every deploy ────────────
   - apiGroups: ["batch"]

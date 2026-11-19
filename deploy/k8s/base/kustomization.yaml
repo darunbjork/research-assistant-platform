@@ -5,7 +5,7 @@
 # Deliberately NOT in here:
 #   - the Namespace: it already exists (created by the human) and the CI
 #     deployer is namespace-scoped, so it can't manage a cluster-scoped object.
-#   - any Secret: researchbot-secrets, r2-backup and ghcr-pull are created by
+#   - any Secret: researchbot-secrets and r2-backup are created by
 #     hand on the cluster and only referenced by name.
 #   - the migrate Job: Jobs are immutable, so it lives in ../migrate and is
 #     deleted and re-created before each rollout instead of being re-applied.
@@ -24,8 +24,8 @@ labels:
     includeTemplates: true
 
 # Two tiers, applied in order by the deploy workflow (scripts/k8s-deploy.sh):
-#   data/  researchbot.io/tier=data — the ServiceAccount, NetworkPolicies,
-#          the shared ConfigMap, postgres and redis. Applied first, so the
+#   data/  researchbot.io/tier=data — NetworkPolicies, the shared
+#          ConfigMap, postgres and redis. Applied first, so the
 #          migrate Job has a database (and network access to it).
 #   app/   researchbot.io/tier=app — backend, web, Ingress, TLS, monitoring,
 #          dashboards and the backup CronJob. Applied after migrations.

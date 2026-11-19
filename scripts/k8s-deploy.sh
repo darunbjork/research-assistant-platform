@@ -30,7 +30,7 @@ NS="${NAMESPACE:-researchbot}"
 DATA_TIMEOUT="${DATA_TIMEOUT:-300s}"
 MIGRATE_TIMEOUT_SECONDS="${MIGRATE_TIMEOUT_SECONDS:-300}"
 ROLLOUT_TIMEOUT="${ROLLOUT_TIMEOUT:-300s}"
-CERT_TIMEOUT="${CERT_TIMEOUT:-600s}"
+CERT_TIMEOUT="${CERT_TIMEOUT:-5m}"
 SMOKE_URL="${SMOKE_URL:-}"
 SMOKE_ATTEMPTS="${SMOKE_ATTEMPTS:-12}"   # x 10 s = 2 min
 RENDER_DIR="${RENDER_DIR:-$(mktemp -d)}"
@@ -60,15 +60,18 @@ endstep
 
 step "Preflight"
 kubectl version --request-timeout=15s
-# Fails fast if the tunnel, token or Role is wrong, before anything changes.
-k get serviceaccount default -o name
+# Fails fast if the tunnel, token or Role is wrong, before anything changes
+# (a SelfSubjectAccessReview: no extra RBAC needed).
+k auth can-i patch deployments --quiet \
+  || { echo "::error::the deployer token cannot patch deployments in $NS (RBAC not applied?)"; exit 1; }
+echo "deployer RBAC OK"
 PREV_BACKEND="$(revision backend)"
 PREV_WEB="$(revision web)"
 echo "live revisions before deploy: backend=${PREV_BACKEND:-none} web=${PREV_WEB:-none}"
 endstep
 
 # ── 2. Data tier ───────────────────────────────────────────────────────────
-step "Apply data tier (ServiceAccount, NetworkPolicies, config, postgres, redis)"
+step "Apply data tier (NetworkPolicies, config, postgres, redis)"
 k apply -f "$RENDER_DIR/app.yaml" -l researchbot.io/tier=data
 k rollout status statefulset/postgres --timeout="$DATA_TIMEOUT"
 k rollout status statefulset/redis --timeout="$DATA_TIMEOUT"
@@ -142,7 +145,15 @@ deploy_app() {
 
   step "Wait for the TLS certificate"
   # Instant once issued; the first deploy waits for Let's Encrypt (DNS-01).
-  k wait certificate/researchbot-tls --for=condition=Ready --timeout="$CERT_TIMEOUT" || return 1
+  # Without this, the smoke check would only see TLS errors on a first deploy.
+  if ! k wait certificate/researchbot-tls --for=condition=Ready --timeout="$CERT_TIMEOUT"; then
+    echo "::error::certificate/researchbot-tls not Ready after $CERT_TIMEOUT"
+    # The whole issuance chain: Certificate → CertificateRequest → ACME Order
+    # → Challenge (read-only access in the deployer Role).
+    k describe certificate,certificaterequest,order,challenge || true
+    endstep
+    return 1
+  fi
   endstep
 
   step "Smoke check $SMOKE_URL"

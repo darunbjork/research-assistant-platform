@@ -7,7 +7,7 @@ never touched from here).
 | Path | What | Applied by |
 |---|---|---|
 | `kustomization.yaml` | entry point, renders `overlays/voxcript` | deploy workflow |
-| `base/data/` | tier `data`: `default` ServiceAccount patch, NetworkPolicies, `researchbot-config`, postgres, redis | deploy workflow, first |
+| `base/data/` | tier `data`: NetworkPolicies, `researchbot-config`, postgres, redis | deploy workflow, first |
 | `base/app/` | tier `app`: backend, web, Ingress, Certificate, Traefik middlewares, ServiceMonitor, Grafana dashboards, db-backup CronJob | deploy workflow, after migrations |
 | `overlays/voxcript/` | host and CORS origin for research.voxcript.app | deploy workflow |
 | `components/images/` | digest placeholders for backend, migrator and web | replaced at deploy time |
@@ -29,9 +29,11 @@ namespace-scoped `deployer`:
    Complete. **On failure: print its logs and stop. The app is not touched.**
 4. **App tier**: `kubectl apply -l researchbot.io/tier=app`, then wait for the
    backend and web rollouts.
-5. **TLS and smoke check**: wait for `certificate/researchbot-tls` to be Ready
-   (instant after the first deploy), then expect `GET /health` = 200 for up to
-   2 minutes.
+5. **TLS and smoke check**: wait up to 5 minutes for
+   `certificate/researchbot-tls` to be Ready (instant after the first
+   deploy; on timeout the deploy prints `kubectl describe
+   certificate,certificaterequest,order,challenge` and fails), then expect
+   `GET /health` = 200 for up to 2 minutes.
 6. **On any failure in 4–5**: `kubectl rollout undo` backend and web to the
    revisions that were live before the deploy, then fail. On the very first
    deploy there's nothing to roll back to; the failed pods stay for
@@ -80,7 +82,6 @@ defines a Secret. The deployer has **no** access to Secrets.
 |---|---|---|
 | `researchbot-secrets` | see below | backend (all keys, `envFrom`), postgres (`POSTGRES_PASSWORD`), migrate Job and db-backup (`DATABASE_URL`), Prometheus via the ServiceMonitor (`METRICS_TOKEN`) |
 | `r2-backup` | `AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `S3_ENDPOINT` | db-backup upload container (already created) |
-| `ghcr-pull` | docker-registry, `read:packages` | every pod, via the `default` ServiceAccount (already created; the packages are public, it's kept as a safeguard) |
 | `deployer-token` | `token`, `ca.crt` (filled in by Kubernetes) | nobody in-cluster: its token goes into the CI kubeconfig |
 
 ### `researchbot-secrets`
@@ -209,6 +210,12 @@ deployer-token`, then repeat steps 2, 3 and 5. Deleting it invalidates the
 old token immediately.
 
 ## Images
+
+The GHCR packages are **public** and pulled anonymously: no pod has an
+`imagePullSecrets`. Deliberately so: GHCR answers 403 when a pull sends
+invalid credentials, even for a public package, so an expired pull token
+would break every pull. (The hand-made `ghcr-pull` Secret is unused and can
+be deleted: `kubectl -n researchbot delete secret ghcr-pull`.)
 
 All images are pinned by digest. Third-party images (pgvector, redis,
 aws-cli) carry their digest inline. ResearchBot's own images get theirs at

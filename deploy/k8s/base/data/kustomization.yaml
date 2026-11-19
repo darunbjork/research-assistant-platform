@@ -9,7 +9,6 @@ labels:
     includeTemplates: false
 
 resources:
-  - serviceaccount.yaml
   - networkpolicy.yaml
   - postgres.yaml
   - redis.yaml
