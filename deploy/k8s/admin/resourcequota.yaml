@@ -1,0 +1,32 @@
+# Applied ONCE by the human with cluster-admin rights, NOT by CI:
+#   kubectl apply -f deploy/k8s/admin/resourcequota.yaml
+# The namespace must not be able to raise its own limits, so the
+# namespace-scoped deployer (Phase B3) gets no access to ResourceQuotas.
+#
+# If the namespace already has a quota (`kubectl -n researchbot get
+# resourcequota`), compare it with this one instead of adding a second:
+# Kubernetes enforces every quota, so the tightest one wins.
+#
+# Sizing (memory limits, from the manifests):
+#   steady state  postgres 512 + redis 192 + backend 768 + web 64 = 1536Mi
+#   + rollout     a second backend (maxSurge: 1)  768
+#                 a second web    (maxSurge: 1)    64
+#   + 03:30 UTC   db-backup (init and main run one after the other) 256
+#   worst case                                                 = 2624Mi
+# A 2Gi limit would leave rollouts stuck: the surge pod would be refused.
+# The migrate Job (384Mi) finishes before the rollout starts, and finished
+# pods don't count against the quota.
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: researchbot-quota
+  namespace: researchbot
+spec:
+  hard:
+    requests.cpu: "1"
+    requests.memory: 1280Mi
+    limits.cpu: "6"
+    limits.memory: 2816Mi
+    persistentvolumeclaims: "4"
+    requests.storage: 20Gi
+    pods: "12"
