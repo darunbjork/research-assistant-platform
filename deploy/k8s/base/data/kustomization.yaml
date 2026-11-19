@@ -26,6 +26,12 @@ configMapGenerator:
       - ALLOW_REGISTRATION=true
       - GLOBAL_DAILY_LLM_CALLS_MAX=2000
       - LOG_LEVEL=info
+      # Measured from the VPS (generateContent "Reply with just OK"):
+      # gemini-3.6-flash (the code default) took 12–42 s, beyond the agent's
+      # 30 s timeout; gemini-3.1-flash-lite-preview took 1.6 s. Pinned to a
+      # versioned name, not a -latest alias, so the model can't change
+      # under a running deployment.
+      - GEMINI_GENERATION_MODEL=gemini-3.1-flash-lite-preview
       # Voice providers stay mocked until the spend-cap checklist in
       # docs/cost.md is done; flip these in the overlay, not here.
       - VOICE_MOCK=true
