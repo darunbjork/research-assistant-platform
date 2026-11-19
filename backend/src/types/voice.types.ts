@@ -87,6 +87,8 @@ export type VoiceErrorCode =
   | "NO_VOICE_SESSION" // audio or voice_end arrived without an active session
   | "TRANSCRIPT_INCOMPLETE" // final transcript incomplete (timeout/drop/closed/not_open)
   | "VOICE_INTERNAL" // unexpected server fault (logged, generic on the wire)
+  | "VOICE_DISABLED" // voice_start, but no real STT provider is configured (config/capabilities.ts)
+  | "TTS_DISABLED" // set_speak enabled, but no real TTS provider is configured
 
 /**
  * Row shape of a persisted transcript (Prisma model VoiceTranscript, Day 3

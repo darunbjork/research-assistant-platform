@@ -77,7 +77,7 @@
    PORT=3001
    ```
 
-3. *(Optional)* **Voice.** Both directions are offline mocks by default — no keys, no cost. To use the real providers, set them in `backend/.env` (each is validated at startup only when selected) and complete the spend-cap checklist in [docs/cost.md](docs/cost.md) first:
+3. *(Optional)* **Voice.** Voice is **off** by default: the mic button and the 🔊 toggle are shown disabled ("turned off on this server"), and the server refuses voice messages. The UI reads this from `GET /api/v1/config` (`{ voice: { stt, tts } }`): `stt` is on only with `VOICE_MOCK=false`, `tts` only with `TTS_PROVIDER=elevenlabs`. The in-process mock providers remain for the automated tests. To use the real providers, set them in `backend/.env` (each is validated at startup only when selected) and complete the spend-cap checklist in [docs/cost.md](docs/cost.md) first:
    ```env
    # Speech-to-text (mic → transcript)
    VOICE_MOCK=false

@@ -20,6 +20,7 @@ import {
 import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
 import livezRouter from "./routes/livez.routes"
+import configRouter from "./routes/config.routes"
 import authRouter from "./routes/auth.routes"
 import documentRouter from "./routes/document.routes"
 import ragRouter from "./routes/rag.routes"
@@ -89,6 +90,7 @@ if (env.NODE_ENV !== "production") {
 
 // ── Routes ────────────────────────────────────────────────────────────────
 app.use("/", metricsRouter)
+app.use("/api/v1/config", configRouter)
 app.use("/api/v1/auth", authRouter)
 app.use("/api/v1/documents", documentRouter)
 app.use("/api/v1/rag", ragRouter)

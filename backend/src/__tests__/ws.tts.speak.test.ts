@@ -101,6 +101,15 @@ jest.mock("../services/streaming.agent.service", () => ({
   },
 }))
 
+// ── Voice capability forced ON ─────────────────────────────────────────
+// This suite exercises spoken answers with an in-memory TTS stream. In
+// real config TTS_PROVIDER=mock reports TTS as unavailable
+// (config/capabilities.ts), so force both flags on; the disabled path is
+// covered by ws.voice.disabled.test.ts.
+jest.mock("../config/capabilities", () => ({
+  voiceCapability: (): { stt: boolean; tts: boolean } => ({ stt: true, tts: true }),
+}))
+
 // ── TTS: an in-memory stream we can pace, fail and observe ────────────────
 let mockChunkCount = 5
 let mockFailAfter: number | null = null
