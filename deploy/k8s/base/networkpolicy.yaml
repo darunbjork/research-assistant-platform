@@ -1,18 +1,56 @@
-# Default-deny ingress for the namespace, then allow only the flows the app
-# needs. Egress stays open: the backend calls Gemini, Deepgram and
-# ElevenLabs, and the backup job uploads to R2.
+# Default-deny ingress AND egress for the whole namespace, then allow only
+# the flows the app needs. Every allow rule in one place:
+#
+#   INGRESS
+#     Traefik (kube-system)       → web :8080, backend :3001
+#     Prometheus (monitoring)     → backend :3001 (/metrics)
+#     backend, migrate, db-backup → postgres :5432
+#     backend                     → redis :6379
+#   EGRESS
+#     every pod                   → kube-dns (kube-system) :53 UDP+TCP
+#     backend                     → postgres :5432, redis :6379
+#     backend                     → internet :443 (Gemini, Deepgram, ElevenLabs)
+#     migrate                     → postgres :5432
+#     db-backup                   → postgres :5432, internet :443 (R2)
+#
+# "internet" = 0.0.0.0/0 minus k3s's default pod (10.42.0.0/16) and service
+# (10.43.0.0/16) ranges, so :443 can't be used to reach anything in-cluster.
 #
 # k3s enforces NetworkPolicy (kube-router): verify connectivity after the
 # first apply (K3S plan B4 §7).
+
+# ── Default deny ────────────────────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: default-deny-ingress
+  name: default-deny
 spec:
   podSelector: {}
-  policyTypes: ["Ingress"]
+  policyTypes: ["Ingress", "Egress"]
 ---
-# Traefik (kube-system) → web and backend.
+# ── DNS: every pod resolves Service names through CoreDNS ──────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-dns-egress
+spec:
+  podSelector: {}
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - port: 53
+          protocol: UDP
+        - port: 53
+          protocol: TCP
+---
+# ── Ingress: Traefik → web and backend ─────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -38,7 +76,7 @@ spec:
         - port: 3001
           protocol: TCP
 ---
-# Prometheus (namespace monitoring) → backend /metrics.
+# ── Ingress: Prometheus (namespace monitoring) → backend /metrics ──────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -57,7 +95,7 @@ spec:
         - port: 3001
           protocol: TCP
 ---
-# backend, the migrate Job and the backup CronJob → postgres.
+# ── Ingress: clients → postgres ────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -78,7 +116,7 @@ spec:
         - port: 5432
           protocol: TCP
 ---
-# backend → redis.
+# ── Ingress: backend → redis ───────────────────────────────────────────────
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
@@ -95,4 +133,88 @@ spec:
               app.kubernetes.io/name: backend
       ports:
         - port: 6379
+          protocol: TCP
+---
+# ── Egress: backend → data stores and the AI/voice providers ───────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: backend-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: redis
+      ports:
+        - port: 6379
+          protocol: TCP
+    # Gemini, Deepgram (wss) and ElevenLabs are all HTTPS on 443.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.42.0.0/16
+              - 10.43.0.0/16
+      ports:
+        - port: 443
+          protocol: TCP
+---
+# ── Egress: migrate Job → postgres ─────────────────────────────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: migrate-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: migrate
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+---
+# ── Egress: db-backup → postgres (pg_dump) and R2 (upload) ─────────────────
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: db-backup-egress
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: db-backup
+  policyTypes: ["Egress"]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: postgres
+      ports:
+        - port: 5432
+          protocol: TCP
+    # Cloudflare R2's S3 endpoint is HTTPS on 443.
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 10.42.0.0/16
+              - 10.43.0.0/16
+      ports:
+        - port: 443
           protocol: TCP
