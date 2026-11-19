@@ -26,7 +26,6 @@ groups:
             Current value: {{ $value | humanizePercentage }}.
             This may indicate hallucination in generated answers.
             Check if the system prompt was changed recently.
-          runbook_url: "https://github.com/{{ github_org }}/research-assistant-platform/wiki/runbooks/faithfulness-low"
 
       - alert: RAGContextRelevanceLow
         expr: |
