@@ -60,6 +60,8 @@ services:
     restart: unless-stopped
     environment:
       DOMAIN: ${DOMAIN}
+      # Caddy is the TLS edge here: serve the domain itself (see deploy/Caddyfile).
+      SITE_ADDRESS: ${DOMAIN}
     ports:
       - "80:80"
       - "443:443"
