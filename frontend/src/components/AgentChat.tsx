@@ -3,6 +3,7 @@ import { queryAgent } from "../utils/api";
 import { useAgentWebSocket } from "../hooks/useAgentWebSocket";
 import { useVoiceCapture } from "../hooks/useVoiceCapture";
 import { useTtsPlayer } from "../hooks/useTtsPlayer";
+import { useServerCapabilities } from "../hooks/useServerCapabilities";
 import MessageCard from "./MessageCard";
 import AgentStatusBadge from "./AgentStatusBadge";
 import type { ChatMessage, AgentStatus } from "../types";
@@ -19,6 +20,11 @@ function formatTime(date: Date): string {
 }
 
 type ChatMode = "ws-agent" | "http-agent" | "rag" | "rag-rerank";
+
+// Shown on the voice controls when the server can't serve them (no real
+// STT/TTS provider configured, or the capability is still loading/failed).
+const VOICE_INPUT_OFF = "Voice input is turned off on this server";
+const SPOKEN_ANSWERS_OFF = "Spoken answers are turned off on this server";
 
 const SPEAK_STORAGE_KEY = "researchbot.speakAnswers";
 
@@ -57,6 +63,12 @@ export default function AgentChat() {
   const [httpStatus, setHttpStatus] = useState<AgentStatus>("idle");
   const [speakAnswers, setSpeakAnswers] = useState<boolean>(loadSpeakPreference);
 
+  // What the server can serve. Fails closed: voice reads as off while the
+  // answer is loading or if the request failed.
+  const { capabilities } = useServerCapabilities();
+  const sttAvailable = capabilities.voice.stt;
+  const ttsAvailable = capabilities.voice.tts;
+
   const bottomRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -64,7 +76,9 @@ export default function AgentChat() {
   // Speaking only exists in Agent (WS) mode.
   const player = useTtsPlayer();
   const ws = useAgentWebSocket({
-    speakEnabled: speakAnswers && chatMode === "ws-agent",
+    // Never ask the server to speak when it can't (it would refuse with
+    // TTS_DISABLED). The saved preference is kept for when TTS returns.
+    speakEnabled: speakAnswers && ttsAvailable && chatMode === "ws-agent",
     tts: player,
   });
 
@@ -75,6 +89,7 @@ export default function AgentChat() {
   };
 
   const handleSpeakToggle = (): void => {
+    if (!ttsAvailable) return;
     const next = !speakAnswers;
     setSpeakAnswers(next);
     saveSpeakPreference(next);
@@ -96,7 +111,7 @@ export default function AgentChat() {
       voice.stopCapture();
       return;
     }
-    if (ws.connectionState !== "authenticated") return;
+    if (!sttAvailable || ws.connectionState !== "authenticated") return;
     // Barge-in: talking over the answer stops it before the mic opens.
     if (player.isSpeaking) stopSpeaking();
     player.prime();
@@ -208,7 +223,7 @@ export default function AgentChat() {
       // WebSocket mode — streaming. A new question replaces any answer
       // still being spoken (the server cancels it on "start" too).
       player.stop();
-      if (speakAnswers) player.prime();
+      if (speakAnswers && ttsAvailable) player.prime();
       ws.startQuery(query);
     } else if (chatMode === "http-agent") {
       // HTTP Agent mode (fallback)
@@ -555,29 +570,42 @@ export default function AgentChat() {
             </button>
           )}
           {chatMode === "ws-agent" && (
-            <button
-              onClick={handleVoiceToggle}
-              disabled={ws.connectionState !== "authenticated"}
-              aria-label={
-                voice.isCapturing ? "Stop microphone" : "Start microphone"
-              }
-              title={
-                voice.isCapturing
-                  ? "Stop microphone (ends the voice turn)"
-                  : "Start microphone (voice turn, silence-gated)"
-              }
-              className={`
-                px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex-shrink-0 border
-                ${
-                  voice.isCapturing
-                    ? "bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
-                    : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
-                }
-                disabled:opacity-50 disabled:cursor-not-allowed
-              `}
+            // The wrapper carries the tooltip: browsers don't reliably show
+            // a title on a disabled button (it gets no pointer events).
+            <span
+              className="flex flex-shrink-0"
+              title={sttAvailable ? undefined : VOICE_INPUT_OFF}
             >
-              {voice.isCapturing ? "Stop mic" : "Mic"}
-            </button>
+              <button
+                onClick={handleVoiceToggle}
+                disabled={!sttAvailable || ws.connectionState !== "authenticated"}
+                aria-label={
+                  !sttAvailable
+                    ? VOICE_INPUT_OFF
+                    : voice.isCapturing
+                      ? "Stop microphone"
+                      : "Start microphone"
+                }
+                title={
+                  !sttAvailable
+                    ? VOICE_INPUT_OFF
+                    : voice.isCapturing
+                      ? "Stop microphone (ends the voice turn)"
+                      : "Start microphone (voice turn, silence-gated)"
+                }
+                className={`
+                  px-4 py-2.5 rounded-xl text-sm font-medium transition-colors flex-shrink-0 border
+                  ${
+                    voice.isCapturing
+                      ? "bg-red-50 border-red-300 text-red-700 hover:bg-red-100"
+                      : "bg-slate-50 border-slate-300 text-slate-600 hover:bg-slate-100"
+                  }
+                  disabled:opacity-50 disabled:cursor-not-allowed
+                `}
+              >
+                {voice.isCapturing ? "Stop mic" : "Mic"}
+              </button>
+            </span>
           )}
           <button
             onClick={() => void handleSend()}
@@ -602,18 +630,33 @@ export default function AgentChat() {
               ? "WebSocket streaming · steps appear in real time"
               : "Enter to send · answers grounded in your documents"}
           </p>
-          {chatMode === "ws-agent" && (
-            <button
-              type="button"
-              role="switch"
-              aria-checked={speakAnswers}
-              onClick={handleSpeakToggle}
-              title="Read answers aloud"
-              className="text-xs text-slate-500 hover:text-slate-700"
-            >
-              {speakAnswers ? "🔊 Speak answers: on" : "🔇 Speak answers: off"}
-            </button>
-          )}
+          {chatMode === "ws-agent" &&
+            (ttsAvailable ? (
+              <button
+                type="button"
+                role="switch"
+                aria-checked={speakAnswers}
+                onClick={handleSpeakToggle}
+                title="Read answers aloud"
+                className="text-xs text-slate-500 hover:text-slate-700"
+              >
+                {speakAnswers ? "🔊 Speak answers: on" : "🔇 Speak answers: off"}
+              </button>
+            ) : (
+              <span title={SPOKEN_ANSWERS_OFF}>
+                <button
+                  type="button"
+                  role="switch"
+                  aria-checked={false}
+                  disabled
+                  aria-label={SPOKEN_ANSWERS_OFF}
+                  title={SPOKEN_ANSWERS_OFF}
+                  className="text-xs text-slate-400 cursor-not-allowed"
+                >
+                  🔇 Speak answers: unavailable
+                </button>
+              </span>
+            ))}
         </div>
       </div>
     </div>

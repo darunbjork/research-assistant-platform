@@ -9,7 +9,8 @@ import type {
   IngestionResult,
   DocumentSummary,
   RagResult,
-  AgentResult
+  AgentResult,
+  ServerCapabilities
 } from "../types"
 
 interface RetryableRequest extends InternalAxiosRequestConfig {
@@ -217,6 +218,26 @@ export async function queryAgent(query: string): Promise<AgentResult> {
   }
 
   return response.data.data
+}
+
+// ── Server capabilities ────────────────────────────────────────────────────
+
+/**
+ * GET /api/v1/config. Throws on anything but two real booleans, so a
+ * malformed or partial answer can never switch voice ON (callers fail
+ * closed on any error).
+ */
+export async function getServerCapabilities(): Promise<ServerCapabilities> {
+  const response = await api.get<ApiResult<ServerCapabilities>>("/config")
+  const voice = response.data.data?.voice
+  if (
+    !response.data.success ||
+    typeof voice?.stt !== "boolean" ||
+    typeof voice.tts !== "boolean"
+  ) {
+    throw new Error("Unexpected server capabilities response")
+  }
+  return { voice: { stt: voice.stt, tts: voice.tts } }
 }
 
 export default api

@@ -105,3 +105,14 @@ export interface ChatMessage {
     iterationCount?: number;
   };
 }
+
+// ── Server capabilities (GET /api/v1/config) ──────────────────────────────
+/** What the server can actually serve. Voice is off unless a real provider is configured. */
+export interface ServerCapabilities {
+  voice: {
+    /** Voice input (speech-to-text). */
+    stt: boolean;
+    /** Spoken answers (text-to-speech). */
+    tts: boolean;
+  };
+}
