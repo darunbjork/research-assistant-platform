@@ -1,0 +1,25 @@
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: backend
+  labels:
+    app.kubernetes.io/name: backend
+    # kube-prometheus-stack (Helm release "monitoring") only picks up
+    # ServiceMonitors carrying its release label.
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: backend
+  endpoints:
+    - port: http
+      path: /metrics
+      interval: 30s
+      scrapeTimeout: 10s
+      # The backend returns 404 on /metrics without "Bearer <METRICS_TOKEN>"
+      # when the token is set, so the Secret MUST contain METRICS_TOKEN.
+      authorization:
+        type: Bearer
+        credentials:
+          name: researchbot-secrets
+          key: METRICS_TOKEN
