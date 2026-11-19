@@ -1,5 +1,10 @@
 # ResearchBot — Production-Grade Agentic RAG Platform
 
+**Live demo: [research.voxcript.app](https://research.voxcript.app)**
+
+[![CI](https://github.com/darunbjork/research-assistant-platform/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/darunbjork/research-assistant-platform/actions/workflows/ci.yml)
+[![Deploy](https://github.com/darunbjork/research-assistant-platform/actions/workflows/deploy.yml/badge.svg?branch=main)](https://github.com/darunbjork/research-assistant-platform/actions/workflows/deploy.yml)
+
 <img width="1440" alt="ResearchBot app: upload panel, document library and Agent (WS) chat answering which file types the upload accepts" src="docs/screenshots/01-app-overview.png" />
 
 | | |
@@ -9,6 +14,20 @@
 | <img alt="Spoken answer being read aloud: the Stop button and the Speak answers toggle are visible under the answer" src="docs/screenshots/06-spoken-answer-stop.png" /> | <img alt="Voice question about the ingestion checklist, answered with four cited items" src="docs/screenshots/07-voice-ingestion-checklist.png" /> |
 | <img alt="Voice question about accepted file types, answered with sources" src="docs/screenshots/08-voice-file-types.png" /> | |
 
+
+---
+
+## 🧭 Try it
+
+1. Open **[research.voxcript.app](https://research.voxcript.app)** and **register your own account** (there are no shared demo accounts).
+2. **Upload a document**: PDF, TXT, MD or CSV.
+3. **Ask questions about it** in the chat. The agent searches your documents, shows its reasoning steps as they stream in, and cites the passages it used.
+
+Good to know:
+- **Voice input and spoken answers are turned off in the public demo**, because they use paid APIs (Deepgram and ElevenLabs). The mic and 🔊 controls are shown disabled. Voice works locally with your own keys: see the voice setup in [Step 1](#step-1-clone--configure-environment) and the spend-cap checklist in [docs/cost.md](docs/cost.md).
+- **Production answers use a lightweight Gemini model** (`gemini-3.1-flash-lite-preview`) to keep latency low. The default model was too slow for the agent's timeout.
+
+---
 
 ---
 
@@ -162,6 +181,16 @@ docker exec rag_grafana grafana cli admin reset-admin-password "$(sed -n 's/^GRA
 ```
 
 Both ports listen on `127.0.0.1` only. Stop the stack with `npm run monitoring:down`.
+
+---
+
+## ☸️ Deployment
+
+- **Kubernetes (k3s) on a single VPS**, shared with another application. ResearchBot runs in its own namespace with a resource quota, default-deny network policies and least-privilege RBAC.
+- **Traefik** routes the traffic, and **cert-manager** issues the TLS certificate from **Let's Encrypt**.
+- **Automated pipeline:** CI (tests, lint, type checks, manifest validation) → **images** built in GitHub Actions and **pinned by digest** → **deploy**.
+- **Each deploy** runs the database **migrations** first, then rolls out the app, then runs a **smoke test**. If the rollout or the smoke test fails, it **rolls back automatically** to the previous version.
+- Manifests, the deploy flow and the one-time setup are in **[deploy/k8s/README.md](deploy/k8s/README.md)**.
 
 ---
 
