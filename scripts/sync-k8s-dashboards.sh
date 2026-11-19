@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # scripts/sync-k8s-dashboards.sh
-# Copies monitoring/grafana/dashboards/*.json into deploy/k8s/base/dashboards/
+# Copies monitoring/grafana/dashboards/*.json into deploy/k8s/base/app/dashboards/
 # for the cluster's Grafana, prefixing each title with "ResearchBot · " so they
 # stand out next to Transcribe's dashboards (K3S plan, B0 §4).
 #
@@ -11,7 +11,7 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC="$ROOT/monitoring/grafana/dashboards"
-DEST="$ROOT/deploy/k8s/base/dashboards"
+DEST="$ROOT/deploy/k8s/base/app/dashboards"
 
 mkdir -p "$DEST"
 rm -f "$DEST"/*.json
