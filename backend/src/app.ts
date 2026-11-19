@@ -19,6 +19,7 @@ import {
 } from "./services/voice.transcript.service"
 import { errorMiddleware } from "./middleware/error.middleware"
 import metricsRouter from "./routes/metrics.routes"
+import livezRouter from "./routes/livez.routes"
 import authRouter from "./routes/auth.routes"
 import documentRouter from "./routes/document.routes"
 import ragRouter from "./routes/rag.routes"
@@ -65,6 +66,9 @@ app.use(
 // they can never drift) covers 500,000 characters of multibyte text plus
 // the JSON envelope (D9) while still bounding memory per request.
 app.use(express.json({ limit: JSON_BODY_LIMIT_BYTES }))
+// Liveness probe (k8s): mounted before the request logger so a probe every
+// few seconds doesn't flood the logs. See routes/livez.routes.ts.
+app.use("/", livezRouter)
 app.use(requestLoggerMiddleware)
 
 // ── API Documentation ─────────────────────────────────────────────────────

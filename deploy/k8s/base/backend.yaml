@@ -77,9 +77,12 @@ spec:
             failureThreshold: 3
           # Liveness deliberately does NOT use /health: a Postgres or Redis
           # blip would otherwise restart a healthy process, dropping every
-          # WebSocket session. A TCP check only asks "is the process up?".
+          # WebSocket session. /livez (routes/livez.routes.ts) touches no
+          # dependency and stays 200 while draining. Unlike a bare TCP check,
+          # it also catches a wedged event loop.
           livenessProbe:
-            tcpSocket:
+            httpGet:
+              path: /livez
               port: http
             periodSeconds: 20
             timeoutSeconds: 5
@@ -87,7 +90,8 @@ spec:
           # Gives startup (env validation, DB/Redis connect) up to 60 s before
           # liveness starts counting.
           startupProbe:
-            tcpSocket:
+            httpGet:
+              path: /livez
               port: http
             periodSeconds: 2
             failureThreshold: 30
