@@ -39,3 +39,6 @@ Thumbs.db
 # Monitoring secrets (written by scripts/monitoring-init.sh)
 monitoring/secrets/*
 !monitoring/secrets/*.example
+
+# Temporary kustomizations from scripts/k8s-render.sh
+.k8s-render.*/
