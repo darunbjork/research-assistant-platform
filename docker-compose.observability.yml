@@ -3,8 +3,8 @@
 # Usage: docker compose -f docker-compose.observability.yml up -d
 #
 # Access Jaeger UI at: http://localhost:16686
-
-version: "3.8"
+#
+# Prometheus + Grafana live in docker-compose.monitoring.yml (not here).
 
 services:
   jaeger:
@@ -30,33 +30,6 @@ services:
           "--tries=1",
           "--spider",
           "http://localhost:16686/",
-        ]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-
-  # Prometheus scrapes metrics from your /metrics endpoint
-  prometheus:
-    image: prom/prometheus:v2.48.0
-    container_name: rag_prometheus
-    ports:
-      - "9090:9090"
-    volumes:
-      - ./prometheus.yml:/etc/prometheus/prometheus.yml:ro
-    networks:
-      - rag_network
-    command:
-      - "--config.file=/etc/prometheus/prometheus.yml"
-      - "--storage.tsdb.retention.time=7d"
-    healthcheck:
-      test:
-        [
-          "CMD",
-          "wget",
-          "--quiet",
-          "--tries=1",
-          "--spider",
-          "http://localhost:9090/-/healthy",
         ]
       interval: 10s
       timeout: 5s

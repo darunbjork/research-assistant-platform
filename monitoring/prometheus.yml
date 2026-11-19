@@ -10,7 +10,8 @@ global:
     environment: "development"
     service:     "research-assistant"
 
-# ── Alerting rules (stub for Day 25) ─────────────────────────────────────
+# ── Alerting rules ───────────────────────────────────────────────────────
+# Relative to this file (/etc/prometheus); compose mounts monitoring/alerts there.
 rule_files:
   - "alerts/*.yml"
 
@@ -20,12 +21,19 @@ scrape_configs:
   # Your backend /metrics endpoint
   - job_name: "research-assistant-backend"
     static_configs:
-      # host.docker.internal resolves to your Mac/Windows host from inside Docker
-      # On Linux: use 172.17.0.1 (Docker bridge gateway)
+      # host.docker.internal is the host machine. Docker Desktop provides it;
+      # on Linux the compose file maps it via extra_hosts: host-gateway.
       - targets: ["host.docker.internal:3001"]
     metrics_path: "/metrics"
     scrape_interval: 10s
     scrape_timeout:  8s
+    # The backend returns 404 on /metrics without "Bearer <METRICS_TOKEN>"
+    # when METRICS_TOKEN is set. The file is written by
+    # scripts/monitoring-init.sh; it is empty when the token is unset, which
+    # works because the backend leaves /metrics open in that case.
+    authorization:
+      type: Bearer
+      credentials_file: /etc/prometheus/metrics_token
 
   # Prometheus self-monitoring
   - job_name: "prometheus"
