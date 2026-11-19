@@ -137,6 +137,34 @@ npm run dev
 
 ---
 
+### Step 5 (Optional): Monitoring with Prometheus & Grafana
+
+With the backend running, start the monitoring stack:
+
+```bash
+cd backend
+npm run monitoring:up
+```
+
+`monitoring:up` first runs `scripts/monitoring-init.sh`. It copies `METRICS_TOKEN` from `backend/.env` so Prometheus can scrape `/metrics`, and generates `GRAFANA_ADMIN_PASSWORD` in the root `.env` if it isn't set.
+
+| What | Link |
+|---|---|
+| Prometheus | http://localhost:9090 |
+| Scrape targets (`research-assistant-backend` should be **UP**) | http://localhost:9090/targets |
+| Alert rules (6 rules) | http://localhost:9090/rules |
+| Grafana (dashboards in the "Research Assistant" folder) | http://localhost:3000 |
+
+**Grafana login:** username `admin`, password = `GRAFANA_ADMIN_PASSWORD` in the root `.env`. Grafana only reads that value on its first start. To change the password later, edit `.env` and then run, from the repo root:
+
+```bash
+docker exec rag_grafana grafana cli admin reset-admin-password "$(sed -n 's/^GRAFANA_ADMIN_PASSWORD=//p' .env)"
+```
+
+Both ports listen on `127.0.0.1` only. Stop the stack with `npm run monitoring:down`.
+
+---
+
 ## 🧪 Testing Instructions
 
 ### Running Offline Unit Tests (0 API Tokens Used)
