@@ -71,6 +71,16 @@ export const envSchema = z
       z.coerce.number().int().positive().default(2000)
     ),
     METRICS_TOKEN: z.preprocess(emptyToUndefined, z.string().min(24).optional()),
+    // Number of reverse proxies in front of the app that append to
+    // X-Forwarded-For. req.ip (used by the IP-based auth rate limits, D20) is
+    // only correct when this matches the real hop count: too low and every
+    // client shares the proxy's IP; too high and clients can spoof theirs.
+    // Compose: 1 (Caddy). k3s: 1 (Traefik routes /api and /ws straight to the
+    // backend). Capped at 3 so a typo can't trust an arbitrary chain.
+    TRUST_PROXY_HOPS: z.preprocess(
+      emptyToUndefined,
+      z.coerce.number().int().min(1).max(3).default(1)
+    ),
     LOG_LEVEL: z.preprocess(
       emptyToUndefined,
       z.enum(["error", "warn", "info", "http", "verbose", "debug", "silly"]).default("info")
