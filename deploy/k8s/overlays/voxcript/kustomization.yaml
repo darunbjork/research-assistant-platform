@@ -1,0 +1,32 @@
+# ResearchBot at https://research.voxcript.app on the shared voxcript k3s
+# cluster (single node, shared with Transcribe in namespace `default`).
+#
+#   kubectl kustomize deploy/k8s/overlays/voxcript
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+
+components:
+  - ../../components/images
+
+configMapGenerator:
+  - name: researchbot-config
+    behavior: merge
+    literals:
+      - CORS_ORIGINS=https://research.voxcript.app
+      - DOMAIN=research.voxcript.app
+
+patches:
+  # Both Ingresses: the real host in the TLS block and the rule.
+  - target:
+      group: networking.k8s.io
+      kind: Ingress
+    patch: |-
+      - op: replace
+        path: /spec/tls/0/hosts/0
+        value: research.voxcript.app
+      - op: replace
+        path: /spec/rules/0/host
+        value: research.voxcript.app
