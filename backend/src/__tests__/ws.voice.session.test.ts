@@ -89,6 +89,15 @@ jest.mock("../services/streaming.agent.service", () => ({
   },
 }))
 
+// ── Voice capability forced ON ─────────────────────────────────────────
+// This suite exercises the voice pipeline with the in-process MOCK
+// providers. In real config mock mode reports voice as unavailable
+// (config/capabilities.ts), so force both flags on; the disabled path is
+// covered by ws.voice.disabled.test.ts.
+jest.mock("../config/capabilities", () => ({
+  voiceCapability: (): { stt: boolean; tts: boolean } => ({ stt: true, tts: true }),
+}))
+
 // ── Module under test (required AFTER the mocks) ──────────────────────────
 process.env.GEMINI_API_KEY = process.env.GEMINI_API_KEY ?? "test-key-not-a-real-secret"
 

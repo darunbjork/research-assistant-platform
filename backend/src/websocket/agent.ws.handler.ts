@@ -24,6 +24,7 @@ import { consumeGlobalBudget, consumeVoiceBudget } from "../utils/global-budget"
 import { MAX_QUERY_LENGTH } from "../middleware/validate.middleware"
 import redis from "../utils/redis"
 import { env } from "../config/env"
+import { voiceCapability } from "../config/capabilities"
 import {
   DeepgramStream,
   DeepgramHandshakeError,
@@ -240,6 +241,17 @@ export class AgentWsHandler {
         break
 
       case "voice_start":
+        // Defence in depth: the UI disables the mic when the server has no
+        // real STT provider, but never trust the client — refuse before
+        // auth, rate limits or any upstream are touched.
+        if (!voiceCapability(env).stt) {
+          this.sendVoiceError(
+            "VOICE_DISABLED",
+            "Voice input is turned off on this server.",
+            message.sessionId
+          )
+          break
+        }
         // The user is talking — stop speaking at once.
         this.speaker.cancel()
         await this.handleVoiceStart(message.sessionId)
@@ -254,6 +266,14 @@ export class AgentWsHandler {
         break
 
       case "set_speak":
+        // Same guard for spoken answers. Turning speech OFF is always
+        // accepted; turning it on without a real TTS provider is refused
+        // (TTS_ prefix: the UI shows it as a note, never a failed run).
+        if (message.enabled && !voiceCapability(env).tts) {
+          this.speakEnabled = false
+          this.sendVoiceError("TTS_DISABLED", "Spoken answers are turned off on this server.")
+          break
+        }
         this.speakEnabled = message.enabled
         if (!message.enabled) this.speaker.cancel()
         break
