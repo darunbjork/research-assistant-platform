@@ -1,0 +1,75 @@
+# Two Ingresses for one host, so the body-limit middleware applies to /api
+# only (see middleware.yaml). The host is set in the overlay.
+#
+# /metrics is deliberately not routed: Prometheus scrapes it inside the
+# cluster (servicemonitor.yaml).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: researchbot
+  annotations:
+    # Only this Ingress asks cert-manager for the certificate. The api
+    # Ingress reuses the same Secret; two cert-manager annotations on one
+    # secretName would make two owners fight over one Certificate.
+    cert-manager.io/cluster-issuer: letsencrypt-prod
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: researchbot-security-headers@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - research.example.com
+      secretName: researchbot-tls
+  rules:
+    - host: research.example.com
+      http:
+        paths:
+          # Traefik → backend directly (one proxy hop, TRUST_PROXY_HOPS=1).
+          - path: /ws
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          - path: /health
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: web
+                port:
+                  name: http
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: researchbot-api
+  annotations:
+    traefik.ingress.kubernetes.io/router.entrypoints: websecure
+    traefik.ingress.kubernetes.io/router.tls: "true"
+    traefik.ingress.kubernetes.io/router.middlewares: researchbot-security-headers@kubernetescrd,researchbot-body-limit@kubernetescrd
+spec:
+  ingressClassName: traefik
+  tls:
+    - hosts:
+        - research.example.com
+      secretName: researchbot-tls
+  rules:
+    - host: research.example.com
+      http:
+        paths:
+          - path: /api
+            pathType: Prefix
+            backend:
+              service:
+                name: backend
+                port:
+                  name: http
